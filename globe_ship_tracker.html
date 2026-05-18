@@ -1,1 +1,381 @@
 
+<div style="padding: 1rem 0; font-family: var(--font-sans);">
+<h2 class="sr-only">Interactive 3D globe for mapping ship movements</h2>
+
+<div style="display:flex; gap:12px; align-items:center; margin-bottom:12px; flex-wrap:wrap;">
+  <span style="font-size:13px; color:var(--color-text-secondary);">Drag to rotate · Scroll to zoom · Click globe to drop waypoint</span>
+  <div style="margin-left:auto; display:flex; gap:8px; flex-wrap:wrap;">
+    <button id="btn-add" onclick="addSampleShip()" style="font-size:12px; padding:4px 10px;">+ add ship</button>
+    <button id="btn-clear" onclick="clearAll()" style="font-size:12px; padding:4px 10px;">clear all</button>
+    <button id="btn-anim" onclick="toggleAnim()" style="font-size:12px; padding:4px 10px;">&#9654; animate</button>
+  </div>
+</div>
+
+<canvas id="globe" style="display:block; width:100%; border-radius:var(--border-radius-lg); border:0.5px solid var(--color-border-tertiary); cursor:grab; touch-action:none;"></canvas>
+
+<div id="ship-list" style="margin-top:12px; display:flex; flex-direction:column; gap:8px;"></div>
+
+<div id="coords-bar" style="margin-top:8px; font-size:11px; color:var(--color-text-tertiary); height:16px;"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+const canvas = document.getElementById('globe');
+const ctx = canvas.getContext('2d');
+
+const W = () => canvas.clientWidth;
+const H = () => canvas.clientHeight;
+
+let rot = {x: 20, y: -10};
+let drag = null;
+let scale = 1;
+let animating = false;
+let animFrame = null;
+let frameId = null;
+
+const COLORS = ['#378ADD','#1D9E75','#D85A30','#D4537E','#BA7517'];
+
+let ships = [];
+let waypoints = []; // [{lat,lon}] for click-to-add mode
+
+function resize(){
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth;
+  const h = Math.round(w * 0.6);
+  canvas.style.height = h + 'px';
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  draw();
+}
+
+function proj(lat, lon){
+  const lambda = (lon + rot.y) * Math.PI / 180;
+  const phi = lat * Math.PI / 180;
+  const r = Math.min(W(), H()) / 2 * 0.88 * scale;
+  const cx = W() / 2, cy = H() / 2;
+  const cosC = Math.sin(rot.x * Math.PI/180) * Math.sin(phi) +
+               Math.cos(rot.x * Math.PI/180) * Math.cos(phi) * Math.cos(lambda);
+  if(cosC < 0) return null;
+  const x = cx + r * Math.cos(phi) * Math.sin(lambda);
+  const y = cy + r * (Math.cos(rot.x * Math.PI/180) * Math.sin(phi) -
+                Math.sin(rot.x * Math.PI/180) * Math.cos(phi) * Math.cos(lambda));
+  return {x, y, depth: cosC};
+}
+
+function unproj(px, py){
+  const r = Math.min(W(), H()) / 2 * 0.88 * scale;
+  const cx = W() / 2, cy = H() / 2;
+  const dx = (px - cx) / r;
+  const dy = (py - cy) / r;
+  const d2 = dx*dx + dy*dy;
+  if(d2 > 1) return null;
+  const dz = Math.sqrt(1 - d2);
+  const tilt = rot.x * Math.PI/180;
+  const sinT = Math.sin(tilt), cosT = Math.cos(tilt);
+  const phi = Math.asin(cosT * dy + sinT * dz);
+  const lambda = Math.atan2(dx, sinT * dy - cosT * dz);
+  const lat = phi * 180 / Math.PI;
+  const lon = (lambda * 180 / Math.PI - rot.y + 540) % 360 - 180;
+  return {lat: Math.round(lat*100)/100, lon: Math.round(lon*100)/100};
+}
+
+const LAND = [
+  // simplified continent outlines as polylines [lon, lat]
+  // North America
+  [[-167,68],[-141,60],[-124,49],[-117,32],[-87,16],[-83,10],[-77,8],[-75,10],[-66,18],[-62,17],[-72,42],[-65,44],[-60,47],[-64,48],[-70,47],[-78,43],[-76,35],[-81,31],[-81,24],[-90,20],[-105,20],[-117,29],[-120,37],[-125,49],[-137,59],[-152,58],[-160,55],[-167,68]],
+  // South America
+  [[-72,-18],[-65,-5],[-60,5],[-52,4],[-50,-1],[-35,-6],[-35,-12],[-38,-16],[-40,-20],[-44,-23],[-48,-27],[-52,-33],[-58,-38],[-62,-38],[-65,-42],[-68,-46],[-66,-54],[-70,-52],[-75,-46],[-73,-40],[-72,-30],[-69,-22],[-72,-18]],
+  // Europe
+  [[10,36],[15,37],[20,40],[28,41],[30,44],[32,48],[28,54],[20,54],[14,54],[8,55],[2,52],[-5,48],[-9,42],[-9,38],[-5,36],[5,36],[10,36]],
+  // Africa
+  [[-17,15],[-15,10],[-10,5],[2,5],[10,4],[15,2],[25,-4],[35,-10],[40,-15],[36,-20],[32,-25],[28,-30],[22,-34],[18,-33],[12,-30],[8,-25],[5,-15],[0,-5],[-5,0],[-10,3],[-15,5],[-15,10],[-17,15]],
+  // Asia (simplified)
+  [[30,44],[40,42],[50,42],[60,38],[75,35],[80,28],[90,22],[100,18],[105,12],[108,15],[115,22],[120,30],[125,38],[132,44],[138,45],[140,40],[135,35],[130,30],[120,22],[115,15],[110,5],[105,-5],[110,-8],[120,-10],[130,-8],[140,-5],[145,5],[148,12],[150,20],[145,38],[140,45],[132,48],[130,54],[120,55],[108,52],[100,48],[90,45],[80,42],[70,42],[60,45],[50,48],[40,50],[35,48],[30,46],[30,44]],
+  // Australia
+  [[114,-22],[118,-20],[128,-16],[135,-12],[138,-18],[142,-18],[148,-22],[152,-26],[152,-30],[148,-36],[144,-38],[138,-36],[132,-34],[126,-34],[120,-30],[114,-26],[114,-22]],
+  // Greenland
+  [[-55,83],[-40,78],[-22,72],[-18,76],[-24,80],[-40,84],[-55,83]],
+];
+
+function drawGlobe(){
+  const r = Math.min(W(), H()) / 2 * 0.88 * scale;
+  const cx = W()/2, cy = H()/2;
+  ctx.clearRect(0,0,W(),H());
+
+  // Ocean
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, 2*Math.PI);
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark' ||
+                 window.matchMedia('(prefers-color-scheme: dark)').matches;
+  ctx.fillStyle = isDark ? '#0c1e2f' : '#deeef8';
+  ctx.fill();
+  ctx.strokeStyle = isDark ? '#1a3a55' : '#9dc8e8';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Grid lines
+  ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,80,160,0.12)';
+  ctx.lineWidth = 0.5;
+  for(let lat = -60; lat <= 60; lat += 30){
+    ctx.beginPath();
+    let first = true;
+    for(let lon = -180; lon <= 180; lon += 3){
+      const p = proj(lat, lon);
+      if(!p){ first = true; continue; }
+      first ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
+      first = false;
+    }
+    ctx.stroke();
+  }
+  for(let lon = -180; lon < 180; lon += 30){
+    ctx.beginPath();
+    let first = true;
+    for(let lat = -90; lat <= 90; lat += 3){
+      const p = proj(lat, lon);
+      if(!p){ first = true; continue; }
+      first ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
+      first = false;
+    }
+    ctx.stroke();
+  }
+
+  // Land
+  ctx.fillStyle = isDark ? '#2a4a2a' : '#c8dba8';
+  ctx.strokeStyle = isDark ? '#3a6a3a' : '#8aaa60';
+  ctx.lineWidth = 0.8;
+  for(const poly of LAND){
+    ctx.beginPath();
+    let first = true;
+    for(const [lon, lat] of poly){
+      const p = proj(lat, lon);
+      if(!p){ first = true; continue; }
+      first ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
+      first = false;
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+}
+
+function drawShipRoute(ship){
+  if(ship.waypoints.length < 2) return;
+  ctx.strokeStyle = ship.color;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4,3]);
+  ctx.beginPath();
+  let first = true;
+  for(const wp of ship.waypoints){
+    const p = proj(wp.lat, wp.lon);
+    if(!p){ first = true; continue; }
+    first ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
+    first = false;
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Waypoint dots
+  for(let i = 0; i < ship.waypoints.length; i++){
+    const wp = ship.waypoints[i];
+    const p = proj(wp.lat, wp.lon);
+    if(!p) continue;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, i === 0 || i === ship.waypoints.length-1 ? 4 : 2.5, 0, 2*Math.PI);
+    ctx.fillStyle = ship.color;
+    ctx.fill();
+  }
+}
+
+function drawShipIcon(ship){
+  const pos = ship.waypoints[Math.floor(ship.t)];
+  if(!pos) return;
+  const p = proj(pos.lat, pos.lon);
+  if(!p) return;
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  const sz = 7;
+  ctx.fillStyle = ship.color;
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, -sz);
+  ctx.lineTo(sz*0.5, sz*0.5);
+  ctx.lineTo(0, 0);
+  ctx.lineTo(-sz*0.5, sz*0.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // Label
+  ctx.fillStyle = ship.color;
+  ctx.font = '10px var(--font-sans)';
+  ctx.fillText(ship.name, sz+2, -sz+4);
+  ctx.restore();
+}
+
+function interpPos(ship){
+  if(ship.waypoints.length < 2) return ship.waypoints[0] || null;
+  const idx = Math.floor(ship.t);
+  const frac = ship.t - idx;
+  if(idx >= ship.waypoints.length - 1) return ship.waypoints[ship.waypoints.length-1];
+  const a = ship.waypoints[idx], b = ship.waypoints[idx+1];
+  return {lat: a.lat + (b.lat-a.lat)*frac, lon: a.lon + (b.lon-a.lon)*frac};
+}
+
+function draw(){
+  drawGlobe();
+  for(const s of ships){
+    drawShipRoute(s);
+  }
+  for(const s of ships){
+    if(s.waypoints.length > 0) drawShipIcon(s);
+  }
+  // Pending waypoints
+  for(let i = 0; i < waypoints.length; i++){
+    const p = proj(waypoints[i].lat, waypoints[i].lon);
+    if(!p) continue;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 4, 0, 2*Math.PI);
+    ctx.fillStyle = '#E24B4A';
+    ctx.fill();
+    if(i > 0){
+      const prev = proj(waypoints[i-1].lat, waypoints[i-1].lon);
+      if(prev){
+        ctx.beginPath();
+        ctx.setLineDash([3,3]);
+        ctx.strokeStyle = '#E24B4A';
+        ctx.lineWidth = 1;
+        ctx.moveTo(prev.x, prev.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+  }
+}
+
+let animT = 0;
+function animStep(){
+  for(const s of ships){
+    if(s.waypoints.length > 1){
+      s.t = (s.t + s.speed) % (s.waypoints.length - 0.001);
+    }
+  }
+  draw();
+  animFrame = requestAnimationFrame(animStep);
+}
+
+function toggleAnim(){
+  animating = !animating;
+  document.getElementById('btn-anim').textContent = animating ? '⏸ pause' : '▶ animate';
+  if(animating) animFrame = requestAnimationFrame(animStep);
+  else cancelAnimationFrame(animFrame);
+}
+
+const SAMPLE_SHIPS = [
+  {name:'MV Atlantic', waypoints:[{lat:51.5,lon:-1},{lat:45,lon:-20},{lat:35,lon:-40},{lat:25,lon:-55},{lat:18,lon:-66},{lat:10,lon:-75}], color:COLORS[0]},
+  {name:'SS Pacific', waypoints:[{lat:35,lon:135},{lat:20,lon:160},{lat:5,lon:175},{lat:-5,lon:-170},{lat:-20,lon:-155},{lat:-33,lon:-130}], color:COLORS[1]},
+  {name:'MT Suez', waypoints:[{lat:30,lon:32},{lat:15,lon:42},{lat:12,lon:44},{lat:11,lon:50},{lat:12,lon:55},{lat:22,lon:60}], color:COLORS[2]},
+];
+
+function addSampleShip(){
+  const idx = ships.length % SAMPLE_SHIPS.length;
+  const tmpl = SAMPLE_SHIPS[idx];
+  if(ships.find(s => s.name === tmpl.name)) return;
+  ships.push({...tmpl, waypoints:[...tmpl.waypoints.map(w=>({...w}))], t:0, speed:0.012});
+  renderShipList();
+  draw();
+}
+
+function clearAll(){
+  ships = [];
+  waypoints = [];
+  pendingShipName = null;
+  renderShipList();
+  draw();
+}
+
+let pendingShipName = null;
+
+function addCustomShip(){
+  const name = document.getElementById('new-ship-name').value.trim() || ('Ship ' + (ships.length+1));
+  pendingShipName = name;
+  waypoints = [];
+  document.getElementById('coords-bar').textContent = 'Click on the globe to add waypoints. Press Enter or "done" when finished.';
+}
+
+function finishCustomShip(){
+  if(waypoints.length < 2){ waypoints = []; pendingShipName = null; document.getElementById('coords-bar').textContent = ''; return; }
+  ships.push({name: pendingShipName, waypoints:[...waypoints], color: COLORS[ships.length % COLORS.length], t:0, speed:0.012});
+  waypoints = [];
+  pendingShipName = null;
+  document.getElementById('coords-bar').textContent = '';
+  document.getElementById('new-ship-name').value = '';
+  renderShipList();
+  draw();
+}
+
+function renderShipList(){
+  const el = document.getElementById('ship-list');
+  el.innerHTML = '';
+  for(let i = 0; i < ships.length; i++){
+    const s = ships[i];
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:6px 10px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-tertiary);font-size:13px;';
+    row.innerHTML = `<span style="width:10px;height:10px;border-radius:50%;background:${s.color};flex-shrink:0;"></span>
+      <span style="flex:1;font-weight:500;">${s.name}</span>
+      <span style="color:var(--color-text-secondary);">${s.waypoints.length} waypoints</span>
+      <button onclick="removeShip(${i})" style="font-size:11px;padding:2px 8px;">remove</button>`;
+    el.appendChild(row);
+  }
+  // Add ship form
+  const form = document.createElement('div');
+  form.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px;';
+  form.innerHTML = `<input id="new-ship-name" placeholder="Ship name…" style="flex:1;min-width:120px;font-size:13px;padding:4px 8px;">
+    <button onclick="addCustomShip()" style="font-size:12px;padding:4px 10px;">+ custom route</button>
+    <button onclick="finishCustomShip()" style="font-size:12px;padding:4px 10px;">&#10003; done</button>`;
+  el.appendChild(form);
+}
+
+function removeShip(i){ ships.splice(i,1); renderShipList(); draw(); }
+
+// Drag & zoom
+canvas.addEventListener('pointerdown', e => {
+  if(pendingShipName !== null){
+    const rect = canvas.getBoundingClientRect();
+    const geo = unproj(e.clientX - rect.left, e.clientY - rect.top);
+    if(geo){
+      waypoints.push(geo);
+      document.getElementById('coords-bar').textContent = `Waypoint ${waypoints.length}: ${geo.lat}°, ${geo.lon}° — click more or press done`;
+      draw();
+    }
+    return;
+  }
+  drag = {x: e.clientX, y: e.clientY, rx: rot.x, ry: rot.y};
+  canvas.style.cursor = 'grabbing';
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e => {
+  if(!drag){
+    const rect = canvas.getBoundingClientRect();
+    const geo = unproj(e.clientX - rect.left, e.clientY - rect.top);
+    document.getElementById('coords-bar').textContent = geo ? `${geo.lat}°N, ${geo.lon}°E` : '';
+    return;
+  }
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  rot.x = Math.max(-85, Math.min(85, drag.rx - dy * 0.4));
+  rot.y = drag.ry + dx * 0.4;
+  draw();
+});
+canvas.addEventListener('pointerup', () => { drag = null; canvas.style.cursor = 'grab'; });
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  scale = Math.max(0.6, Math.min(2.5, scale * (1 - e.deltaY * 0.001)));
+  draw();
+}, {passive:false});
+
+window.addEventListener('resize', resize);
+setTimeout(resize, 100);
+renderShipList();
+</script>
+
