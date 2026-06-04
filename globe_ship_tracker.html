@@ -43,7 +43,8 @@ header {
 .stat { font-size: 0.72rem; color: var(--color-text-muted); }
 .stat span { color: var(--color-text); font-weight: 500; margin-left: 4px; }
 .header-right { display: flex; align-items: center; gap: var(--space-3); }
-.badge { background: rgba(62,168,255,0.12); color: var(--color-primary); border: 1px solid rgba(62,168,255,0.3); border-radius: 99px; padding: 2px 10px; font-size: 0.7rem; font-weight: 500; }
+.badge { background: rgba(62,168,255,0.12); color: var(--color-primary); border: 1px solid rgba(62,168,255,0.3); border-radius: 99px; padding: 2px 10px; font-size: 0.7rem; font-weight: 500; transition: opacity 0.4s; }
+.badge.offline { background: rgba(122,128,153,0.12); color: var(--color-text-muted); border-color: rgba(122,128,153,0.3); opacity: 1 !important; }
 
 #globe-container {
   position: relative;
@@ -173,7 +174,7 @@ header {
     <div class="stat">ANCHORED <span id="stat-anchored">0</span></div>
   </div>
   <div class="header-right">
-    <div class="badge" id="live-badge">● LIVE</div>
+    <div class="badge offline" id="live-badge">● OFFLINE</div>
   </div>
 </header>
 
@@ -286,6 +287,21 @@ header {
 const COLORS = ['#3eff9a','#3ea8ff','#ffb83e','#ff5e7a','#c97bff','#ff9f3e','#3effee'];
 let ships = [];
 let nextId = 1;
+
+// Cache filtered ships so we don't re-run passesFilters() across every ship
+// every animation frame. Anything that mutates `ships` or `filters` must call
+// markVisibleDirty().
+let visibleShipsCache = [];
+let visibleShipsDirty = true;
+function markVisibleDirty() { visibleShipsDirty = true; sidebarDirty = true; }
+function getVisibleShips() {
+  if (visibleShipsDirty) {
+    visibleShipsCache = ships.filter(passesFilters);
+    visibleShipsDirty = false;
+  }
+  return visibleShipsCache;
+}
+let sidebarDirty = true;
 
 const canvas = document.getElementById('globe-canvas');
 const container = document.getElementById('globe-container');
@@ -460,32 +476,41 @@ function drawGlobe() {
 
 function drawTrail(ship) {
   if (!showTrails || ship.trail.length < 2) return;
-  ctx.beginPath();
-  pathGen({ type: 'LineString', coordinates: ship.trail.map(p => [p.lon, p.lat]) });
+  // d3.geoOrthographic with clipAngle(90) returns null for points behind the
+  // globe — so we can stroke each visible segment without invoking d3.geoPath
+  // (which is ~10× heavier due to GeoJSON parsing and antimeridian handling).
   ctx.strokeStyle = ship.color;
   ctx.globalAlpha = 0.45;
   ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  let started = false;
+  const trail = ship.trail;
+  for (let i = 0; i < trail.length; i++) {
+    const pt = trail[i];
+    const p = projection([pt.lon, pt.lat]);
+    if (!p) { started = false; continue; }
+    if (started) ctx.lineTo(p[0], p[1]);
+    else { ctx.moveTo(p[0], p[1]); started = true; }
+  }
   ctx.stroke();
   ctx.globalAlpha = 1;
 }
 
-function isOnFrontHemisphere(lat, lon) {
-  // Projection is centered on (lat = rot.x, lon = -rot.y). A point lies on
-  // the visible hemisphere when its great-circle angular distance from that
-  // center is <= 90°, i.e. the dot product of the two unit vectors is >= 0.
-  const cLat = rot.x * Math.PI / 180;
-  const cLon = -rot.y * Math.PI / 180;
-  const sLat = lat * Math.PI / 180;
-  const sLon = lon * Math.PI / 180;
-  return Math.sin(cLat) * Math.sin(sLat) +
-         Math.cos(cLat) * Math.cos(sLat) * Math.cos(sLon - cLon) >= 0;
+// Hemisphere cull constants, recomputed once per frame in draw() so we don't
+// recompute Math.sin/cos of the camera angles for every single ship.
+let cLatSin = 0, cLatCos = 1, cLon = 0;
+function isOnFrontHemisphereFast(lat, lon) {
+  const sLat = lat * DEG;
+  const sLon = lon * DEG;
+  return cLatSin * Math.sin(sLat) +
+         cLatCos * Math.cos(sLat) * Math.cos(sLon - cLon) >= 0;
 }
 
 function drawShip(ship) {
-  if (!isOnFrontHemisphere(ship.lat, ship.lon)) return;
+  if (!isOnFrontHemisphereFast(ship.lat, ship.lon)) return;
   const p = projection([ship.lon, ship.lat]);
   if (!p) return;
-  const [x, y] = p;
+  const x = p[0], y = p[1];
 
   // Pulsing ring
   const ringR = 8 + 4 * pulse;
@@ -497,26 +522,34 @@ function drawShip(ship) {
   ctx.stroke();
   ctx.globalAlpha = 1;
 
-  // Ship triangle (points in heading direction)
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(ship.hdg * Math.PI / 180);
+  // Ship triangle rotated to heading — inlined math beats ctx.save/translate/
+  // rotate/restore (which is one of the slowest 2d-context call sequences).
+  const hRad = ship.hdg * DEG;
+  const cosH = Math.cos(hRad), sinH = Math.sin(hRad);
+  // Local points: (0,-7), (4.5,5), (0,2.5), (-4.5,5)
   ctx.fillStyle = ship.color;
   ctx.beginPath();
-  ctx.moveTo(0, -7);
-  ctx.lineTo(4.5, 5);
-  ctx.lineTo(0, 2.5);
-  ctx.lineTo(-4.5, 5);
+  ctx.moveTo(x +  7 * sinH,           y -  7 * cosH);
+  ctx.lineTo(x + (4.5 * cosH - 5 * sinH), y + (4.5 * sinH + 5 * cosH));
+  ctx.lineTo(x -  2.5 * sinH,          y +  2.5 * cosH);
+  ctx.lineTo(x + (-4.5 * cosH - 5 * sinH), y + (-4.5 * sinH + 5 * cosH));
   ctx.closePath();
   ctx.fill();
-  ctx.restore();
 }
 
 function draw() {
   drawGlobe();
-  const visible = ships.filter(passesFilters);
-  visible.forEach(drawTrail);
-  visible.forEach(drawShip);
+  // Prime per-frame hemisphere cull constants (centre lat/lon → sin/cos).
+  // The cull test inside drawShip then only costs three trig calls per ship
+  // instead of ten.
+  const cLat = rot.x * DEG;
+  cLon = -rot.y * DEG;
+  cLatSin = Math.sin(cLat);
+  cLatCos = Math.cos(cLat);
+
+  const visible = getVisibleShips();
+  for (let i = 0; i < visible.length; i++) drawTrail(visible[i]);
+  for (let i = 0; i < visible.length; i++) drawShip(visible[i]);
 }
 
 const DEG = Math.PI / 180;
@@ -539,6 +572,21 @@ function simulateShips(dt) {
 /* ============================================================ */
 const AIS_STALE_MS = 10 * 60 * 1000;
 let aisStreamActive = false;
+let lastAisMsgTs = 0;
+const AIS_LIVE_TIMEOUT_MS = 30 * 1000; // no msg for 30s => treat as offline
+
+function setLiveBadge(active) {
+  const b = document.getElementById('live-badge');
+  if (!b) return;
+  if (active) {
+    b.classList.remove('offline');
+    b.textContent = '● LIVE';
+  } else {
+    b.classList.add('offline');
+    b.textContent = '● OFFLINE';
+    b.style.opacity = '1';
+  }
+}
 
 function aisShipColor(sog) {
   if (sog == null || sog < 0.5) return '#7d8a96';
@@ -560,13 +608,19 @@ function ingestAisShip(msg) {
     ship = {
       id, isAis: true,
       name: msg.name || ('MMSI ' + msg.mmsi),
+      // Cache the country up-front so passesFilters() and renderSidebar()
+      // don't re-derive it from the MMSI hundreds of times per second.
+      country: getCountryFromMMSI(String(msg.mmsi)) || '',
       lat: msg.lat, lon: msg.lon,
       speed, hdg, status, color,
       trail: [{ lat: msg.lat, lon: msg.lon }],
       lastUpdate: Date.now()
     };
     ships.push(ship);
+    markVisibleDirty();
   } else {
+    const speedChanged = ship.speed !== speed;
+    const statusChanged = ship.status !== status;
     ship.lat = msg.lat;
     ship.lon = msg.lon;
     ship.speed = speed;
@@ -577,23 +631,31 @@ function ingestAisShip(msg) {
     ship.trail.push({ lat: msg.lat, lon: msg.lon });
     if (ship.trail.length > 80) ship.trail.shift();
     ship.lastUpdate = Date.now();
+    // Only invalidate the visible cache when something the filters look at
+    // actually changed (status, speed). Position changes don't affect
+    // filter membership, so they don't need to invalidate.
+    if (speedChanged || statusChanged) markVisibleDirty();
+    sidebarDirty = true;
   }
 }
 
 function pruneAisShips() {
   const now = Date.now();
+  const before = ships.length;
   ships = ships.filter(s => !s.isAis || (now - (s.lastUpdate || 0)) <= AIS_STALE_MS);
+  if (ships.length !== before) markVisibleDirty();
 }
 
 const aisChannel = new BroadcastChannel('ais-stream');
 aisChannel.addEventListener('message', ev => {
   const msg = ev.data || {};
   if (msg.type === 'position') {
-    if (!aisStreamActive) { aisStreamActive = true; addLog('AIS stream connected'); }
+    if (!aisStreamActive) { aisStreamActive = true; addLog('AIS stream connected'); setLiveBadge(true); }
+    lastAisMsgTs = Date.now();
     ingestAisShip(msg);
   } else if (msg.type === 'status') {
-    if (msg.state === 'online' && !aisStreamActive) { aisStreamActive = true; addLog('AIS stream online'); }
-    if (msg.state === 'offline' && aisStreamActive) { aisStreamActive = false; addLog('AIS stream offline'); }
+    if (msg.state === 'online' && !aisStreamActive) { aisStreamActive = true; addLog('AIS stream online'); setLiveBadge(true); }
+    if (msg.state === 'offline' && aisStreamActive) { aisStreamActive = false; addLog('AIS stream offline'); setLiveBadge(false); }
   }
 });
 setInterval(pruneAisShips, 60 * 1000);
@@ -683,12 +745,13 @@ document.getElementById('btn-trails').addEventListener('click', () => {
 });
 
 function renderSidebar() {
-  const visible = ships.filter(passesFilters);
+  const visible = getVisibleShips();
+  sidebarDirty = false;
   const max = 150; // hard cap to keep DOM cheap when AIS pumps in thousands
   const slice = visible.slice(0, max);
   document.getElementById('ship-list').innerHTML = slice.map(s => {
     const idStr = JSON.stringify(String(s.id));
-    const country = s.isAis ? (getCountryFromMMSI(String(s.id).replace(/^ais-/, '')) || '') : '';
+    const country = s.isAis ? (s.country || '') : '';
     return '<div class="ship-card" onclick="focusShip(' + idStr + ')">' +
       '<div class="ship-card-header">' +
         '<div class="ship-dot" style="background:' + s.color + '"></div>' +
@@ -735,7 +798,7 @@ window.removeShip = function(id) {
   const ship = ships.find(s => String(s.id) === String(id));
   if (ship) addLog('Removed vessel ' + ship.name);
   ships = ships.filter(s => String(s.id) !== String(id));
-  renderSidebar();
+  markVisibleDirty(); renderSidebar();
 };
 
 document.getElementById('btn-add').addEventListener('click', () => {
@@ -747,7 +810,7 @@ document.getElementById('btn-add').addEventListener('click', () => {
   const status = document.getElementById('f-status').value;
   const color = COLORS[nextId % COLORS.length];
   ships.push({ id: nextId++, name, lat, lon, speed, hdg, status, color, trail: [{lat, lon}] });
-  renderSidebar();
+  markVisibleDirty(); renderSidebar();
   addLog('Added vessel ' + name);
   ['f-name','f-lat','f-lon','f-speed','f-hdg'].forEach(id => document.getElementById(id).value = '');
 });
@@ -791,8 +854,7 @@ function passesFilters(ship) {
   if (filters.name && !String(ship.name || '').toLowerCase().includes(filters.name)) return false;
   if (filters.country) {
     if (!ship.isAis) return false;
-    const mmsi = String(ship.id).replace(/^ais-/, '');
-    const country = getCountryFromMMSI(mmsi);
+    const country = ship.country; // cached on ingest, no per-frame string work
     if (!country || !country.toLowerCase().includes(filters.country)) return false;
   }
   return true;
@@ -851,7 +913,7 @@ function renderFlagPills() {
     p.addEventListener('click', () => {
       document.getElementById('filter-country').value = p.dataset.flag;
       filters.country = p.dataset.flag.toLowerCase();
-      renderSidebar();
+      markVisibleDirty(); renderSidebar();
     });
   });
 }
@@ -869,18 +931,18 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 });
 
 /* Filter input wiring */
-document.getElementById('filter-name').addEventListener('input', e => { filters.name = e.target.value.trim().toLowerCase(); renderSidebar(); });
-document.getElementById('filter-country').addEventListener('input', e => { filters.country = e.target.value.trim().toLowerCase(); renderSidebar(); });
+document.getElementById('filter-name').addEventListener('input', e => { filters.name = e.target.value.trim().toLowerCase(); markVisibleDirty(); renderSidebar(); });
+document.getElementById('filter-country').addEventListener('input', e => { filters.country = e.target.value.trim().toLowerCase(); markVisibleDirty(); renderSidebar(); });
 ['underway','anchored','docked'].forEach(st => {
-  document.getElementById('filter-status-' + st).addEventListener('change', e => { filters.status[st] = e.target.checked; renderSidebar(); });
+  document.getElementById('filter-status-' + st).addEventListener('change', e => { filters.status[st] = e.target.checked; markVisibleDirty(); renderSidebar(); });
 });
 const speedSlider = document.getElementById('filter-min-speed');
 speedSlider.addEventListener('input', e => {
   filters.minSpeed = parseFloat(e.target.value) || 0;
   document.getElementById('filter-min-speed-val').textContent = filters.minSpeed + ' kn';
-  renderSidebar();
+  markVisibleDirty(); renderSidebar();
 });
-document.getElementById('filter-source').addEventListener('change', e => { filters.source = e.target.value; renderSidebar(); });
+document.getElementById('filter-source').addEventListener('change', e => { filters.source = e.target.value; markVisibleDirty(); renderSidebar(); });
 document.getElementById('btn-clear-filters').addEventListener('click', () => {
   filters.name = ''; filters.country = ''; filters.minSpeed = 0; filters.source = 'all';
   filters.status = { underway: true, anchored: true, docked: true };
@@ -890,7 +952,7 @@ document.getElementById('btn-clear-filters').addEventListener('click', () => {
   document.getElementById('filter-min-speed-val').textContent = '0 kn';
   document.getElementById('filter-source').value = 'all';
   ['underway','anchored','docked'].forEach(st => document.getElementById('filter-status-' + st).checked = true);
-  renderSidebar();
+  markVisibleDirty(); renderSidebar();
 });
 
 /* Random ship generators (for the Add tab) */
@@ -909,12 +971,12 @@ function addRandomShip() {
 document.getElementById('btn-add-random').addEventListener('click', () => {
   addRandomShip();
   addLog('Added random vessel');
-  renderSidebar();
+  markVisibleDirty(); renderSidebar();
 });
 document.getElementById('btn-add-random-10').addEventListener('click', () => {
   for (let i = 0; i < 10; i++) addRandomShip();
   addLog('Added 10 random vessels');
-  renderSidebar();
+  markVisibleDirty(); renderSidebar();
 });
 
 window.addEventListener('resize', () => { resize(); });
@@ -925,10 +987,21 @@ renderSidebar();
 loadLandData();
 
 setInterval(() => {
+  // If we haven't seen an AIS message for a while, treat the stream as offline
+  // even if we never received an explicit status:offline broadcast (e.g. the
+  // ais_data_stream tab was closed without disconnecting cleanly).
+  if (aisStreamActive && lastAisMsgTs > 0 && (Date.now() - lastAisMsgTs) > AIS_LIVE_TIMEOUT_MS) {
+    aisStreamActive = false;
+    addLog('AIS stream timed out (no messages for ' + (AIS_LIVE_TIMEOUT_MS / 1000) + 's)');
+    setLiveBadge(false);
+  }
   const b = document.getElementById('live-badge');
+  if (!b || !aisStreamActive) return; // OFFLINE badge stays solid
   b.style.opacity = b.style.opacity === '0.4' ? '1' : '0.4';
 }, 800);
-setInterval(renderSidebar, 2000);
+// Skip the periodic sidebar rebuild when the tab is hidden — no point
+// reflowing ~150 cards into a DOM no one is looking at.
+setInterval(() => { if (!document.hidden) renderSidebar(); }, 2000);
 
 requestAnimationFrame(animate);
 </script>

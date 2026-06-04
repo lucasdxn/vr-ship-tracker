@@ -29,12 +29,39 @@ function fileLog(line) {
 }
 fileLog('---- relay session started ----');
 
+// Serve the two HTML files (plus any sibling .html/.js/.css) so that the
+// data stream and globe tracker live on the same http://localhost origin —
+// required for the BroadcastChannel that links them.
+const STATIC_FILES = {
+  '/':                         { file: 'ais_data_stream.html',    type: 'text/html; charset=utf-8' },
+  '/ais_data_stream.html':     { file: 'ais_data_stream.html',    type: 'text/html; charset=utf-8' },
+  '/globe_ship_tracker.html':  { file: 'globe_ship_tracker.html', type: 'text/html; charset=utf-8' },
+};
+
 const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  const url = req.url.split('?')[0];
+  const entry = STATIC_FILES[url];
+  if (entry) {
+    const full = path.join(__dirname, entry.file);
+    fs.readFile(full, (err, data) => {
+      if (err) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Failed to read ' + entry.file + ': ' + err.message);
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': entry.type });
+      res.end(data);
+    });
+    return;
+  }
+  res.writeHead(404, { 'Content-Type': 'text/plain' });
   res.end(
+    'Not found: ' + url + '\n\n' +
     'AIS relay is running.\n' +
-    'Connect a WebSocket to ws://localhost:' + PORT + '/v0/stream\n' +
-    'Upstream: ' + UPSTREAM + '\n'
+    'UI:        http://localhost:' + PORT + '/\n' +
+    'Globe:     http://localhost:' + PORT + '/globe_ship_tracker.html\n' +
+    'WebSocket: ws://localhost:' + PORT + '/v0/stream\n' +
+    'Upstream:  ' + UPSTREAM + '\n'
   );
 });
 
@@ -116,7 +143,10 @@ wss.on('connection', (client, req) => {
 });
 
 server.listen(PORT, () => {
-  console.log('AIS relay listening on ws://localhost:' + PORT + '/v0/stream');
+  console.log('AIS relay listening on http://localhost:' + PORT + '/');
+  console.log('  UI:        http://localhost:' + PORT + '/');
+  console.log('  Globe:     http://localhost:' + PORT + '/globe_ship_tracker.html');
+  console.log('  WebSocket: ws://localhost:' + PORT + '/v0/stream');
   console.log('Forwarding to ' + UPSTREAM);
   console.log('Node version: ' + process.version);
   console.log('Appending stream log to ' + LOG_PATH);
