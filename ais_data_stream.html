@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIS Data Stream</title>
+<style>
+:root {
+  --color-bg: #0d0f14;
+  --color-surface: #131720;
+  --color-surface-2: #1a1f2e;
+  --color-border: #2a2f42;
+  --color-text: #e2e6f0;
+  --color-text-muted: #7a8099;
+  --color-primary: #3ea8ff;
+  --font-body: 'Inter', sans-serif;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--color-bg); font-family: var(--font-body, sans-serif); color: var(--color-text); -webkit-font-smoothing: antialiased; }
+
+#app { display: grid; grid-template-rows: 48px 1fr; height: 100vh; }
+
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 var(--space-6);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+.logo { display: flex; align-items: center; gap: var(--space-3); font-size: 0.9rem; font-weight: 600; letter-spacing: 0.04em; }
+.logo svg { color: var(--color-primary); }
+.header-stats { display: flex; gap: var(--space-6); }
+.stat { font-size: 0.72rem; color: var(--color-text-muted); }
+.stat span { color: var(--color-text); font-weight: 500; margin-left: 4px; }
+.badge { background: rgba(62,168,255,0.12); color: var(--color-primary); border: 1px solid rgba(62,168,255,0.3); border-radius: 99px; padding: 2px 10px; font-size: 0.7rem; font-weight: 500; transition: opacity 0.4s; }
+.badge.disconnected { background: rgba(122,128,153,0.12); color: var(--color-text-muted); border-color: rgba(122,128,153,0.3); }
+.badge.connecting { background: rgba(255,184,62,0.12); color: #ffb83e; border-color: rgba(255,184,62,0.3); }
+.badge.error { background: rgba(255,94,122,0.12); color: #ff5e7a; border-color: rgba(255,94,122,0.3); }
+
+main {
+  display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4);
+  padding: var(--space-4); overflow: hidden;
+}
+.panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  overflow-y: auto;
+  display: flex; flex-direction: column;
+}
+.panel-title { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-text-muted); margin-bottom: var(--space-3); }
+
+.stat-row { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--color-text-muted); padding: 4px 0; }
+.stat-row span { color: var(--color-text); font-weight: 500; }
+
+.btn-primary {
+  background: var(--color-primary); color: #050810;
+  border: none; border-radius: var(--radius-md); padding: 7px 12px;
+  font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: opacity 0.15s;
+  margin-top: var(--space-3);
+}
+.btn-primary:hover { opacity: 0.88; }
+.btn-primary.danger { background: #ff5e7a; }
+
+.form-row { margin-bottom: var(--space-3); }
+.form-label { display: block; font-size: 0.72rem; color: var(--color-text-muted); margin-bottom: 4px; }
+.form-input {
+  width: 100%; background: var(--color-surface-2); border: 1px solid var(--color-border);
+  color: var(--color-text); border-radius: var(--radius-md); padding: 6px 10px;
+  font-size: 0.8rem; outline: none; transition: border-color 0.15s;
+}
+.form-input:focus { border-color: rgba(62,168,255,0.5); }
+
+.ship-feed-row {
+  display: grid; grid-template-columns: auto 1fr auto auto; gap: var(--space-3);
+  font-size: 0.74rem; padding: 4px 0; border-bottom: 1px solid rgba(42,47,66,0.4);
+  align-items: center;
+}
+.ship-feed-row .dot { width: 8px; height: 8px; border-radius: 50%; }
+.ship-feed-row .name { color: var(--color-text); font-weight: 500; }
+.ship-feed-row .meta { color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+
+.log-entry { font-size: 0.72rem; color: var(--color-text-muted); padding: 3px 0; border-bottom: 1px solid rgba(42,47,66,0.4); line-height: 1.5; word-break: break-word; }
+.log-entry .ts { color: var(--color-primary); }
+.log-entry.err { color: #ff5e7a; }
+#log-list { flex: 1; min-height: 0; overflow-y: auto; }
+#ship-feed { flex: 1; min-height: 0; overflow-y: auto; }
+
+#key-modal {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(7,10,16,0.78); backdrop-filter: blur(6px);
+  display: flex; align-items: center; justify-content: center;
+}
+#key-modal.hidden { display: none; }
+.modal-card {
+  width: 380px; max-width: 92vw;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(62,168,255,0.08);
+}
+.modal-title { font-size: 1rem; font-weight: 600; margin-bottom: 4px; display:flex; align-items:center; gap: var(--space-2); }
+.modal-title svg { color: var(--color-primary); }
+.modal-sub { font-size: 0.75rem; color: var(--color-text-muted); margin-bottom: var(--space-4); line-height: 1.5; }
+.modal-sub a { color: var(--color-primary); text-decoration: none; }
+.modal-sub a:hover { text-decoration: underline; }
+.modal-sub code { background: var(--color-surface-2); padding: 1px 5px; border-radius: 4px; font-size: 0.72rem; }
+.modal-error { font-size: 0.72rem; color: #ff5e7a; margin-top: var(--space-2); min-height: 1em; }
+.modal-card .btn-primary { width: 100%; }
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 99px; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <header>
+    <div class="logo">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 22l1.5-1.5L5 22l1.5-1.5L8 22l1.5-1.5L11 22l1.5-1.5L14 22l1.5-1.5L17 22l1.5-1.5L20 22l1.5-1.5"/>
+        <path d="M5 17l-2-4 9-7 9 7-2 4"/><path d="M12 6V3"/>
+      </svg>
+      AIS Data Stream
+    </div>
+    <div class="header-stats">
+      <div class="stat">VESSELS <span id="stat-total">0</span></div>
+      <div class="stat">MSG/S <span id="stat-rate">0</span></div>
+      <div class="stat">UPTIME <span id="stat-uptime">0s</span></div>
+    </div>
+    <div class="header-right">
+      <div class="badge disconnected" id="live-badge">&#9679; OFFLINE</div>
+    </div>
+  </header>
+
+  <main>
+    <div class="panel">
+      <div class="panel-title">Stream</div>
+      <div class="stat-row">State <span id="status-text">disconnected</span></div>
+      <div class="stat-row">Region <span id="region-label">&mdash;</span></div>
+      <div class="stat-row">Tracked vessels <span id="ship-count">0</span></div>
+      <div class="stat-row">Messages received <span id="msg-total">0</span></div>
+      <div class="stat-row">Last update <span id="last-update">&mdash;</span></div>
+      <div class="stat-row">Broadcasting on channel <span><code>ais-stream</code></span></div>
+      <button class="btn-primary" id="btn-conn">Disconnect</button>
+      <div class="panel-title" style="margin-top: var(--space-6)">Visualization</div>
+      <div style="font-size:0.74rem; color:var(--color-text-muted); line-height:1.5;">
+        Open <code>globe_ship_tracker.html</code> in another tab on the same origin.
+        It subscribes to the <code>ais-stream</code> BroadcastChannel and renders
+        every PositionReport this page receives.
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Latest Positions</div>
+      <div id="ship-feed"></div>
+    </div>
+
+    <div class="panel" style="grid-column: 1 / -1;">
+      <div class="panel-title">Event Log</div>
+      <div id="log-list"></div>
+    </div>
+  </main>
+
+  <div id="key-modal">
+    <div class="modal-card">
+      <div class="modal-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
+        </svg>
+        AIS Data Stream
+      </div>
+      <div class="modal-sub">
+        Live ship tracking via <a href="https://aisstream.io" target="_blank" rel="noopener">aisstream.io</a>.
+        Paste your API key to begin streaming. Positions are published on the
+        <code>ais-stream</code> BroadcastChannel for any other tab on this origin
+        (e.g. <code>globe_ship_tracker.html</code>) to consume.
+        <br><br>
+        <b>Start the local relay first:</b> <code>npm install &amp;&amp; node relay.js</code>
+      </div>
+      <div class="form-row">
+        <label class="form-label">aisstream.io API Key</label>
+        <input class="form-input" id="apikey" type="password" placeholder="paste key here" autocomplete="off" autofocus/>
+      </div>
+      <div class="form-row">
+        <label class="form-label">Region</label>
+        <select class="form-input" id="region">
+          <option value="-90,-180,90,180">Whole world</option>
+          <option value="30,-15,62,42">Europe</option>
+          <option value="24,-100,50,-60">N. America (E)</option>
+          <option value="-12,90,25,150">SE Asia</option>
+          <option value="20,120,46,150">Japan / Korea</option>
+          <option value="10,32,32,60">Persian Gulf</option>
+        </select>
+      </div>
+      <button class="btn-primary" id="btn-modal-conn">Connect</button>
+      <div class="modal-error" id="modal-error"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* BroadcastChannel: any tab subscribing to 'ais-stream' on this origin gets
+ * every PositionReport this page receives. globe_ship_tracker.html is the
+ * intended consumer. */
+const bc = new BroadcastChannel('ais-stream');
+
+/* AIS state */
+const ships = new Map();           // mmsi -> { lat, lon, sog, cog, name, last }
+const STALE_MS = 10 * 60 * 1000;
+let ws = null;
+let socketOpened = false;
+let firstMessageReceived = false;
+let connected = false;
+let msgCount = 0;          // since last second
+let msgRate = 0;
+let msgTotal = 0;
+let startedAt = 0;
+let lastUpdateTs = 0;
+
+/* Modal helpers */
+const keyModal = document.getElementById('key-modal');
+const modalError = document.getElementById('modal-error');
+function showModal(err) { keyModal.classList.remove('hidden'); modalError.textContent = err || ''; setTimeout(() => document.getElementById('apikey').focus(), 0); }
+function hideModal() { keyModal.classList.add('hidden'); modalError.textContent = ''; }
+function resetModalButton() {
+  const b = document.getElementById('btn-modal-conn');
+  b.disabled = false; b.textContent = 'Connect';
+}
+
+function setBadge(state, label) {
+  const b = document.getElementById('live-badge');
+  b.className = 'badge ' + state;
+  b.textContent = '● ' + label;
+  document.getElementById('status-text').textContent = label.toLowerCase();
+}
+
+function addLog(msg, isErr) {
+  const t = new Date().toTimeString().slice(0, 8);
+  const cls = isErr ? 'log-entry err' : 'log-entry';
+  const el = document.getElementById('log-list');
+  const div = document.createElement('div');
+  div.className = cls;
+  div.innerHTML = '<span class="ts">' + t + '</span> ' + msg;
+  el.insertBefore(div, el.firstChild);
+  while (el.children.length > 80) el.removeChild(el.lastChild);
+}
+
+function renderShipFeed() {
+  // Show the 30 most recently updated ships, newest first.
+  const arr = Array.from(ships.values()).sort((a, b) => b.last - a.last).slice(0, 30);
+  const el = document.getElementById('ship-feed');
+  el.innerHTML = arr.map(s => {
+    const speed = s.sog != null ? s.sog.toFixed(1) + ' kn' : '—';
+    return '<div class="ship-feed-row">' +
+      '<div class="dot" style="background:' + aisShipColor(s.sog) + '"></div>' +
+      '<div class="name">' + (s.name || ('MMSI ' + s.mmsi)) + '</div>' +
+      '<div class="meta">' + s.lat.toFixed(2) + ', ' + s.lon.toFixed(2) + '</div>' +
+      '<div class="meta">' + speed + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function aisShipColor(sog) {
+  if (sog == null || sog < 0.5) return '#7d8a96';
+  const t = Math.min(1, sog / 20);
+  const r = Math.round(0x37 + t * (0xD8 - 0x37));
+  const g = Math.round(0x8A + t * (0x5A - 0x8A));
+  const b = Math.round(0xDD + t * (0x30 - 0xDD));
+  return 'rgb(' + r + ',' + g + ',' + b + ')';
+}
+
+function pruneStale() {
+  const now = Date.now();
+  for (const [mmsi, s] of ships) {
+    if (now - s.last > STALE_MS) ships.delete(mmsi);
+  }
+}
+
+function tryConnectFromModal() {
+  const key = document.getElementById('apikey').value.trim();
+  if (!key) { modalError.textContent = 'API key is required'; return; }
+  modalError.textContent = '';
+  const b = document.getElementById('btn-modal-conn');
+  b.disabled = true; b.textContent = 'Connecting…';
+  connect(key);
+}
+
+function connect(key) {
+  const parts = document.getElementById('region').value.split(',').map(Number);
+  const [s, w, n, e] = parts;
+  socketOpened = false; firstMessageReceived = false;
+  setBadge('connecting', 'CONNECTING');
+  const relayUrl = 'ws://' + location.hostname + ':3333/v0/stream';
+  addLog('Opening WebSocket to ' + relayUrl);
+
+  try { ws = new WebSocket(relayUrl); }
+  catch (err) { addLog('WebSocket construction failed: ' + err.message, true); setBadge('error', 'ERROR'); return; }
+
+  ws.onopen = () => {
+    socketOpened = true;
+    const sub = { APIKey: key, BoundingBoxes: [[[s, w], [n, e]]], FilterMessageTypes: ['PositionReport'] };
+    ws.send(JSON.stringify(sub));
+    setBadge('connecting', 'AWAITING DATA');
+    addLog('Handshake OK — sent subscribe (region ' + s + ',' + w + ' to ' + n + ',' + e + ')');
+  };
+
+  ws.onmessage = (ev) => {
+    msgCount++; msgTotal++; lastUpdateTs = Date.now();
+    let data;
+    try { data = JSON.parse(ev.data); } catch { return; }
+    if (data.error) { addLog('Server error: ' + data.error, true); modalError.textContent = 'Server: ' + data.error; return; }
+
+    if (!firstMessageReceived) {
+      firstMessageReceived = true; connected = true;
+      startedAt = Date.now();
+      setBadge('', 'LIVE');
+      const regionLabel = document.querySelector('#region option:checked');
+      document.getElementById('region-label').textContent = regionLabel ? regionLabel.textContent : '';
+      addLog('Subscription confirmed by server.');
+      resetModalButton(); hideModal();
+      bc.postMessage({ type: 'status', state: 'online' });
+    }
+
+    if (data.MessageType !== 'PositionReport') return;
+    const meta = data.MetaData || {};
+    const rep = (data.Message && data.Message.PositionReport) || {};
+    const mmsi = meta.MMSI;
+    const lat = rep.Latitude != null ? rep.Latitude : meta.latitude;
+    const lon = rep.Longitude != null ? rep.Longitude : meta.longitude;
+    if (mmsi == null || lat == null || lon == null) return;
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return;
+
+    const prev = ships.get(mmsi) || {};
+    const ship = {
+      mmsi,
+      lat, lon,
+      cog: (rep.Cog != null && rep.Cog < 360) ? rep.Cog : prev.cog,
+      sog: (rep.Sog != null && rep.Sog < 100) ? rep.Sog : prev.sog,
+      name: (meta.ShipName || '').trim() || prev.name || null,
+      last: Date.now()
+    };
+    ships.set(mmsi, ship);
+
+    bc.postMessage({
+      type: 'position',
+      mmsi: ship.mmsi,
+      lat: ship.lat, lon: ship.lon,
+      sog: ship.sog, cog: ship.cog,
+      name: ship.name
+    });
+  };
+
+  ws.onerror = () => { addLog('WebSocket error event fired', true); setBadge('error', 'ERROR'); };
+
+  ws.onclose = (ev) => {
+    const wasLive = connected;
+    const hadOpen = socketOpened;
+    connected = false;
+    document.getElementById('btn-conn').textContent = 'Disconnect';
+    document.getElementById('btn-conn').classList.remove('danger');
+    const reason = ev.reason ? (' "' + ev.reason + '"') : '';
+    const baseMsg = 'Connection closed (code ' + ev.code + ')' + reason + (ev.wasClean ? '' : ' [unclean]');
+    addLog(baseMsg, !ev.wasClean);
+    if (!ev.wasClean) setBadge('error', 'ERROR'); else setBadge('disconnected', 'OFFLINE');
+    resetModalButton();
+    bc.postMessage({ type: 'status', state: 'offline' });
+    if (!wasLive) {
+      let hint;
+      if (ev.code === 1008 || ev.code === 4001 || ev.code === 4003) hint = 'Server rejected the API key. Generate a fresh one at aisstream.io/account.';
+      else if (ev.code === 1006 && hadOpen) hint = 'Relay dropped the connection right after subscribe — almost always an invalid/revoked/rate-limited API key.';
+      else if (ev.code === 1006 && !hadOpen) hint = 'Cannot reach the local relay on port 3333. Did you start it? Run `npm install && node relay.js`.';
+      else hint = baseMsg;
+      showModal(hint);
+    } else {
+      showModal('Stream ended: ' + baseMsg);
+    }
+  };
+}
+
+function disconnect() {
+  if (ws) { try { ws.close(1000, 'user'); } catch {} ws = null; }
+  connected = false;
+  setBadge('disconnected', 'OFFLINE');
+  addLog('Disconnected by user');
+  bc.postMessage({ type: 'status', state: 'offline' });
+  resetModalButton(); showModal('');
+}
+
+document.getElementById('btn-conn').addEventListener('click', disconnect);
+document.getElementById('btn-modal-conn').addEventListener('click', tryConnectFromModal);
+document.getElementById('apikey').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); tryConnectFromModal(); }
+});
+
+setInterval(() => {
+  msgRate = msgCount; msgCount = 0;
+  document.getElementById('stat-rate').textContent = msgRate;
+  document.getElementById('msg-total').textContent = msgTotal;
+  pruneStale();
+  document.getElementById('ship-count').textContent = ships.size;
+  document.getElementById('stat-total').textContent = ships.size;
+  if (lastUpdateTs > 0) document.getElementById('last-update').textContent = Math.floor((Date.now() - lastUpdateTs) / 1000) + 's ago';
+  if (startedAt > 0) {
+    const secs = Math.floor((Date.now() - startedAt) / 1000);
+    const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60;
+    document.getElementById('stat-uptime').textContent = (h ? h + 'h ' : '') + (m ? m + 'm ' : '') + s + 's';
+  }
+  renderShipFeed();
+}, 1000);
+
+setInterval(() => {
+  const b = document.getElementById('live-badge');
+  if (b.classList.contains('disconnected') || b.classList.contains('error') || b.classList.contains('connecting')) { b.style.opacity = '1'; return; }
+  b.style.opacity = b.style.opacity === '0.5' ? '1' : '0.5';
+}, 900);
+
+addLog('Service ready. Paste an aisstream.io key and Connect.');
+</script>
+</body>
+</html>
