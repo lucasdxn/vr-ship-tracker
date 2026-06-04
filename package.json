@@ -1,0 +1,12 @@
+{
+  "name": "vr-shiptracker-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local WebSocket relay that bridges browser clients to wss://stream.aisstream.io.",
+  "scripts": {
+    "start": "node relay.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

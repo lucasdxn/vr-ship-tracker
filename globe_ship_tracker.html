@@ -1,381 +1,1009 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ShipTrack Globe</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+<style>
+:root {
+  --color-bg: #0d0f14;
+  --color-surface: #131720;
+  --color-surface-2: #1a1f2e;
+  --color-border: #2a2f42;
+  --color-text: #e2e6f0;
+  --color-text-muted: #7a8099;
+  --color-primary: #3ea8ff;
+  --color-primary-glow: rgba(62,168,255,0.18);
+  --font-body: 'Inter', sans-serif;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; background: var(--color-bg); font-family: var(--font-body, sans-serif); color: var(--color-text); -webkit-font-smoothing: antialiased; }
 
-<div style="padding: 1rem 0; font-family: var(--font-sans);">
-<h2 class="sr-only">Interactive 3D globe for mapping ship movements</h2>
+#app { display: grid; grid-template-columns: 1fr 280px; grid-template-rows: 48px 1fr; height: 100vh; }
 
-<div style="display:flex; gap:12px; align-items:center; margin-bottom:12px; flex-wrap:wrap;">
-  <span style="font-size:13px; color:var(--color-text-secondary);">Drag to rotate · Scroll to zoom · Click globe to drop waypoint</span>
-  <div style="margin-left:auto; display:flex; gap:8px; flex-wrap:wrap;">
-    <button id="btn-add" onclick="addSampleShip()" style="font-size:12px; padding:4px 10px;">+ add ship</button>
-    <button id="btn-clear" onclick="clearAll()" style="font-size:12px; padding:4px 10px;">clear all</button>
-    <button id="btn-anim" onclick="toggleAnim()" style="font-size:12px; padding:4px 10px;">&#9654; animate</button>
+header {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 var(--space-6);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  z-index: 10;
+}
+.logo { display: flex; align-items: center; gap: var(--space-3); font-size: 0.9rem; font-weight: 600; letter-spacing: 0.04em; }
+.logo svg { color: var(--color-primary); }
+.header-stats { display: flex; gap: var(--space-6); }
+.stat { font-size: 0.72rem; color: var(--color-text-muted); }
+.stat span { color: var(--color-text); font-weight: 500; margin-left: 4px; }
+.header-right { display: flex; align-items: center; gap: var(--space-3); }
+.badge { background: rgba(62,168,255,0.12); color: var(--color-primary); border: 1px solid rgba(62,168,255,0.3); border-radius: 99px; padding: 2px 10px; font-size: 0.7rem; font-weight: 500; transition: opacity 0.4s; }
+.badge.offline { background: rgba(122,128,153,0.12); color: var(--color-text-muted); border-color: rgba(122,128,153,0.3); opacity: 1 !important; }
+
+#globe-container {
+  position: relative;
+  background: radial-gradient(ellipse at 40% 40%, #0f1825 0%, #070a10 100%);
+  overflow: hidden;
+}
+#globe-canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+#globe-canvas:active { cursor: grabbing; }
+.globe-overlay {
+  position: absolute; bottom: var(--space-4); left: var(--space-4);
+  display: flex; gap: var(--space-2);
+}
+.ctrl-btn {
+  background: rgba(19,23,32,0.85); border: 1px solid var(--color-border);
+  color: var(--color-text-muted); border-radius: var(--radius-md);
+  width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
+  cursor: pointer; font-size: 0.85rem; transition: all 0.15s ease;
+  backdrop-filter: blur(8px);
+}
+.ctrl-btn:hover { color: var(--color-primary); border-color: rgba(62,168,255,0.4); }
+.tooltip-box {
+  position: absolute; display: none; background: rgba(13,15,20,0.92);
+  border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4); font-size: 0.78rem; backdrop-filter: blur(12px);
+  pointer-events: none; z-index: 20; min-width: 170px;
+}
+.tooltip-box .t-name { font-weight: 600; color: var(--color-text); margin-bottom: 4px; }
+.tooltip-box .t-row { color: var(--color-text-muted); line-height: 1.6; }
+.tooltip-box .t-row span { color: var(--color-text); }
+
+#sidebar {
+  background: var(--color-surface);
+  border-left: 1px solid var(--color-border);
+  overflow-y: auto;
+  display: flex; flex-direction: column;
+}
+.panel { padding: var(--space-4); border-bottom: 1px solid var(--color-border); }
+.panel-title { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-text-muted); margin-bottom: var(--space-3); }
+
+.ship-card {
+  background: var(--color-surface-2); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); padding: var(--space-3);
+  margin-bottom: var(--space-2); cursor: pointer; transition: all 0.15s ease;
+}
+.ship-card:hover { border-color: rgba(62,168,255,0.4); background: rgba(62,168,255,0.06); }
+.ship-card-header { display: flex; align-items: center; gap: var(--space-2); margin-bottom: 6px; }
+.ship-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.ship-name { font-size: 0.82rem; font-weight: 600; flex: 1; }
+.ship-status { font-size: 0.68rem; padding: 1px 7px; border-radius: 99px; font-weight: 500; }
+.status-underway { background: rgba(62,255,154,0.12); color: #3eff9a; }
+.status-anchored { background: rgba(255,184,62,0.12); color: #ffb83e; }
+.status-docked { background: rgba(255,94,122,0.12); color: #ff5e7a; }
+.ship-detail { font-size: 0.72rem; color: var(--color-text-muted); line-height: 1.7; }
+.ship-detail span { color: var(--color-text); }
+
+.form-row { margin-bottom: var(--space-3); }
+.form-label { display: block; font-size: 0.72rem; color: var(--color-text-muted); margin-bottom: 4px; }
+.form-input {
+  width: 100%; background: var(--color-surface-2); border: 1px solid var(--color-border);
+  color: var(--color-text); border-radius: var(--radius-md); padding: 6px 10px;
+  font-size: 0.8rem; outline: none; transition: border-color 0.15s;
+}
+.form-input:focus { border-color: rgba(62,168,255,0.5); }
+.form-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+.btn-primary {
+  width: 100%; background: var(--color-primary); color: #050810;
+  border: none; border-radius: var(--radius-md); padding: 7px;
+  font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: opacity 0.15s;
+}
+.btn-primary:hover { opacity: 0.88; }
+.btn-danger {
+  background: rgba(255,94,122,0.12); color: #ff5e7a;
+  border: 1px solid rgba(255,94,122,0.25); border-radius: var(--radius-md);
+  padding: 3px 8px; font-size: 0.7rem; cursor: pointer; margin-top: 4px;
+}
+
+.log-entry { font-size: 0.72rem; color: var(--color-text-muted); padding: 3px 0; border-bottom: 1px solid rgba(42,47,66,0.4); line-height: 1.5; }
+.log-entry span { color: var(--color-primary); }
+#log-list { max-height: 140px; overflow-y: auto; }
+
+.tabs { display: flex; gap: 2px; background: var(--color-surface-2); padding: 3px; border-radius: var(--radius-md); border: 1px solid var(--color-border); }
+.tab-btn {
+  flex: 1; background: transparent; border: none; color: var(--color-text-muted);
+  padding: 6px 8px; font-size: 0.72rem; font-weight: 500; cursor: pointer;
+  border-radius: 5px; transition: all 0.15s ease; letter-spacing: 0.03em;
+}
+.tab-btn:hover { color: var(--color-text); }
+.tab-btn.active { background: rgba(62,168,255,0.15); color: var(--color-primary); }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+.filter-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-3); font-size: 0.74rem; color: var(--color-text-muted); }
+.filter-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.filter-row input[type=checkbox] { accent-color: var(--color-primary); }
+.range-row { display: flex; align-items: center; gap: var(--space-2); font-size: 0.74rem; color: var(--color-text-muted); }
+.range-row input[type=range] { flex: 1; accent-color: var(--color-primary); }
+.range-row .range-val { color: var(--color-text); font-weight: 500; min-width: 40px; text-align: right; }
+.filter-pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.filter-pill {
+  background: rgba(62,168,255,0.12); color: var(--color-primary); border: 1px solid rgba(62,168,255,0.3);
+  padding: 2px 8px; border-radius: 99px; font-size: 0.68rem; cursor: pointer;
+}
+.filter-pill .x { margin-left: 4px; color: rgba(255,255,255,0.6); }
+
+.match-count { font-size: 0.7rem; color: var(--color-text-muted); margin-bottom: var(--space-3); }
+.match-count span { color: var(--color-text); }
+.empty-hint { font-size: 0.74rem; color: var(--color-text-muted); padding: var(--space-4) 0; text-align: center; line-height: 1.5; }
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 99px; }
+</style>
+</head>
+<body>
+<div id="app">
+
+<header>
+  <div class="logo">
+    <svg width="20" height="20" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
+    </svg>
+    ShipTrack Globe
+  </div>
+  <div class="header-stats">
+    <div class="stat">VESSELS <span id="stat-total">0</span></div>
+    <div class="stat">UNDERWAY <span id="stat-moving">0</span></div>
+    <div class="stat">ANCHORED <span id="stat-anchored">0</span></div>
+  </div>
+  <div class="header-right">
+    <div class="badge offline" id="live-badge">● OFFLINE</div>
+  </div>
+</header>
+
+<div id="globe-container">
+  <canvas id="globe-canvas"></canvas>
+  <div class="globe-overlay">
+    <button class="ctrl-btn" id="btn-rotate" title="Toggle auto-rotate" style="color:var(--color-primary)">&#8635;</button>
+    <button class="ctrl-btn" id="btn-reset" title="Reset view">&#8962;</button>
+    <button class="ctrl-btn" id="btn-trails" title="Toggle trails" style="color:var(--color-primary)">&#12316;</button>
+  </div>
+  <div class="tooltip-box" id="tooltip"></div>
+</div>
+
+<div id="sidebar">
+  <div class="panel" style="padding-bottom: var(--space-3);">
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="ships">Ships</button>
+      <button class="tab-btn" data-tab="add">Add</button>
+      <button class="tab-btn" data-tab="filters">Filters</button>
+    </div>
+  </div>
+
+  <div class="panel tab-panel active" id="tab-ships">
+    <div class="panel-title">Vessels <span style="float:right;text-transform:none;letter-spacing:0;color:var(--color-text-muted)" id="ship-list-count"></span></div>
+    <div id="ship-list"></div>
+  </div>
+
+  <div class="panel tab-panel" id="tab-add">
+    <div class="panel-title">Add Vessel</div>
+    <div class="form-row">
+      <label class="form-label" for="f-name">Name</label>
+      <input class="form-input" id="f-name" placeholder="MV Atlantic Star" />
+    </div>
+    <div class="form-row form-row-2">
+      <div><label class="form-label" for="f-lat">Latitude</label><input class="form-input" id="f-lat" type="number" placeholder="0.0" min="-90" max="90"/></div>
+      <div><label class="form-label" for="f-lon">Longitude</label><input class="form-input" id="f-lon" type="number" placeholder="0.0" min="-180" max="180"/></div>
+    </div>
+    <div class="form-row form-row-2">
+      <div><label class="form-label" for="f-speed">Speed (kn)</label><input class="form-input" id="f-speed" type="number" placeholder="12" min="0" max="40"/></div>
+      <div><label class="form-label" for="f-hdg">Heading (&deg;)</label><input class="form-input" id="f-hdg" type="number" placeholder="90" min="0" max="359"/></div>
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="f-status">Status</label>
+      <select class="form-input" id="f-status">
+        <option value="underway">Underway</option>
+        <option value="anchored">Anchored</option>
+        <option value="docked">Docked</option>
+      </select>
+    </div>
+    <button class="btn-primary" id="btn-add">Add Vessel</button>
+    <div style="display:flex; gap: var(--space-2); margin-top: var(--space-3);">
+      <button class="btn-primary" id="btn-add-random" style="background: var(--color-surface-2); color: var(--color-text); border: 1px solid var(--color-border); flex:1;">+ Random</button>
+      <button class="btn-primary" id="btn-add-random-10" style="background: var(--color-surface-2); color: var(--color-text); border: 1px solid var(--color-border); flex:1;">+ 10 Random</button>
+    </div>
+  </div>
+
+  <div class="panel tab-panel" id="tab-filters">
+    <div class="panel-title">Filters</div>
+    <div class="match-count">Showing <span id="filter-count">0</span> of <span id="filter-total">0</span> vessels</div>
+
+    <div class="form-row">
+      <label class="form-label" for="filter-name">Name search</label>
+      <input class="form-input" id="filter-name" placeholder="match by name..." />
+    </div>
+
+    <div class="form-row">
+      <label class="form-label" for="filter-country">Flag (country)</label>
+      <input class="form-input" id="filter-country" placeholder="e.g. Germany, Liberia" />
+      <div style="font-size:0.66rem; color: var(--color-text-muted); margin-top: 4px; line-height:1.4;">
+        Matches the country of the vessel's MMSI prefix (AIS ships only).
+      </div>
+      <div class="filter-pills" id="filter-country-pills"></div>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label">Status</label>
+      <div class="filter-row"><label><input type="checkbox" id="filter-status-underway" checked> Underway</label></div>
+      <div class="filter-row"><label><input type="checkbox" id="filter-status-anchored" checked> Anchored</label></div>
+      <div class="filter-row"><label><input type="checkbox" id="filter-status-docked" checked> Docked</label></div>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label" for="filter-min-speed">Min speed</label>
+      <div class="range-row">
+        <input type="range" id="filter-min-speed" min="0" max="40" step="0.5" value="0">
+        <span class="range-val" id="filter-min-speed-val">0 kn</span>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label" for="filter-source">Source</label>
+      <select class="form-input" id="filter-source">
+        <option value="all">All vessels</option>
+        <option value="ais">AIS stream only</option>
+        <option value="manual">Manually added only</option>
+      </select>
+    </div>
+
+    <button class="btn-primary" id="btn-clear-filters" style="background: var(--color-surface-2); color: var(--color-text); border: 1px solid var(--color-border);">Clear all filters</button>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Event Log</div>
+    <div id="log-list"></div>
   </div>
 </div>
-
-<canvas id="globe" style="display:block; width:100%; border-radius:var(--border-radius-lg); border:0.5px solid var(--color-border-tertiary); cursor:grab; touch-action:none;"></canvas>
-
-<div id="ship-list" style="margin-top:12px; display:flex; flex-direction:column; gap:8px;"></div>
-
-<div id="coords-bar" style="margin-top:8px; font-size:11px; color:var(--color-text-tertiary); height:16px;"></div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
 <script>
-const canvas = document.getElementById('globe');
-const ctx = canvas.getContext('2d');
-
-const W = () => canvas.clientWidth;
-const H = () => canvas.clientHeight;
-
-let rot = {x: 20, y: -10};
-let drag = null;
-let scale = 1;
-let animating = false;
-let animFrame = null;
-let frameId = null;
-
-const COLORS = ['#378ADD','#1D9E75','#D85A30','#D4537E','#BA7517'];
-
+const COLORS = ['#3eff9a','#3ea8ff','#ffb83e','#ff5e7a','#c97bff','#ff9f3e','#3effee'];
 let ships = [];
-let waypoints = []; // [{lat,lon}] for click-to-add mode
+let nextId = 1;
 
-function resize(){
+// Cache filtered ships so we don't re-run passesFilters() across every ship
+// every animation frame. Anything that mutates `ships` or `filters` must call
+// markVisibleDirty().
+let visibleShipsCache = [];
+let visibleShipsDirty = true;
+function markVisibleDirty() { visibleShipsDirty = true; sidebarDirty = true; }
+function getVisibleShips() {
+  if (visibleShipsDirty) {
+    visibleShipsCache = ships.filter(passesFilters);
+    visibleShipsDirty = false;
+  }
+  return visibleShipsCache;
+}
+let sidebarDirty = true;
+
+const canvas = document.getElementById('globe-canvas');
+const container = document.getElementById('globe-container');
+const ctx = canvas.getContext('2d');
+const tooltip = document.getElementById('tooltip');
+
+let rot = { x: 15, y: 0 };
+let scale = 1;
+let autoRotate = true;
+let showTrails = true;
+let pulse = 0;
+
+let projection = null;
+let pathGen = null;
+let graticule = null;
+
+function updateProjection() {
+  const w = container.clientWidth, h = container.clientHeight;
+  const r = Math.min(w, h) / 2 * 0.85 * scale;
+  projection = d3.geoOrthographic()
+    .scale(r)
+    .translate([w/2, h/2])
+    .rotate([rot.y, -rot.x, 0])
+    .clipAngle(90);
+  pathGen = d3.geoPath(projection, ctx);
+}
+
+function resize() {
   const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth;
-  const h = Math.round(w * 0.6);
-  canvas.style.height = h + 'px';
+  const w = container.clientWidth, h = container.clientHeight;
   canvas.width = w * dpr;
   canvas.height = h * dpr;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  draw();
-}
-
-function proj(lat, lon){
-  const lambda = (lon + rot.y) * Math.PI / 180;
-  const phi = lat * Math.PI / 180;
-  const r = Math.min(W(), H()) / 2 * 0.88 * scale;
-  const cx = W() / 2, cy = H() / 2;
-  const cosC = Math.sin(rot.x * Math.PI/180) * Math.sin(phi) +
-               Math.cos(rot.x * Math.PI/180) * Math.cos(phi) * Math.cos(lambda);
-  if(cosC < 0) return null;
-  const x = cx + r * Math.cos(phi) * Math.sin(lambda);
-  const y = cy + r * (Math.cos(rot.x * Math.PI/180) * Math.sin(phi) -
-                Math.sin(rot.x * Math.PI/180) * Math.cos(phi) * Math.cos(lambda));
-  return {x, y, depth: cosC};
-}
-
-function unproj(px, py){
-  const r = Math.min(W(), H()) / 2 * 0.88 * scale;
-  const cx = W() / 2, cy = H() / 2;
-  const dx = (px - cx) / r;
-  const dy = (py - cy) / r;
-  const d2 = dx*dx + dy*dy;
-  if(d2 > 1) return null;
-  const dz = Math.sqrt(1 - d2);
-  const tilt = rot.x * Math.PI/180;
-  const sinT = Math.sin(tilt), cosT = Math.cos(tilt);
-  const phi = Math.asin(cosT * dy + sinT * dz);
-  const lambda = Math.atan2(dx, sinT * dy - cosT * dz);
-  const lat = phi * 180 / Math.PI;
-  const lon = (lambda * 180 / Math.PI - rot.y + 540) % 360 - 180;
-  return {lat: Math.round(lat*100)/100, lon: Math.round(lon*100)/100};
 }
 
 const LAND = [
-  // simplified continent outlines as polylines [lon, lat]
   // North America
-  [[-167,68],[-141,60],[-124,49],[-117,32],[-87,16],[-83,10],[-77,8],[-75,10],[-66,18],[-62,17],[-72,42],[-65,44],[-60,47],[-64,48],[-70,47],[-78,43],[-76,35],[-81,31],[-81,24],[-90,20],[-105,20],[-117,29],[-120,37],[-125,49],[-137,59],[-152,58],[-160,55],[-167,68]],
-  // South America
-  [[-72,-18],[-65,-5],[-60,5],[-52,4],[-50,-1],[-35,-6],[-35,-12],[-38,-16],[-40,-20],[-44,-23],[-48,-27],[-52,-33],[-58,-38],[-62,-38],[-65,-42],[-68,-46],[-66,-54],[-70,-52],[-75,-46],[-73,-40],[-72,-30],[-69,-22],[-72,-18]],
-  // Europe
-  [[10,36],[15,37],[20,40],[28,41],[30,44],[32,48],[28,54],[20,54],[14,54],[8,55],[2,52],[-5,48],[-9,42],[-9,38],[-5,36],[5,36],[10,36]],
-  // Africa
-  [[-17,15],[-15,10],[-10,5],[2,5],[10,4],[15,2],[25,-4],[35,-10],[40,-15],[36,-20],[32,-25],[28,-30],[22,-34],[18,-33],[12,-30],[8,-25],[5,-15],[0,-5],[-5,0],[-10,3],[-15,5],[-15,10],[-17,15]],
-  // Asia (simplified)
-  [[30,44],[40,42],[50,42],[60,38],[75,35],[80,28],[90,22],[100,18],[105,12],[108,15],[115,22],[120,30],[125,38],[132,44],[138,45],[140,40],[135,35],[130,30],[120,22],[115,15],[110,5],[105,-5],[110,-8],[120,-10],[130,-8],[140,-5],[145,5],[148,12],[150,20],[145,38],[140,45],[132,48],[130,54],[120,55],[108,52],[100,48],[90,45],[80,42],[70,42],[60,45],[50,48],[40,50],[35,48],[30,46],[30,44]],
-  // Australia
-  [[114,-22],[118,-20],[128,-16],[135,-12],[138,-18],[142,-18],[148,-22],[152,-26],[152,-30],[148,-36],[144,-38],[138,-36],[132,-34],[126,-34],[120,-30],[114,-26],[114,-22]],
+  [[-168,72],[-166,64],[-163,55],[-152,58],[-148,60],[-141,60],
+   [-130,54],[-125,49],[-124,40],[-117,32],[-110,23],[-106,20],
+   [-96,16],[-88,16],[-83,10],[-75,10],[-80,25],[-76,35],
+   [-70,42],[-66,44],[-52,47],[-55,52],[-64,58],[-78,72],
+   [-95,74],[-120,74],[-140,70],[-168,72]],
   // Greenland
-  [[-55,83],[-40,78],[-22,72],[-18,76],[-24,80],[-40,84],[-55,83]],
+  [[-44,60],[-42,65],[-22,72],[-18,77],[-24,82],[-44,83],
+   [-58,83],[-58,76],[-46,70],[-44,60]],
+  // South America
+  [[-78,9],[-80,-2],[-80,-8],[-77,-14],[-75,-18],[-70,-22],
+   [-68,-30],[-72,-38],[-75,-44],[-67,-55],[-58,-38],[-52,-33],
+   [-44,-23],[-38,-15],[-35,-9],[-35,-5],[-48,-2],[-52,4],
+   [-60,7],[-62,10],[-72,12],[-77,8],[-78,9]],
+  // Europe
+  [[-9,36],[-9,44],[-2,44],[3,44],[8,44],[12,44],[15,38],
+   [18,40],[20,38],[24,38],[28,41],[30,46],[32,48],
+   [30,50],[26,55],[20,54],[14,54],[8,55],[4,56],
+   [0,51],[-5,48],[-9,44],[-9,36]],
+  // Scandinavia
+  [[5,57],[8,58],[5,62],[6,64],[14,66],[18,70],[25,71],
+   [28,70],[30,70],[28,64],[28,60],[22,58],[18,56],
+   [14,55],[10,55],[8,56],[5,57]],
+  // UK & Ireland
+  [[-6,50],[-3,50],[0,51],[2,52],[0,54],[-4,54],
+   [-5,58],[-3,59],[-6,58],[-8,52],[-6,50]],
+  // Africa
+  [[-17,15],[-15,10],[-10,5],[2,5],[10,4],[15,2],
+   [25,-4],[35,-10],[40,-15],[36,-20],[32,-25],[28,-30],
+   [22,-34],[18,-33],[12,-30],[8,-25],[5,-15],[0,-5],
+   [-5,0],[-10,3],[-15,5],[-17,15]],
+  // Arabian Peninsula
+  [[32,30],[36,22],[40,14],[44,12],[50,12],[58,22],
+   [56,26],[50,26],[44,28],[40,30],[36,30],[32,30]],
+  // Indian Subcontinent
+  [[60,24],[68,24],[72,22],[76,8],[80,8],[82,14],
+   [80,16],[80,20],[76,22],[72,22],[66,22],[62,28],[60,24]],
+  // Asia (main)
+  [[28,42],[42,42],[52,44],[60,44],[70,52],[90,50],[110,54],
+   [120,55],[130,54],[136,52],[140,50],[140,44],[136,42],
+   [130,40],[126,36],[122,32],[120,28],[116,22],[110,20],
+   [106,12],[100,4],[92,18],[88,22],[80,12],[80,8],
+   [72,20],[66,24],[62,26],[58,22],[56,24],[50,28],
+   [48,30],[44,36],[40,38],[36,36],[28,42]],
+  // Indochina & Malay Peninsula
+  [[100,22],[104,18],[100,14],[100,8],[104,2],[106,4],
+   [108,14],[102,22]],
+  // Japan
+  [[130,31],[132,34],[136,34],[138,36],[140,40],[142,44],
+   [144,44],[142,40],[138,36],[134,34],[132,32],[130,31]],
+  // Sumatra
+  [[96,5],[100,2],[104,-2],[106,-5],[106,-2],[100,4],[96,5]],
+  // Borneo
+  [[108,2],[116,4],[118,4],[120,2],[118,-2],[112,-4],[108,0],[108,2]],
+  // Australia
+  [[114,-22],[118,-20],[122,-18],[128,-14],[132,-12],
+   [136,-12],[138,-16],[140,-16],[142,-18],[144,-18],
+   [148,-22],[152,-24],[154,-26],[152,-30],[148,-36],
+   [144,-38],[140,-36],[138,-34],[132,-34],[126,-34],
+   [120,-30],[116,-26],[114,-22]],
+  // New Zealand N Island
+  [[172,-34],[178,-38],[178,-36],[174,-36],[172,-34]],
+  // New Zealand S Island
+  [[166,-46],[170,-46],[172,-42],[170,-40],[166,-44],[166,-46]],
 ];
 
-function drawGlobe(){
-  const r = Math.min(W(), H()) / 2 * 0.88 * scale;
-  const cx = W()/2, cy = H()/2;
-  ctx.clearRect(0,0,W(),H());
+let landFeature = null;
+
+async function loadLandData() {
+  try {
+    const res = await fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const topo = await res.json();
+    landFeature = topojson.feature(topo, topo.objects.land);
+  } catch(e) {
+    console.warn('Land data fetch failed, using fallback:', e.message);
+  }
+}
+
+function getLandFeature() {
+  if (landFeature) return landFeature;
+  return {
+    type: 'Feature',
+    geometry: { type: 'MultiPolygon', coordinates: LAND.map(ring => [ring]) }
+  };
+}
+
+function drawGlobe() {
+  updateProjection();
+  const w = container.clientWidth, h = container.clientHeight;
+  const r = Math.min(w, h) / 2 * 0.85 * scale;
+  const cx = w/2, cy = h/2;
+  ctx.clearRect(0, 0, w, h);
+
+  // Atmosphere glow
+  const grad = ctx.createRadialGradient(cx, cy, r * 0.98, cx, cy, r * 1.18);
+  grad.addColorStop(0, 'rgba(62,168,255,0.22)');
+  grad.addColorStop(1, 'rgba(62,168,255,0)');
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 1.18, 0, Math.PI*2);
+  ctx.fillStyle = grad;
+  ctx.fill();
 
   // Ocean
   ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, 2*Math.PI);
-  const isDark = document.documentElement.getAttribute('data-theme') === 'dark' ||
-                 window.matchMedia('(prefers-color-scheme: dark)').matches;
-  ctx.fillStyle = isDark ? '#0c1e2f' : '#deeef8';
+  ctx.arc(cx, cy, r, 0, Math.PI*2);
+  ctx.fillStyle = '#0a1628';
   ctx.fill();
-  ctx.strokeStyle = isDark ? '#1a3a55' : '#9dc8e8';
-  ctx.lineWidth = 1;
-  ctx.stroke();
 
-  // Grid lines
-  ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,80,160,0.12)';
+  // Graticule
+  if (!graticule) graticule = d3.geoGraticule().step([20, 20]);
+  ctx.beginPath();
+  pathGen(graticule());
+  ctx.strokeStyle = 'rgba(62,168,255,0.08)';
   ctx.lineWidth = 0.5;
-  for(let lat = -60; lat <= 60; lat += 30){
-    ctx.beginPath();
-    let first = true;
-    for(let lon = -180; lon <= 180; lon += 3){
-      const p = proj(lat, lon);
-      if(!p){ first = true; continue; }
-      first ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
-      first = false;
-    }
-    ctx.stroke();
-  }
-  for(let lon = -180; lon < 180; lon += 30){
-    ctx.beginPath();
-    let first = true;
-    for(let lat = -90; lat <= 90; lat += 3){
-      const p = proj(lat, lon);
-      if(!p){ first = true; continue; }
-      first ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
-      first = false;
-    }
-    ctx.stroke();
-  }
+  ctx.stroke();
 
   // Land
-  ctx.fillStyle = isDark ? '#2a4a2a' : '#c8dba8';
-  ctx.strokeStyle = isDark ? '#3a6a3a' : '#8aaa60';
+  ctx.beginPath();
+  pathGen(getLandFeature());
+  ctx.fillStyle = '#15263a';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(62,200,255,0.18)';
   ctx.lineWidth = 0.8;
-  for(const poly of LAND){
-    ctx.beginPath();
-    let first = true;
-    for(const [lon, lat] of poly){
-      const p = proj(lat, lon);
-      if(!p){ first = true; continue; }
-      first ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
-      first = false;
-    }
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-  }
+  ctx.stroke();
+
+  // Limb
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI*2);
+  ctx.strokeStyle = 'rgba(62,168,255,0.35)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
 }
 
-function drawShipRoute(ship){
-  if(ship.waypoints.length < 2) return;
+function drawTrail(ship) {
+  if (!showTrails || ship.trail.length < 2) return;
+  // d3.geoOrthographic with clipAngle(90) returns null for points behind the
+  // globe — so we can stroke each visible segment without invoking d3.geoPath
+  // (which is ~10× heavier due to GeoJSON parsing and antimeridian handling).
   ctx.strokeStyle = ship.color;
+  ctx.globalAlpha = 0.45;
   ctx.lineWidth = 1.5;
-  ctx.setLineDash([4,3]);
   ctx.beginPath();
-  let first = true;
-  for(const wp of ship.waypoints){
-    const p = proj(wp.lat, wp.lon);
-    if(!p){ first = true; continue; }
-    first ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
-    first = false;
+  let started = false;
+  const trail = ship.trail;
+  for (let i = 0; i < trail.length; i++) {
+    const pt = trail[i];
+    const p = projection([pt.lon, pt.lat]);
+    if (!p) { started = false; continue; }
+    if (started) ctx.lineTo(p[0], p[1]);
+    else { ctx.moveTo(p[0], p[1]); started = true; }
   }
   ctx.stroke();
-  ctx.setLineDash([]);
-
-  // Waypoint dots
-  for(let i = 0; i < ship.waypoints.length; i++){
-    const wp = ship.waypoints[i];
-    const p = proj(wp.lat, wp.lon);
-    if(!p) continue;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, i === 0 || i === ship.waypoints.length-1 ? 4 : 2.5, 0, 2*Math.PI);
-    ctx.fillStyle = ship.color;
-    ctx.fill();
-  }
+  ctx.globalAlpha = 1;
 }
 
-function drawShipIcon(ship){
-  const pos = ship.waypoints[Math.floor(ship.t)];
-  if(!pos) return;
-  const p = proj(pos.lat, pos.lon);
-  if(!p) return;
-  ctx.save();
-  ctx.translate(p.x, p.y);
-  const sz = 7;
-  ctx.fillStyle = ship.color;
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 1;
+// Hemisphere cull constants, recomputed once per frame in draw() so we don't
+// recompute Math.sin/cos of the camera angles for every single ship.
+let cLatSin = 0, cLatCos = 1, cLon = 0;
+function isOnFrontHemisphereFast(lat, lon) {
+  const sLat = lat * DEG;
+  const sLon = lon * DEG;
+  return cLatSin * Math.sin(sLat) +
+         cLatCos * Math.cos(sLat) * Math.cos(sLon - cLon) >= 0;
+}
+
+function drawShip(ship) {
+  if (!isOnFrontHemisphereFast(ship.lat, ship.lon)) return;
+  const p = projection([ship.lon, ship.lat]);
+  if (!p) return;
+  const x = p[0], y = p[1];
+
+  // Pulsing ring
+  const ringR = 8 + 4 * pulse;
   ctx.beginPath();
-  ctx.moveTo(0, -sz);
-  ctx.lineTo(sz*0.5, sz*0.5);
-  ctx.lineTo(0, 0);
-  ctx.lineTo(-sz*0.5, sz*0.5);
+  ctx.arc(x, y, ringR, 0, Math.PI*2);
+  ctx.strokeStyle = ship.color;
+  ctx.globalAlpha = 0.15 + 0.5 * (1 - pulse);
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // Ship triangle rotated to heading — inlined math beats ctx.save/translate/
+  // rotate/restore (which is one of the slowest 2d-context call sequences).
+  const hRad = ship.hdg * DEG;
+  const cosH = Math.cos(hRad), sinH = Math.sin(hRad);
+  // Local points: (0,-7), (4.5,5), (0,2.5), (-4.5,5)
+  ctx.fillStyle = ship.color;
+  ctx.beginPath();
+  ctx.moveTo(x +  7 * sinH,           y -  7 * cosH);
+  ctx.lineTo(x + (4.5 * cosH - 5 * sinH), y + (4.5 * sinH + 5 * cosH));
+  ctx.lineTo(x -  2.5 * sinH,          y +  2.5 * cosH);
+  ctx.lineTo(x + (-4.5 * cosH - 5 * sinH), y + (-4.5 * sinH + 5 * cosH));
   ctx.closePath();
   ctx.fill();
-  ctx.stroke();
-  // Label
-  ctx.fillStyle = ship.color;
-  ctx.font = '10px var(--font-sans)';
-  ctx.fillText(ship.name, sz+2, -sz+4);
-  ctx.restore();
 }
 
-function interpPos(ship){
-  if(ship.waypoints.length < 2) return ship.waypoints[0] || null;
-  const idx = Math.floor(ship.t);
-  const frac = ship.t - idx;
-  if(idx >= ship.waypoints.length - 1) return ship.waypoints[ship.waypoints.length-1];
-  const a = ship.waypoints[idx], b = ship.waypoints[idx+1];
-  return {lat: a.lat + (b.lat-a.lat)*frac, lon: a.lon + (b.lon-a.lon)*frac};
-}
-
-function draw(){
+function draw() {
   drawGlobe();
-  for(const s of ships){
-    drawShipRoute(s);
+  // Prime per-frame hemisphere cull constants (centre lat/lon → sin/cos).
+  // The cull test inside drawShip then only costs three trig calls per ship
+  // instead of ten.
+  const cLat = rot.x * DEG;
+  cLon = -rot.y * DEG;
+  cLatSin = Math.sin(cLat);
+  cLatCos = Math.cos(cLat);
+
+  const visible = getVisibleShips();
+  for (let i = 0; i < visible.length; i++) drawTrail(visible[i]);
+  for (let i = 0; i < visible.length; i++) drawShip(visible[i]);
+}
+
+const DEG = Math.PI / 180;
+function simulateShips(dt) {
+  ships.forEach(ship => {
+    if (ship.isAis) return; // AIS ships get real positions from the stream
+    if (ship.status !== 'underway' || ship.speed === 0) return;
+    const v = (ship.speed * 1852 / 111320) / 3600 * dt * 25;
+    const dlat = Math.cos(ship.hdg * DEG) * v;
+    const dlon = Math.sin(ship.hdg * DEG) * v / Math.max(0.1, Math.cos(ship.lat * DEG));
+    ship.lat = Math.max(-85, Math.min(85, ship.lat + dlat));
+    ship.lon = ((ship.lon + dlon + 540) % 360) - 180;
+    ship.trail.push({ lat: ship.lat, lon: ship.lon });
+    if (ship.trail.length > 80) ship.trail.shift();
+  });
+}
+
+/* ============================================================ */
+/* AIS ingestion via BroadcastChannel from ais_data_stream.html */
+/* ============================================================ */
+const AIS_STALE_MS = 10 * 60 * 1000;
+let aisStreamActive = false;
+let lastAisMsgTs = 0;
+const AIS_LIVE_TIMEOUT_MS = 30 * 1000; // no msg for 30s => treat as offline
+
+function setLiveBadge(active) {
+  const b = document.getElementById('live-badge');
+  if (!b) return;
+  if (active) {
+    b.classList.remove('offline');
+    b.textContent = '● LIVE';
+  } else {
+    b.classList.add('offline');
+    b.textContent = '● OFFLINE';
+    b.style.opacity = '1';
   }
-  for(const s of ships){
-    if(s.waypoints.length > 0) drawShipIcon(s);
+}
+
+function aisShipColor(sog) {
+  if (sog == null || sog < 0.5) return '#7d8a96';
+  const t = Math.min(1, sog / 20);
+  const r = Math.round(0x37 + t * (0xD8 - 0x37));
+  const g = Math.round(0x8A + t * (0x5A - 0x8A));
+  const b = Math.round(0xDD + t * (0x30 - 0xDD));
+  return 'rgb(' + r + ',' + g + ',' + b + ')';
+}
+
+function ingestAisShip(msg) {
+  const id = 'ais-' + msg.mmsi;
+  let ship = ships.find(s => s.id === id);
+  const speed = msg.sog != null ? msg.sog : 0;
+  const hdg = msg.cog != null ? msg.cog : 0;
+  const status = speed > 0.5 ? 'underway' : 'anchored';
+  const color = aisShipColor(speed);
+  if (!ship) {
+    ship = {
+      id, isAis: true,
+      name: msg.name || ('MMSI ' + msg.mmsi),
+      // Cache the country up-front so passesFilters() and renderSidebar()
+      // don't re-derive it from the MMSI hundreds of times per second.
+      country: getCountryFromMMSI(String(msg.mmsi)) || '',
+      lat: msg.lat, lon: msg.lon,
+      speed, hdg, status, color,
+      trail: [{ lat: msg.lat, lon: msg.lon }],
+      lastUpdate: Date.now()
+    };
+    ships.push(ship);
+    markVisibleDirty();
+  } else {
+    const speedChanged = ship.speed !== speed;
+    const statusChanged = ship.status !== status;
+    ship.lat = msg.lat;
+    ship.lon = msg.lon;
+    ship.speed = speed;
+    ship.hdg = hdg;
+    ship.status = status;
+    ship.color = color;
+    if (msg.name) ship.name = msg.name;
+    ship.trail.push({ lat: msg.lat, lon: msg.lon });
+    if (ship.trail.length > 80) ship.trail.shift();
+    ship.lastUpdate = Date.now();
+    // Only invalidate the visible cache when something the filters look at
+    // actually changed (status, speed). Position changes don't affect
+    // filter membership, so they don't need to invalidate.
+    if (speedChanged || statusChanged) markVisibleDirty();
+    sidebarDirty = true;
   }
-  // Pending waypoints
-  for(let i = 0; i < waypoints.length; i++){
-    const p = proj(waypoints[i].lat, waypoints[i].lon);
-    if(!p) continue;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 4, 0, 2*Math.PI);
-    ctx.fillStyle = '#E24B4A';
-    ctx.fill();
-    if(i > 0){
-      const prev = proj(waypoints[i-1].lat, waypoints[i-1].lon);
-      if(prev){
-        ctx.beginPath();
-        ctx.setLineDash([3,3]);
-        ctx.strokeStyle = '#E24B4A';
-        ctx.lineWidth = 1;
-        ctx.moveTo(prev.x, prev.y);
-        ctx.lineTo(p.x, p.y);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-    }
+}
+
+function pruneAisShips() {
+  const now = Date.now();
+  const before = ships.length;
+  ships = ships.filter(s => !s.isAis || (now - (s.lastUpdate || 0)) <= AIS_STALE_MS);
+  if (ships.length !== before) markVisibleDirty();
+}
+
+const aisChannel = new BroadcastChannel('ais-stream');
+aisChannel.addEventListener('message', ev => {
+  const msg = ev.data || {};
+  if (msg.type === 'position') {
+    if (!aisStreamActive) { aisStreamActive = true; addLog('AIS stream connected'); setLiveBadge(true); }
+    lastAisMsgTs = Date.now();
+    ingestAisShip(msg);
+  } else if (msg.type === 'status') {
+    if (msg.state === 'online' && !aisStreamActive) { aisStreamActive = true; addLog('AIS stream online'); setLiveBadge(true); }
+    if (msg.state === 'offline' && aisStreamActive) { aisStreamActive = false; addLog('AIS stream offline'); setLiveBadge(false); }
   }
-}
+});
+setInterval(pruneAisShips, 60 * 1000);
 
-let animT = 0;
-function animStep(){
-  for(const s of ships){
-    if(s.waypoints.length > 1){
-      s.t = (s.t + s.speed) % (s.waypoints.length - 0.001);
-    }
-  }
-  draw();
-  animFrame = requestAnimationFrame(animStep);
-}
-
-function toggleAnim(){
-  animating = !animating;
-  document.getElementById('btn-anim').textContent = animating ? '⏸ pause' : '▶ animate';
-  if(animating) animFrame = requestAnimationFrame(animStep);
-  else cancelAnimationFrame(animFrame);
-}
-
-const SAMPLE_SHIPS = [
-  {name:'MV Atlantic', waypoints:[{lat:51.5,lon:-1},{lat:45,lon:-20},{lat:35,lon:-40},{lat:25,lon:-55},{lat:18,lon:-66},{lat:10,lon:-75}], color:COLORS[0]},
-  {name:'SS Pacific', waypoints:[{lat:35,lon:135},{lat:20,lon:160},{lat:5,lon:175},{lat:-5,lon:-170},{lat:-20,lon:-155},{lat:-33,lon:-130}], color:COLORS[1]},
-  {name:'MT Suez', waypoints:[{lat:30,lon:32},{lat:15,lon:42},{lat:12,lon:44},{lat:11,lon:50},{lat:12,lon:55},{lat:22,lon:60}], color:COLORS[2]},
-];
-
-function addSampleShip(){
-  const idx = ships.length % SAMPLE_SHIPS.length;
-  const tmpl = SAMPLE_SHIPS[idx];
-  if(ships.find(s => s.name === tmpl.name)) return;
-  ships.push({...tmpl, waypoints:[...tmpl.waypoints.map(w=>({...w}))], t:0, speed:0.012});
-  renderShipList();
-  draw();
-}
-
-function clearAll(){
-  ships = [];
-  waypoints = [];
-  pendingShipName = null;
-  renderShipList();
-  draw();
-}
-
-let pendingShipName = null;
-
-function addCustomShip(){
-  const name = document.getElementById('new-ship-name').value.trim() || ('Ship ' + (ships.length+1));
-  pendingShipName = name;
-  waypoints = [];
-  document.getElementById('coords-bar').textContent = 'Click on the globe to add waypoints. Press Enter or "done" when finished.';
-}
-
-function finishCustomShip(){
-  if(waypoints.length < 2){ waypoints = []; pendingShipName = null; document.getElementById('coords-bar').textContent = ''; return; }
-  ships.push({name: pendingShipName, waypoints:[...waypoints], color: COLORS[ships.length % COLORS.length], t:0, speed:0.012});
-  waypoints = [];
-  pendingShipName = null;
-  document.getElementById('coords-bar').textContent = '';
-  document.getElementById('new-ship-name').value = '';
-  renderShipList();
-  draw();
-}
-
-function renderShipList(){
-  const el = document.getElementById('ship-list');
-  el.innerHTML = '';
-  for(let i = 0; i < ships.length; i++){
-    const s = ships[i];
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:6px 10px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-tertiary);font-size:13px;';
-    row.innerHTML = `<span style="width:10px;height:10px;border-radius:50%;background:${s.color};flex-shrink:0;"></span>
-      <span style="flex:1;font-weight:500;">${s.name}</span>
-      <span style="color:var(--color-text-secondary);">${s.waypoints.length} waypoints</span>
-      <button onclick="removeShip(${i})" style="font-size:11px;padding:2px 8px;">remove</button>`;
-    el.appendChild(row);
-  }
-  // Add ship form
-  const form = document.createElement('div');
-  form.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px;';
-  form.innerHTML = `<input id="new-ship-name" placeholder="Ship name…" style="flex:1;min-width:120px;font-size:13px;padding:4px 8px;">
-    <button onclick="addCustomShip()" style="font-size:12px;padding:4px 10px;">+ custom route</button>
-    <button onclick="finishCustomShip()" style="font-size:12px;padding:4px 10px;">&#10003; done</button>`;
-  el.appendChild(form);
-}
-
-function removeShip(i){ ships.splice(i,1); renderShipList(); draw(); }
-
-// Drag & zoom
+// Interaction
+let drag = null;
 canvas.addEventListener('pointerdown', e => {
-  if(pendingShipName !== null){
-    const rect = canvas.getBoundingClientRect();
-    const geo = unproj(e.clientX - rect.left, e.clientY - rect.top);
-    if(geo){
-      waypoints.push(geo);
-      document.getElementById('coords-bar').textContent = `Waypoint ${waypoints.length}: ${geo.lat}°, ${geo.lon}° — click more or press done`;
-      draw();
-    }
-    return;
-  }
-  drag = {x: e.clientX, y: e.clientY, rx: rot.x, ry: rot.y};
-  canvas.style.cursor = 'grabbing';
+  drag = { x: e.clientX, y: e.clientY, rx: rot.x, ry: rot.y };
+  autoRotate = false;
+  document.getElementById('btn-rotate').style.color = '';
   canvas.setPointerCapture(e.pointerId);
 });
 canvas.addEventListener('pointermove', e => {
-  if(!drag){
-    const rect = canvas.getBoundingClientRect();
-    const geo = unproj(e.clientX - rect.left, e.clientY - rect.top);
-    document.getElementById('coords-bar').textContent = geo ? `${geo.lat}°N, ${geo.lon}°E` : '';
-    return;
+  if (drag) {
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    // Slow the drag at higher zoom so 1 px of drag ≈ 1 px of visible motion.
+    const sens = 0.4 / Math.max(1, scale);
+    rot.x = Math.max(-85, Math.min(85, drag.rx - dy * sens));
+    rot.y = drag.ry + dx * sens;
+  } else {
+    checkHover(e);
   }
-  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-  rot.x = Math.max(-85, Math.min(85, drag.rx - dy * 0.4));
-  rot.y = drag.ry + dx * 0.4;
-  draw();
 });
-canvas.addEventListener('pointerup', () => { drag = null; canvas.style.cursor = 'grab'; });
+canvas.addEventListener('pointerup', () => { drag = null; });
+canvas.addEventListener('pointercancel', () => { drag = null; });
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
-  scale = Math.max(0.6, Math.min(2.5, scale * (1 - e.deltaY * 0.001)));
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  if (!projection) updateProjection();
+  const before = projection.invert([mx, my]);
+
+  // Exponential zoom: each wheel notch multiplies by ~1.15× (or 1/1.15 out).
+  const factor = Math.exp(-e.deltaY * 0.0015);
+  scale = Math.max(0.4, Math.min(25, scale * factor));
+  updateProjection();
+
+  // Zoom toward the cursor: if the cursor was on the globe, rotate the
+  // projection so the same lat/lon ends up back under the cursor after zoom.
+  // center_lon = -rot.y, center_lat = rot.x. Shifting center by (geo0 - geo1)
+  // makes geo0 fall on the pixel where geo1 was after the scale change.
+  if (before) {
+    const after = projection.invert([mx, my]);
+    if (after) {
+      rot.y += after[0] - before[0];
+      rot.x += before[1] - after[1];
+      rot.x = Math.max(-85, Math.min(85, rot.x));
+    }
+  }
+}, { passive: false });
+
+function checkHover(e) {
+  if (!projection) return;
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  for (const ship of ships) {
+    const p = projection([ship.lon, ship.lat]);
+    if (!p) continue;
+    if (Math.hypot(p[0] - mx, p[1] - my) < 14) {
+      tooltip.style.display = 'block';
+      tooltip.style.left = (mx + 14) + 'px';
+      tooltip.style.top = (my - 10) + 'px';
+      tooltip.innerHTML =
+        '<div class="t-name">' + ship.name + '</div>' +
+        '<div class="t-row">LAT <span>' + ship.lat.toFixed(2) + '</span> &nbsp; LON <span>' + ship.lon.toFixed(2) + '</span></div>' +
+        '<div class="t-row">SPEED <span>' + ship.speed + ' kn</span> &nbsp; HDG <span>' + ship.hdg + '&deg;</span></div>' +
+        '<div class="t-row">STATUS <span>' + ship.status.toUpperCase() + '</span></div>';
+      return;
+    }
+  }
+  tooltip.style.display = 'none';
+}
+
+document.getElementById('btn-rotate').addEventListener('click', () => {
+  autoRotate = !autoRotate;
+  document.getElementById('btn-rotate').style.color = autoRotate ? 'var(--color-primary)' : '';
+});
+document.getElementById('btn-reset').addEventListener('click', () => {
+  rot = { x: 15, y: 0 };
+  scale = 1;
+});
+document.getElementById('btn-trails').addEventListener('click', () => {
+  showTrails = !showTrails;
+  document.getElementById('btn-trails').style.color = showTrails ? 'var(--color-primary)' : '';
+});
+
+function renderSidebar() {
+  const visible = getVisibleShips();
+  sidebarDirty = false;
+  const max = 150; // hard cap to keep DOM cheap when AIS pumps in thousands
+  const slice = visible.slice(0, max);
+  document.getElementById('ship-list').innerHTML = slice.map(s => {
+    const idStr = JSON.stringify(String(s.id));
+    const country = s.isAis ? (s.country || '') : '';
+    return '<div class="ship-card" onclick="focusShip(' + idStr + ')">' +
+      '<div class="ship-card-header">' +
+        '<div class="ship-dot" style="background:' + s.color + '"></div>' +
+        '<div class="ship-name">' + escapeHtml(s.name) + '</div>' +
+        '<div class="ship-status status-' + s.status + '">' + s.status + '</div>' +
+      '</div>' +
+      '<div class="ship-detail">' +
+        'LAT <span>' + s.lat.toFixed(2) + '</span> &nbsp; LON <span>' + s.lon.toFixed(2) + '</span><br>' +
+        'SPD <span>' + (s.speed != null ? (+s.speed).toFixed(1) : '0') + ' kn</span> &nbsp; HDG <span>' + Math.round(s.hdg || 0) + '&deg;</span>' +
+        (country ? '<br>FLAG <span>' + escapeHtml(country) + '</span>' : '') +
+        '<div style="margin-top:4px"><button class="btn-danger" onclick="event.stopPropagation();removeShip(' + idStr + ')">Remove</button></div>' +
+      '</div>' +
+    '</div>';
+  }).join('') + (visible.length > max
+    ? '<div class="empty-hint">…and ' + (visible.length - max) + ' more (apply tighter filters)</div>'
+    : (visible.length === 0 ? '<div class="empty-hint">No vessels match the current filters.</div>' : ''));
+
+  document.getElementById('ship-list-count').textContent = visible.length === ships.length
+    ? ships.length
+    : visible.length + ' / ' + ships.length;
+
+  document.getElementById('stat-total').textContent = visible.length;
+  document.getElementById('stat-moving').textContent = visible.filter(s => s.status === 'underway').length;
+  document.getElementById('stat-anchored').textContent = visible.filter(s => s.status === 'anchored').length;
+  document.getElementById('filter-count').textContent = visible.length;
+  document.getElementById('filter-total').textContent = ships.length;
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+window.focusShip = function(id) {
+  const ship = ships.find(s => String(s.id) === String(id));
+  if (!ship) return;
+  rot.y = -ship.lon;
+  rot.x = ship.lat;
+  autoRotate = false;
+  document.getElementById('btn-rotate').style.color = '';
+  addLog('Focused on ' + ship.name);
+};
+
+window.removeShip = function(id) {
+  const ship = ships.find(s => String(s.id) === String(id));
+  if (ship) addLog('Removed vessel ' + ship.name);
+  ships = ships.filter(s => String(s.id) !== String(id));
+  markVisibleDirty(); renderSidebar();
+};
+
+document.getElementById('btn-add').addEventListener('click', () => {
+  const name = document.getElementById('f-name').value.trim() || 'Vessel ' + nextId;
+  const lat = parseFloat(document.getElementById('f-lat').value) || 0;
+  const lon = parseFloat(document.getElementById('f-lon').value) || 0;
+  const speed = parseFloat(document.getElementById('f-speed').value) || 0;
+  const hdg = parseFloat(document.getElementById('f-hdg').value) || 0;
+  const status = document.getElementById('f-status').value;
+  const color = COLORS[nextId % COLORS.length];
+  ships.push({ id: nextId++, name, lat, lon, speed, hdg, status, color, trail: [{lat, lon}] });
+  markVisibleDirty(); renderSidebar();
+  addLog('Added vessel ' + name);
+  ['f-name','f-lat','f-lon','f-speed','f-hdg'].forEach(id => document.getElementById(id).value = '');
+});
+
+const logItems = [];
+function addLog(msg) {
+  const t = new Date().toTimeString().slice(0,8);
+  logItems.unshift('<div class="log-entry"><span>' + t + '</span> ' + msg + '</div>');
+  if (logItems.length > 20) logItems.pop();
+  document.getElementById('log-list').innerHTML = logItems.join('');
+}
+
+let last = 0;
+function animate(ts) {
+  requestAnimationFrame(animate);
+  const dt = Math.min((ts - last) / 1000, 0.1);
+  last = ts;
+  pulse = (Math.sin(ts / 500) + 1) / 2;
+  if (autoRotate) rot.y += dt * 6;
+  simulateShips(dt);
   draw();
-}, {passive:false});
+}
 
-window.addEventListener('resize', resize);
-setTimeout(resize, 100);
-renderShipList();
+/* ============================================================ */
+/* Filters, tabs, MID-to-country lookup, random ship generator  */
+/* ============================================================ */
+
+const filters = {
+  name: '',
+  country: '',
+  status: { underway: true, anchored: true, docked: true },
+  minSpeed: 0,
+  source: 'all'
+};
+
+function passesFilters(ship) {
+  if (filters.source === 'ais' && !ship.isAis) return false;
+  if (filters.source === 'manual' && ship.isAis) return false;
+  if (!filters.status[ship.status]) return false;
+  if ((ship.speed || 0) < filters.minSpeed) return false;
+  if (filters.name && !String(ship.name || '').toLowerCase().includes(filters.name)) return false;
+  if (filters.country) {
+    if (!ship.isAis) return false;
+    const country = ship.country; // cached on ingest, no per-frame string work
+    if (!country || !country.toLowerCase().includes(filters.country)) return false;
+  }
+  return true;
+}
+
+/* ITU-R M.585 Maritime Identification Digits (top 3 of MMSI) → country.
+ * Trimmed to the entries that actually appear in real AIS feeds. */
+const MID_TO_COUNTRY = {
+  '201':'Albania','202':'Andorra','203':'Austria','204':'Azores','205':'Belgium','206':'Belarus','207':'Bulgaria','208':'Vatican','209':'Cyprus','210':'Cyprus',
+  '211':'Germany','212':'Cyprus','213':'Georgia','214':'Moldova','215':'Malta','216':'Armenia','218':'Germany','219':'Denmark','220':'Denmark',
+  '224':'Spain','225':'Spain','226':'France','227':'France','228':'France','229':'Malta','230':'Finland','231':'Faroe Islands','232':'United Kingdom','233':'United Kingdom',
+  '234':'United Kingdom','235':'United Kingdom','236':'Gibraltar','237':'Greece','238':'Croatia','239':'Greece','240':'Greece','241':'Greece','242':'Morocco','243':'Hungary',
+  '244':'Netherlands','245':'Netherlands','246':'Netherlands','247':'Italy','248':'Malta','249':'Malta','250':'Ireland','251':'Iceland','252':'Liechtenstein','253':'Luxembourg',
+  '254':'Monaco','255':'Madeira','256':'Malta','257':'Norway','258':'Norway','259':'Norway','261':'Poland','262':'Montenegro','263':'Portugal','264':'Romania',
+  '265':'Sweden','266':'Sweden','267':'Slovakia','268':'San Marino','269':'Switzerland','270':'Czech Republic','271':'Turkey','272':'Ukraine','273':'Russia','274':'North Macedonia',
+  '275':'Latvia','276':'Estonia','277':'Lithuania','278':'Slovenia','279':'Serbia',
+  '301':'Anguilla','303':'Alaska (USA)','304':'Antigua and Barbuda','305':'Antigua and Barbuda','306':'Curaçao','307':'Aruba','308':'Bahamas','309':'Bahamas','310':'Bermuda','311':'Bahamas',
+  '312':'Belize','314':'Barbados','316':'Canada','319':'Cayman Islands','321':'Costa Rica','323':'Cuba','325':'Dominica','327':'Dominican Republic','329':'Guadeloupe','330':'Grenada',
+  '331':'Greenland','332':'Guatemala','334':'Honduras','336':'Haiti','338':'USA','339':'Jamaica','341':'Saint Kitts and Nevis','343':'Saint Lucia','345':'Mexico','347':'Martinique',
+  '348':'Montserrat','350':'Nicaragua','351':'Panama','352':'Panama','353':'Panama','354':'Panama','355':'Panama','356':'Panama','357':'Panama','358':'Puerto Rico',
+  '359':'El Salvador','361':'Saint Pierre and Miquelon','362':'Trinidad and Tobago','364':'Turks and Caicos','366':'USA','367':'USA','368':'USA','369':'USA','370':'Panama','371':'Panama',
+  '372':'Panama','373':'Panama','374':'Panama','375':'Saint Vincent','376':'Saint Vincent','377':'Saint Vincent','378':'British Virgin Islands','379':'US Virgin Islands',
+  '401':'Afghanistan','403':'Saudi Arabia','405':'Bangladesh','408':'Bahrain','410':'Bhutan','412':'China','413':'China','414':'China','416':'Taiwan','417':'Sri Lanka',
+  '419':'India','422':'Iran','423':'Azerbaijan','425':'Iraq','428':'Israel','431':'Japan','432':'Japan','434':'Turkmenistan','436':'Kazakhstan','437':'Uzbekistan',
+  '438':'Jordan','440':'South Korea','441':'South Korea','443':'Palestine','445':'North Korea','447':'Kuwait','450':'Lebanon','451':'Kyrgyzstan','453':'Macao','455':'Maldives',
+  '457':'Mongolia','459':'Nepal','461':'Oman','463':'Pakistan','466':'Qatar','468':'Syria','470':'United Arab Emirates','471':'United Arab Emirates','472':'Tajikistan','473':'Yemen',
+  '475':'Yemen','477':'Hong Kong','478':'Bosnia and Herzegovina',
+  '501':'Adelie Land','503':'Australia','506':'Myanmar','508':'Brunei','510':'Micronesia','511':'Palau','512':'New Zealand','514':'Cambodia','515':'Cambodia','516':'Christmas Island',
+  '518':'Cook Islands','520':'Fiji','523':'Cocos Islands','525':'Indonesia','529':'Kiribati','531':'Laos','533':'Malaysia','536':'Northern Mariana Islands','538':'Marshall Islands','540':'New Caledonia',
+  '542':'Niue','544':'Nauru','546':'French Polynesia','548':'Philippines','553':'Papua New Guinea','555':'Pitcairn Islands','557':'Solomon Islands','559':'American Samoa','561':'Samoa','563':'Singapore',
+  '564':'Singapore','565':'Singapore','566':'Singapore','567':'Thailand','570':'Tonga','572':'Tuvalu','574':'Vietnam','576':'Vanuatu','577':'Vanuatu','578':'Wallis and Futuna',
+  '601':'South Africa','603':'Angola','605':'Algeria','607':'Saint Paul Island','608':'Ascension Island','609':'Burundi','610':'Benin','611':'Botswana','612':'Central African Republic','613':'Cameroon',
+  '615':'Congo','616':'Comoros','617':'Cape Verde','618':'Crozet Islands','619':'Ivory Coast','620':'Comoros','621':'Djibouti','622':'Egypt','624':'Ethiopia','625':'Eritrea',
+  '626':'Gabon','627':'Ghana','629':'Gambia','630':'Guinea-Bissau','631':'Equatorial Guinea','632':'Guinea','633':'Burkina Faso','634':'Kenya','635':'Kerguelen Islands','636':'Liberia',
+  '637':'Liberia','638':'South Sudan','642':'Libya','644':'Lesotho','645':'Mauritius','647':'Madagascar','649':'Mali','650':'Mozambique','654':'Mauritania','655':'Malawi',
+  '656':'Niger','657':'Nigeria','659':'Namibia','660':'Reunion','661':'Rwanda','662':'Sudan','663':'Senegal','664':'Seychelles','665':'Saint Helena','666':'Somalia',
+  '667':'Sierra Leone','668':'Sao Tome and Principe','669':'Eswatini','670':'Chad','671':'Togo','672':'Tunisia','674':'Tanzania','675':'Uganda','676':'DR Congo','677':'Tanzania',
+  '678':'Zambia','679':'Zimbabwe',
+  '701':'Argentina','710':'Brazil','720':'Bolivia','725':'Chile','730':'Colombia','735':'Ecuador','740':'Falkland Islands','745':'French Guiana','750':'Guyana','755':'Paraguay',
+  '760':'Peru','765':'Suriname','770':'Uruguay','775':'Venezuela'
+};
+
+function getCountryFromMMSI(mmsi) {
+  if (!mmsi) return null;
+  return MID_TO_COUNTRY[String(mmsi).slice(0, 3)] || null;
+}
+
+/* Popular-flags chips */
+const POPULAR_FLAGS = ['Germany','Netherlands','United Kingdom','Norway','Greece','Italy','France','Spain','Panama','Liberia','Marshall Islands','Singapore','Malta','China','Japan','USA','Russia','Turkey'];
+function renderFlagPills() {
+  const el = document.getElementById('filter-country-pills');
+  el.innerHTML = POPULAR_FLAGS.map(f =>
+    '<span class="filter-pill" data-flag="' + escapeHtml(f) + '">' + escapeHtml(f) + '</span>'
+  ).join('');
+  el.querySelectorAll('.filter-pill').forEach(p => {
+    p.addEventListener('click', () => {
+      document.getElementById('filter-country').value = p.dataset.flag;
+      filters.country = p.dataset.flag.toLowerCase();
+      markVisibleDirty(); renderSidebar();
+    });
+  });
+}
+renderFlagPills();
+
+/* Tab switching */
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+    const target = btn.dataset.tab;
+    document.querySelectorAll('.tab-panel').forEach(p => {
+      p.classList.toggle('active', p.id === 'tab-' + target);
+    });
+  });
+});
+
+/* Filter input wiring */
+document.getElementById('filter-name').addEventListener('input', e => { filters.name = e.target.value.trim().toLowerCase(); markVisibleDirty(); renderSidebar(); });
+document.getElementById('filter-country').addEventListener('input', e => { filters.country = e.target.value.trim().toLowerCase(); markVisibleDirty(); renderSidebar(); });
+['underway','anchored','docked'].forEach(st => {
+  document.getElementById('filter-status-' + st).addEventListener('change', e => { filters.status[st] = e.target.checked; markVisibleDirty(); renderSidebar(); });
+});
+const speedSlider = document.getElementById('filter-min-speed');
+speedSlider.addEventListener('input', e => {
+  filters.minSpeed = parseFloat(e.target.value) || 0;
+  document.getElementById('filter-min-speed-val').textContent = filters.minSpeed + ' kn';
+  markVisibleDirty(); renderSidebar();
+});
+document.getElementById('filter-source').addEventListener('change', e => { filters.source = e.target.value; markVisibleDirty(); renderSidebar(); });
+document.getElementById('btn-clear-filters').addEventListener('click', () => {
+  filters.name = ''; filters.country = ''; filters.minSpeed = 0; filters.source = 'all';
+  filters.status = { underway: true, anchored: true, docked: true };
+  document.getElementById('filter-name').value = '';
+  document.getElementById('filter-country').value = '';
+  document.getElementById('filter-min-speed').value = '0';
+  document.getElementById('filter-min-speed-val').textContent = '0 kn';
+  document.getElementById('filter-source').value = 'all';
+  ['underway','anchored','docked'].forEach(st => document.getElementById('filter-status-' + st).checked = true);
+  markVisibleDirty(); renderSidebar();
+});
+
+/* Random ship generators (for the Add tab) */
+const RANDOM_NAMES = ['Atlantic','Pacific','Pioneer','Voyager','Polaris','Aurora','Mercury','Stellar','Mariner','Odyssey','Nautilus','Triton','Neptune','Helios','Tempest','Horizon','Phoenix','Endeavour'];
+function addRandomShip() {
+  const baseName = RANDOM_NAMES[Math.floor(Math.random() * RANDOM_NAMES.length)];
+  const name = 'MV ' + baseName + '-' + nextId;
+  const lat = Math.random() * 160 - 80;
+  const lon = Math.random() * 360 - 180;
+  const speed = Math.random() < 0.75 ? +(Math.random() * 22 + 1).toFixed(1) : 0;
+  const hdg = Math.floor(Math.random() * 360);
+  const status = speed > 0.5 ? 'underway' : (Math.random() < 0.5 ? 'anchored' : 'docked');
+  const color = COLORS[nextId % COLORS.length];
+  ships.push({ id: nextId++, name, lat, lon, speed, hdg, status, color, trail: [{lat, lon}] });
+}
+document.getElementById('btn-add-random').addEventListener('click', () => {
+  addRandomShip();
+  addLog('Added random vessel');
+  markVisibleDirty(); renderSidebar();
+});
+document.getElementById('btn-add-random-10').addEventListener('click', () => {
+  for (let i = 0; i < 10; i++) addRandomShip();
+  addLog('Added 10 random vessels');
+  markVisibleDirty(); renderSidebar();
+});
+
+window.addEventListener('resize', () => { resize(); });
+resize();
+addLog('System initialized');
+addLog('Globe rendering active');
+renderSidebar();
+loadLandData();
+
+setInterval(() => {
+  // If we haven't seen an AIS message for a while, treat the stream as offline
+  // even if we never received an explicit status:offline broadcast (e.g. the
+  // ais_data_stream tab was closed without disconnecting cleanly).
+  if (aisStreamActive && lastAisMsgTs > 0 && (Date.now() - lastAisMsgTs) > AIS_LIVE_TIMEOUT_MS) {
+    aisStreamActive = false;
+    addLog('AIS stream timed out (no messages for ' + (AIS_LIVE_TIMEOUT_MS / 1000) + 's)');
+    setLiveBadge(false);
+  }
+  const b = document.getElementById('live-badge');
+  if (!b || !aisStreamActive) return; // OFFLINE badge stays solid
+  b.style.opacity = b.style.opacity === '0.4' ? '1' : '0.4';
+}, 800);
+// Skip the periodic sidebar rebuild when the tab is hidden — no point
+// reflowing ~150 cards into a DOM no one is looking at.
+setInterval(() => { if (!document.hidden) renderSidebar(); }, 2000);
+
+requestAnimationFrame(animate);
 </script>
-
+</body>
+</html>
