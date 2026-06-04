@@ -162,7 +162,7 @@ header {
 
 <header>
   <div class="logo">
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <svg width="20" height="20" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
     </svg>
     ShipTrack Globe
@@ -204,19 +204,19 @@ header {
   <div class="panel tab-panel" id="tab-add">
     <div class="panel-title">Add Vessel</div>
     <div class="form-row">
-      <label class="form-label">Name</label>
+      <label class="form-label" for="f-name">Name</label>
       <input class="form-input" id="f-name" placeholder="MV Atlantic Star" />
     </div>
     <div class="form-row form-row-2">
-      <div><label class="form-label">Latitude</label><input class="form-input" id="f-lat" type="number" placeholder="0.0" min="-90" max="90"/></div>
-      <div><label class="form-label">Longitude</label><input class="form-input" id="f-lon" type="number" placeholder="0.0" min="-180" max="180"/></div>
+      <div><label class="form-label" for="f-lat">Latitude</label><input class="form-input" id="f-lat" type="number" placeholder="0.0" min="-90" max="90"/></div>
+      <div><label class="form-label" for="f-lon">Longitude</label><input class="form-input" id="f-lon" type="number" placeholder="0.0" min="-180" max="180"/></div>
     </div>
     <div class="form-row form-row-2">
-      <div><label class="form-label">Speed (kn)</label><input class="form-input" id="f-speed" type="number" placeholder="12" min="0" max="40"/></div>
-      <div><label class="form-label">Heading (&deg;)</label><input class="form-input" id="f-hdg" type="number" placeholder="90" min="0" max="359"/></div>
+      <div><label class="form-label" for="f-speed">Speed (kn)</label><input class="form-input" id="f-speed" type="number" placeholder="12" min="0" max="40"/></div>
+      <div><label class="form-label" for="f-hdg">Heading (&deg;)</label><input class="form-input" id="f-hdg" type="number" placeholder="90" min="0" max="359"/></div>
     </div>
     <div class="form-row">
-      <label class="form-label">Status</label>
+      <label class="form-label" for="f-status">Status</label>
       <select class="form-input" id="f-status">
         <option value="underway">Underway</option>
         <option value="anchored">Anchored</option>
@@ -235,12 +235,12 @@ header {
     <div class="match-count">Showing <span id="filter-count">0</span> of <span id="filter-total">0</span> vessels</div>
 
     <div class="form-row">
-      <label class="form-label">Name search</label>
+      <label class="form-label" for="filter-name">Name search</label>
       <input class="form-input" id="filter-name" placeholder="match by name..." />
     </div>
 
     <div class="form-row">
-      <label class="form-label">Flag (country)</label>
+      <label class="form-label" for="filter-country">Flag (country)</label>
       <input class="form-input" id="filter-country" placeholder="e.g. Germany, Liberia" />
       <div style="font-size:0.66rem; color: var(--color-text-muted); margin-top: 4px; line-height:1.4;">
         Matches the country of the vessel's MMSI prefix (AIS ships only).
@@ -256,7 +256,7 @@ header {
     </div>
 
     <div class="form-row">
-      <label class="form-label">Min speed</label>
+      <label class="form-label" for="filter-min-speed">Min speed</label>
       <div class="range-row">
         <input type="range" id="filter-min-speed" min="0" max="40" step="0.5" value="0">
         <span class="range-val" id="filter-min-speed-val">0 kn</span>
@@ -264,7 +264,7 @@ header {
     </div>
 
     <div class="form-row">
-      <label class="form-label">Source</label>
+      <label class="form-label" for="filter-source">Source</label>
       <select class="form-input" id="filter-source">
         <option value="all">All vessels</option>
         <option value="ais">AIS stream only</option>

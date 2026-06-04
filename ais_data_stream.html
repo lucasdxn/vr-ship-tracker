@@ -125,7 +125,7 @@ main {
 <div id="app">
   <header>
     <div class="logo">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <svg width="20" height="20" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M2 22l1.5-1.5L5 22l1.5-1.5L8 22l1.5-1.5L11 22l1.5-1.5L14 22l1.5-1.5L17 22l1.5-1.5L20 22l1.5-1.5"/>
         <path d="M5 17l-2-4 9-7 9 7-2 4"/><path d="M12 6V3"/>
       </svg>
@@ -173,7 +173,7 @@ main {
   <div id="key-modal">
     <div class="modal-card">
       <div class="modal-title">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
         </svg>
         AIS Data Stream
@@ -187,11 +187,11 @@ main {
         <b>Start the local relay first:</b> <code>npm install &amp;&amp; node relay.js</code>
       </div>
       <div class="form-row">
-        <label class="form-label">aisstream.io API Key</label>
+        <label class="form-label" for="apikey">aisstream.io API Key</label>
         <input class="form-input" id="apikey" type="password" placeholder="paste key here" autocomplete="off" autofocus/>
       </div>
       <div class="form-row">
-        <label class="form-label">Region</label>
+        <label class="form-label" for="region">Region</label>
         <select class="form-input" id="region">
           <option value="-90,-180,90,180">Whole world</option>
           <option value="30,-15,62,42">Europe</option>
