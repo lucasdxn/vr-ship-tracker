@@ -1,0 +1,7 @@
+node_modules
+npm-debug.log
+stream_log.txt
+.git
+.idea
+*.md
+LICENSE
