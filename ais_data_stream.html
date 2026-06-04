@@ -153,10 +153,11 @@ main {
       <button class="btn-primary" id="btn-conn">Disconnect</button>
       <div class="panel-title" style="margin-top: var(--space-6)">Visualization</div>
       <div style="font-size:0.74rem; color:var(--color-text-muted); line-height:1.5;">
-        Open <code>globe_ship_tracker.html</code> in another tab on the same origin.
+        Open the globe view in another tab on the same origin.
         It subscribes to the <code>ais-stream</code> BroadcastChannel and renders
         every PositionReport this page receives.
       </div>
+      <a class="btn-primary" id="open-globe" href="globe_ship_tracker.html" target="_blank" rel="noopener" style="display:inline-block; text-align:center; text-decoration:none;">Open globe tracker &rarr;</a>
     </div>
 
     <div class="panel">
@@ -182,7 +183,7 @@ main {
         Live ship tracking via <a href="https://aisstream.io" target="_blank" rel="noopener">aisstream.io</a>.
         Paste your API key to begin streaming. Positions are published on the
         <code>ais-stream</code> BroadcastChannel for any other tab on this origin
-        (e.g. <code>globe_ship_tracker.html</code>) to consume.
+        (e.g. the <a href="globe_ship_tracker.html" target="_blank" rel="noopener">globe tracker</a>) to consume.
         <br><br>
         <b>Start the local relay first:</b> <code>npm install &amp;&amp; node relay.js</code>
       </div>
@@ -299,7 +300,11 @@ function connect(key) {
   const [s, w, n, e] = parts;
   socketOpened = false; firstMessageReceived = false;
   setBadge('connecting', 'CONNECTING');
-  const relayUrl = 'ws://' + location.hostname + ':3333/v0/stream';
+  // Same-origin as the page: wss:// on HTTPS, ws:// on plain HTTP, and
+  // reuse location.host (incl. any port) so it works both locally and
+  // behind an HTTPS reverse proxy / Cloudflare tunnel.
+  const wsProto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  const relayUrl = wsProto + location.host + '/v0/stream';
   addLog('Opening WebSocket to ' + relayUrl);
 
   try { ws = new WebSocket(relayUrl); }
@@ -377,7 +382,7 @@ function connect(key) {
       let hint;
       if (ev.code === 1008 || ev.code === 4001 || ev.code === 4003) hint = 'Server rejected the API key. Generate a fresh one at aisstream.io/account.';
       else if (ev.code === 1006 && hadOpen) hint = 'Relay dropped the connection right after subscribe — almost always an invalid/revoked/rate-limited API key.';
-      else if (ev.code === 1006 && !hadOpen) hint = 'Cannot reach the local relay on port 3333. Did you start it? Run `npm install && node relay.js`.';
+      else if (ev.code === 1006 && !hadOpen) hint = 'Cannot reach the relay at ' + relayUrl + '. Locally, run `npm install && node relay.js`; if deployed, make sure the relay is serving this page and WebSocket on the same origin.';
       else hint = baseMsg;
       showModal(hint);
     } else {
