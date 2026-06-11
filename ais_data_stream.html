@@ -300,7 +300,22 @@ function connect(key) {
   const [s, w, n, e] = parts;
   socketOpened = false; firstMessageReceived = false;
   setBadge('connecting', 'CONNECTING');
-  const relayUrl = 'ws://' + location.hostname + ':3333/v0/stream';
+  // Same-origin as the page: wss:// on HTTPS, ws:// on plain HTTP, and
+  // reuse location.host (incl. any port) so it works behind an HTTPS reverse
+  // proxy / Cloudflare tunnel when the relay serves this page directly.
+  //
+  // Local fallback: if the page is served by a separate static server (e.g.
+  // `python -m http.server 8000`) the relay isn't on this origin, so point at
+  // the relay's own port (3333) on the same host instead. Override with
+  // ?relay=host:port if your relay listens elsewhere.
+  const wsProto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  const RELAY_PORT = '3333';
+  const relayOverride = new URLSearchParams(location.search).get('relay');
+  const isLocal = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(location.hostname);
+  let relayHost = location.host;
+  if (relayOverride) relayHost = relayOverride;
+  else if (isLocal && location.port !== RELAY_PORT) relayHost = location.hostname + ':' + RELAY_PORT;
+  const relayUrl = wsProto + relayHost + '/v0/stream';
   addLog('Opening WebSocket to ' + relayUrl);
 
   try { ws = new WebSocket(relayUrl); }
@@ -378,7 +393,7 @@ function connect(key) {
       let hint;
       if (ev.code === 1008 || ev.code === 4001 || ev.code === 4003) hint = 'Server rejected the API key. Generate a fresh one at aisstream.io/account.';
       else if (ev.code === 1006 && hadOpen) hint = 'Relay dropped the connection right after subscribe — almost always an invalid/revoked/rate-limited API key.';
-      else if (ev.code === 1006 && !hadOpen) hint = 'Cannot reach the local relay on port 3333. Did you start it? Run `npm install && node relay.js`.';
+      else if (ev.code === 1006 && !hadOpen) hint = 'Cannot reach the relay at ' + relayUrl + '. Locally, run `npm install && node relay.js`; if deployed, make sure the relay is serving this page and WebSocket on the same origin.';
       else hint = baseMsg;
       showModal(hint);
     } else {

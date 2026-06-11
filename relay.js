@@ -23,9 +23,24 @@ const UPSTREAM = 'wss://stream.aisstream.io/v0/stream';
 const LOG_PATH = path.join(__dirname, 'stream_log.txt');
 const INSECURE_TLS = process.env.INSECURE_TLS === '1';
 
-const logStream = fs.createWriteStream(LOG_PATH, { flags: 'a' });
+// Only error and connection messages are persisted to disk; everything else
+// is just printed to the console. The file is cleared once it reaches 4 GB so
+// it can never grow unbounded.
+const LOG_MAX_BYTES = 4 * 1024 * 1024 * 1024;
+let logStream = fs.createWriteStream(LOG_PATH, { flags: 'a' });
+let logBytes = (() => { try { return fs.statSync(LOG_PATH).size; } catch (_) { return 0; } })();
+
 function fileLog(line) {
-  logStream.write('[' + new Date().toISOString() + '] ' + line + '\n');
+  const entry = '[' + new Date().toISOString() + '] ' + line + '\n';
+  const size = Buffer.byteLength(entry);
+  if (logBytes + size > LOG_MAX_BYTES) {
+    // Clear the file by reopening in truncate mode.
+    logStream.end();
+    logStream = fs.createWriteStream(LOG_PATH, { flags: 'w' });
+    logBytes = 0;
+  }
+  logStream.write(entry);
+  logBytes += size;
 }
 fileLog('---- relay session started ----');
 
@@ -100,7 +115,7 @@ wss.on('connection', (client, req) => {
       client.send(text);
       bytesDown += text.length;
     }
-    fileLog('UP #' + upMsgCount + ' ' + text);
+    console.log('[' + ts() + '] UP #' + upMsgCount + ' ' + text);
   });
 
   upstream.on('close', (code, reason) => {
@@ -118,7 +133,7 @@ wss.on('connection', (client, req) => {
   client.on('message', (data) => {
     // Same treatment in this direction: send as text frame upstream.
     const text = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
-    fileLog('CLIENT->UP ' + text);
+    console.log('[' + ts() + '] CLIENT->UP ' + text);
     if (upstream.readyState === WebSocket.OPEN) {
       upstream.send(text);
       bytesUp += text.length;
@@ -126,7 +141,6 @@ wss.on('connection', (client, req) => {
       pending.push(text);
     } else {
       console.warn('[' + ts() + '] dropping client message; upstream not open');
-      fileLog('DROPPED client message; upstream not open');
     }
   });
 

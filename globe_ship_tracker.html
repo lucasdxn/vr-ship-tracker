@@ -83,6 +83,13 @@ header {
 }
 .panel { padding: var(--space-4); border-bottom: 1px solid var(--color-border); }
 .panel-title { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-text-muted); margin-bottom: var(--space-3); }
+.fold-title { cursor: pointer; user-select: none; outline: none; }
+.fold-title:hover { color: var(--color-text); }
+.fold-title:focus-visible { color: var(--color-primary); }
+.fold-caret { display: inline-block; transition: transform 0.15s ease; font-size: 0.65rem; }
+.fold-title.collapsed .fold-caret { transform: rotate(-90deg); }
+.fold-title.collapsed { margin-bottom: 0; }
+#ship-list.collapsed { display: none; }
 
 .ship-card {
   background: var(--color-surface-2); border: 1px solid var(--color-border);
@@ -198,7 +205,11 @@ header {
   </div>
 
   <div class="panel tab-panel active" id="tab-ships">
-    <div class="panel-title">Vessels <span style="float:right;text-transform:none;letter-spacing:0;color:var(--color-text-muted)" id="ship-list-count"></span></div>
+    <div class="panel-title fold-title" id="ship-list-toggle" role="button" tabindex="0" aria-expanded="true">
+      <span class="fold-caret">&#9662;</span>
+      Vessels
+      <span style="float:right;text-transform:none;letter-spacing:0;color:var(--color-text-muted)" id="ship-list-count"></span>
+    </div>
     <div id="ship-list"></div>
   </div>
 
@@ -274,6 +285,15 @@ header {
     </div>
 
     <button class="btn-primary" id="btn-clear-filters" style="background: var(--color-surface-2); color: var(--color-text); border: 1px solid var(--color-border);">Clear all filters</button>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Session</div>
+    <button class="btn-primary" id="btn-save-state">Save current view</button>
+    <button class="btn-primary" id="btn-clear-all" style="background: rgba(255,94,122,0.12); color:#ff5e7a; border:1px solid rgba(255,94,122,0.25); margin-top: var(--space-2);">Clear everything</button>
+    <div style="font-size:0.66rem; color:var(--color-text-muted); margin-top:6px; line-height:1.4;">
+      Saves the globe angle, zoom, vessels and filters to this browser. Restored automatically next time you open the page.
+    </div>
   </div>
 
   <div class="panel">
@@ -919,6 +939,24 @@ function renderFlagPills() {
 }
 renderFlagPills();
 
+/* Foldable vessel list */
+function setShipListCollapsed(collapsed) {
+  document.getElementById('ship-list').classList.toggle('collapsed', collapsed);
+  const t = document.getElementById('ship-list-toggle');
+  t.classList.toggle('collapsed', collapsed);
+  t.setAttribute('aria-expanded', String(!collapsed));
+}
+const shipListToggle = document.getElementById('ship-list-toggle');
+shipListToggle.addEventListener('click', () => {
+  setShipListCollapsed(!document.getElementById('ship-list').classList.contains('collapsed'));
+});
+shipListToggle.addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    setShipListCollapsed(!document.getElementById('ship-list').classList.contains('collapsed'));
+  }
+});
+
 /* Tab switching */
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -979,10 +1017,130 @@ document.getElementById('btn-add-random-10').addEventListener('click', () => {
   markVisibleDirty(); renderSidebar();
 });
 
+/* ============================================================ */
+/* Persistence: save/restore the full view to localStorage      */
+/* ============================================================ */
+const STORAGE_KEY = 'shiptrack-globe-state';
+const STATE_VERSION = 1;
+
+function serializeState(includeTrails) {
+  return JSON.stringify({
+    v: STATE_VERSION,
+    view: { rotX: rot.x, rotY: rot.y, scale, autoRotate, showTrails,
+            shipListCollapsed: document.getElementById('ship-list').classList.contains('collapsed') },
+    ships: ships.map(s => ({
+      id: s.id, isAis: !!s.isAis, name: s.name, country: s.country || '',
+      lat: s.lat, lon: s.lon, speed: s.speed, hdg: s.hdg,
+      status: s.status, color: s.color, lastUpdate: s.lastUpdate || 0,
+      // Trails can balloon localStorage with thousands of AIS ships, so we
+      // drop them to a single point if the full snapshot blows the quota.
+      trail: includeTrails && Array.isArray(s.trail) ? s.trail : [{ lat: s.lat, lon: s.lon }]
+    })),
+    nextId,
+    filters,
+    activeTab: (document.querySelector('.tab-btn.active') || { dataset: {} }).dataset.tab || 'ships'
+  });
+}
+
+function saveState() {
+  try {
+    try { localStorage.setItem(STORAGE_KEY, serializeState(true)); }
+    catch (e) { localStorage.setItem(STORAGE_KEY, serializeState(false)); } // quota → drop trails
+    addLog('Saved view (' + ships.length + ' vessels)');
+  } catch (e) {
+    addLog('Save failed: ' + e.message);
+  }
+}
+
+function setActiveTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + tab));
+}
+
+function syncFilterUI() {
+  document.getElementById('filter-name').value = filters.name || '';
+  document.getElementById('filter-country').value = filters.country || '';
+  document.getElementById('filter-min-speed').value = filters.minSpeed || 0;
+  document.getElementById('filter-min-speed-val').textContent = (filters.minSpeed || 0) + ' kn';
+  document.getElementById('filter-source').value = filters.source || 'all';
+  ['underway','anchored','docked'].forEach(st =>
+    document.getElementById('filter-status-' + st).checked = !!filters.status[st]);
+}
+
+function syncControlButtons() {
+  document.getElementById('btn-rotate').style.color = autoRotate ? 'var(--color-primary)' : '';
+  document.getElementById('btn-trails').style.color = showTrails ? 'var(--color-primary)' : '';
+}
+
+function restoreState() {
+  let raw = null;
+  try { raw = localStorage.getItem(STORAGE_KEY); } catch (e) { return false; }
+  if (!raw) return false;
+  let st;
+  try { st = JSON.parse(raw); } catch (e) { return false; }
+  if (!st || st.v !== STATE_VERSION) return false;
+
+  if (st.view) {
+    if (typeof st.view.rotX === 'number') rot.x = st.view.rotX;
+    if (typeof st.view.rotY === 'number') rot.y = st.view.rotY;
+    if (typeof st.view.scale === 'number') scale = st.view.scale;
+    autoRotate = !!st.view.autoRotate;
+    showTrails = st.view.showTrails !== false;
+    setShipListCollapsed(!!st.view.shipListCollapsed);
+  }
+  if (Array.isArray(st.ships)) {
+    ships = st.ships.map(s => ({
+      ...s,
+      trail: (Array.isArray(s.trail) && s.trail.length) ? s.trail : [{ lat: s.lat, lon: s.lon }]
+    }));
+  }
+  if (typeof st.nextId === 'number') nextId = st.nextId;
+  if (st.filters) {
+    filters.name = st.filters.name || '';
+    filters.country = st.filters.country || '';
+    filters.minSpeed = st.filters.minSpeed || 0;
+    filters.source = st.filters.source || 'all';
+    if (st.filters.status) filters.status = {
+      underway: st.filters.status.underway !== false,
+      anchored: st.filters.status.anchored !== false,
+      docked: st.filters.status.docked !== false
+    };
+  }
+  syncFilterUI();
+  syncControlButtons();
+  if (st.activeTab) setActiveTab(st.activeTab);
+  markVisibleDirty();
+  addLog('Restored saved view (' + ships.length + ' vessels)');
+  return true;
+}
+
+function clearEverything() {
+  if (!confirm('Clear everything? This removes all vessels, resets filters and the view, and deletes the saved snapshot.')) return;
+  ships = [];
+  nextId = 1;
+  rot = { x: 15, y: 0 };
+  scale = 1;
+  autoRotate = true;
+  showTrails = true;
+  filters.name = ''; filters.country = ''; filters.minSpeed = 0; filters.source = 'all';
+  filters.status = { underway: true, anchored: true, docked: true };
+  try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+  setShipListCollapsed(false);
+  syncFilterUI();
+  syncControlButtons();
+  markVisibleDirty();
+  renderSidebar();
+  addLog('Cleared everything');
+}
+
+document.getElementById('btn-save-state').addEventListener('click', saveState);
+document.getElementById('btn-clear-all').addEventListener('click', clearEverything);
+
 window.addEventListener('resize', () => { resize(); });
 resize();
 addLog('System initialized');
 addLog('Globe rendering active');
+restoreState();
 renderSidebar();
 loadLandData();
 
