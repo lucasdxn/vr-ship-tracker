@@ -301,10 +301,21 @@ function connect(key) {
   socketOpened = false; firstMessageReceived = false;
   setBadge('connecting', 'CONNECTING');
   // Same-origin as the page: wss:// on HTTPS, ws:// on plain HTTP, and
-  // reuse location.host (incl. any port) so it works both locally and
-  // behind an HTTPS reverse proxy / Cloudflare tunnel.
+  // reuse location.host (incl. any port) so it works behind an HTTPS reverse
+  // proxy / Cloudflare tunnel when the relay serves this page directly.
+  //
+  // Local fallback: if the page is served by a separate static server (e.g.
+  // `python -m http.server 8000`) the relay isn't on this origin, so point at
+  // the relay's own port (3333) on the same host instead. Override with
+  // ?relay=host:port if your relay listens elsewhere.
   const wsProto = location.protocol === 'https:' ? 'wss://' : 'ws://';
-  const relayUrl = wsProto + location.host + '/v0/stream';
+  const RELAY_PORT = '3333';
+  const relayOverride = new URLSearchParams(location.search).get('relay');
+  const isLocal = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(location.hostname);
+  let relayHost = location.host;
+  if (relayOverride) relayHost = relayOverride;
+  else if (isLocal && location.port !== RELAY_PORT) relayHost = location.hostname + ':' + RELAY_PORT;
+  const relayUrl = wsProto + relayHost + '/v0/stream';
   addLog('Opening WebSocket to ' + relayUrl);
 
   try { ws = new WebSocket(relayUrl); }
