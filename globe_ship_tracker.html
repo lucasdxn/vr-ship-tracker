@@ -27,22 +27,38 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; overflow: hidden; background: var(--color-bg); font-family: var(--font-body, sans-serif); color: var(--color-text); -webkit-font-smoothing: antialiased; }
 
-#app { display: grid; grid-template-columns: 1fr 280px; grid-template-rows: 48px 1fr; height: 100vh; }
+#app {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  grid-template-rows: 48px 1fr;
+  height: 100vh; height: 100dvh;
+  transition: grid-template-columns 0.22s ease;
+}
+/* Retracted sidebar (desktop): collapse the column, globe takes the full width. */
+#app.sidebar-hidden { grid-template-columns: 1fr 0; }
+#app.sidebar-hidden > #sidebar { border-left: none; }
 
 header {
   grid-column: 1 / -1;
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
   padding: 0 var(--space-6);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
   z-index: 10;
 }
-.logo { display: flex; align-items: center; gap: var(--space-3); font-size: 0.9rem; font-weight: 600; letter-spacing: 0.04em; }
-.logo svg { color: var(--color-primary); }
+.logo { display: flex; align-items: center; gap: var(--space-3); font-size: 0.9rem; font-weight: 600; letter-spacing: 0.04em; white-space: nowrap; }
+.logo svg { color: var(--color-primary); flex-shrink: 0; }
 .header-stats { display: flex; gap: var(--space-6); }
-.stat { font-size: 0.72rem; color: var(--color-text-muted); }
+.stat { font-size: 0.72rem; color: var(--color-text-muted); white-space: nowrap; }
 .stat span { color: var(--color-text); font-weight: 500; margin-left: 4px; }
 .header-right { display: flex; align-items: center; gap: var(--space-3); }
+.icon-btn {
+  background: transparent; border: 1px solid var(--color-border); color: var(--color-text-muted);
+  width: 32px; height: 32px; border-radius: var(--radius-md); cursor: pointer;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  font-size: 1rem; line-height: 1; transition: all 0.15s ease;
+}
+.icon-btn:hover { color: var(--color-primary); border-color: rgba(62,168,255,0.4); }
 .badge { background: rgba(62,168,255,0.12); color: var(--color-primary); border: 1px solid rgba(62,168,255,0.3); border-radius: 99px; padding: 2px 10px; font-size: 0.7rem; font-weight: 500; transition: opacity 0.4s; }
 .badge.offline { background: rgba(122,128,153,0.12); color: var(--color-text-muted); border-color: rgba(122,128,153,0.3); opacity: 1 !important; }
 
@@ -79,7 +95,37 @@ header {
   background: var(--color-surface);
   border-left: 1px solid var(--color-border);
   overflow-y: auto;
+  overflow-x: hidden;        /* clip content while the column animates to 0 */
   display: flex; flex-direction: column;
+}
+
+/* Backdrop behind the mobile drawer; inert on desktop. */
+#sidebar-backdrop { display: none; }
+
+/* ---- Phone / narrow screens: sidebar becomes a slide-in drawer ---- */
+@media (max-width: 768px) {
+  #app { grid-template-columns: 1fr; }       /* globe always full width */
+  #app.sidebar-hidden { grid-template-columns: 1fr; }
+  #sidebar {
+    position: fixed; top: 48px; right: 0; bottom: 0;
+    width: min(320px, 86vw);
+    border-left: 1px solid var(--color-border);
+    box-shadow: -12px 0 40px rgba(0,0,0,0.5);
+    transform: translateX(0);
+    transition: transform 0.22s ease;
+    z-index: 30;
+  }
+  #app.sidebar-hidden #sidebar { transform: translateX(100%); }
+  #app:not(.sidebar-hidden) #sidebar-backdrop {
+    display: block; position: fixed; top: 48px; left: 0; right: 0; bottom: 0;
+    background: rgba(5,8,16,0.5); backdrop-filter: blur(1px); z-index: 25;
+  }
+}
+
+/* Very narrow: drop the header stat readouts (they're also in the sidebar). */
+@media (max-width: 600px) {
+  .header-stats { display: none; }
+  header { padding: 0 var(--space-4); }
 }
 .panel { padding: var(--space-4); border-bottom: 1px solid var(--color-border); }
 .panel-title { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-text-muted); margin-bottom: var(--space-3); }
@@ -182,6 +228,7 @@ header {
   </div>
   <div class="header-right">
     <div class="badge offline" id="live-badge">● OFFLINE</div>
+    <button class="icon-btn" id="btn-sidebar" title="Toggle panel" aria-label="Toggle sidebar" aria-expanded="true">&#9776;</button>
   </div>
 </header>
 
@@ -201,6 +248,7 @@ header {
       <button class="tab-btn active" data-tab="ships">Ships</button>
       <button class="tab-btn" data-tab="add">Add</button>
       <button class="tab-btn" data-tab="filters">Filters</button>
+      <button class="tab-btn" data-tab="session">Session</button>
     </div>
   </div>
 
@@ -287,26 +335,27 @@ header {
     <button class="btn-primary" id="btn-clear-filters" style="background: var(--color-surface-2); color: var(--color-text); border: 1px solid var(--color-border);">Clear all filters</button>
   </div>
 
-  <div class="panel">
+  <div class="panel tab-panel" id="tab-session">
     <div class="panel-title">Session</div>
     <button class="btn-primary" id="btn-save-state">Save current view</button>
     <button class="btn-primary" id="btn-clear-all" style="background: rgba(255,94,122,0.12); color:#ff5e7a; border:1px solid rgba(255,94,122,0.25); margin-top: var(--space-2);">Clear everything</button>
     <div style="font-size:0.66rem; color:var(--color-text-muted); margin-top:6px; line-height:1.4;">
       Saves the globe angle, zoom, vessels and filters to this browser. Restored automatically next time you open the page.
     </div>
-  </div>
 
-  <div class="panel">
-    <div class="panel-title">Event Log</div>
+    <div class="panel-title" style="margin-top: var(--space-6);">Event Log</div>
     <div id="log-list"></div>
   </div>
 </div>
+
+<div id="sidebar-backdrop"></div>
 </div>
 
 <script>
 const COLORS = ['#3eff9a','#3ea8ff','#ffb83e','#ff5e7a','#c97bff','#ff9f3e','#3effee'];
 let ships = [];
 let nextId = 1;
+let selectedShipId = null;   // String(id) of the singled-out ship, or null
 
 // Cache filtered ships so we don't re-run passesFilters() across every ship
 // every animation frame. Anything that mutates `ships` or `filters` must call
@@ -531,30 +580,67 @@ function drawShip(ship) {
   const p = projection([ship.lon, ship.lat]);
   if (!p) return;
   const x = p[0], y = p[1];
+  const selected = selectedShipId != null && String(ship.id) === selectedShipId;
 
-  // Pulsing ring
-  const ringR = 8 + 4 * pulse;
+  // Pulsing ring — larger and white when this ship is singled out.
+  const ringR = (selected ? 14 : 8) + 4 * pulse;
   ctx.beginPath();
   ctx.arc(x, y, ringR, 0, Math.PI*2);
-  ctx.strokeStyle = ship.color;
-  ctx.globalAlpha = 0.15 + 0.5 * (1 - pulse);
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = selected ? '#ffffff' : ship.color;
+  ctx.globalAlpha = (selected ? 0.5 : 0.15) + 0.5 * (1 - pulse);
+  ctx.lineWidth = selected ? 2.5 : 2;
   ctx.stroke();
   ctx.globalAlpha = 1;
 
   // Ship triangle rotated to heading — inlined math beats ctx.save/translate/
   // rotate/restore (which is one of the slowest 2d-context call sequences).
+  const sz = selected ? 1.8 : 1;   // scale the marker up when selected
   const hRad = ship.hdg * DEG;
   const cosH = Math.cos(hRad), sinH = Math.sin(hRad);
-  // Local points: (0,-7), (4.5,5), (0,2.5), (-4.5,5)
+  // Local points: (0,-7), (4.5,5), (0,2.5), (-4.5,5) — scaled by sz
+  const a = 7 * sz, b = 4.5 * sz, c = 5 * sz, d = 2.5 * sz;
   ctx.fillStyle = ship.color;
   ctx.beginPath();
-  ctx.moveTo(x +  7 * sinH,           y -  7 * cosH);
-  ctx.lineTo(x + (4.5 * cosH - 5 * sinH), y + (4.5 * sinH + 5 * cosH));
-  ctx.lineTo(x -  2.5 * sinH,          y +  2.5 * cosH);
-  ctx.lineTo(x + (-4.5 * cosH - 5 * sinH), y + (-4.5 * sinH + 5 * cosH));
+  ctx.moveTo(x +  a * sinH,           y -  a * cosH);
+  ctx.lineTo(x + (b * cosH - c * sinH), y + (b * sinH + c * cosH));
+  ctx.lineTo(x -  d * sinH,           y +  d * cosH);
+  ctx.lineTo(x + (-b * cosH - c * sinH), y + (-b * sinH + c * cosH));
   ctx.closePath();
   ctx.fill();
+  if (selected) {
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    drawShipLabel(x, y, ship);
+  }
+}
+
+// Floating name + readout label for the selected ship, kept inside the canvas.
+function drawShipLabel(x, y, ship) {
+  const text = ship.name || ('MMSI ' + String(ship.id).replace(/^ais-/, ''));
+  ctx.font = '600 11px Inter, sans-serif';
+  ctx.textBaseline = 'middle';
+  const padX = 7, h = 20, tw = ctx.measureText(text).width, w = tw + padX * 2;
+  const cw = container.clientWidth, ch = container.clientHeight;
+  let lx = x + 18, ly = y - h / 2;
+  if (lx + w > cw) lx = x - 18 - w;     // flip to the left near the right edge
+  if (ly < 2) ly = 2;
+  if (ly + h > ch - 2) ly = ch - 2 - h;
+  const r = 5;
+  ctx.beginPath();
+  ctx.moveTo(lx + r, ly);
+  ctx.arcTo(lx + w, ly, lx + w, ly + h, r);
+  ctx.arcTo(lx + w, ly + h, lx, ly + h, r);
+  ctx.arcTo(lx, ly + h, lx, ly, r);
+  ctx.arcTo(lx, ly, lx + w, ly, r);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(13,15,20,0.92)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(62,168,255,0.6)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.fillStyle = '#e2e6f0';
+  ctx.fillText(text, lx + padX, ly + h / 2 + 0.5);
 }
 
 function draw() {
@@ -569,7 +655,15 @@ function draw() {
 
   const visible = getVisibleShips();
   for (let i = 0; i < visible.length; i++) drawTrail(visible[i]);
-  for (let i = 0; i < visible.length; i++) drawShip(visible[i]);
+  // Draw the selected ship last so its highlight + label sit on top of any
+  // other markers piled up at the same spot.
+  let selShip = null;
+  for (let i = 0; i < visible.length; i++) {
+    const s = visible[i];
+    if (selectedShipId != null && String(s.id) === selectedShipId) { selShip = s; continue; }
+    drawShip(s);
+  }
+  if (selShip) drawShip(selShip);
 }
 
 const DEG = Math.PI / 180;
@@ -680,45 +774,38 @@ aisChannel.addEventListener('message', ev => {
 });
 setInterval(pruneAisShips, 60 * 1000);
 
-// Interaction
+// Interaction — supports mouse drag + wheel, and touch drag + pinch-zoom.
+const pointers = new Map();   // active pointerId -> {x, y}
 let drag = null;
-canvas.addEventListener('pointerdown', e => {
-  drag = { x: e.clientX, y: e.clientY, rx: rot.x, ry: rot.y };
-  autoRotate = false;
-  document.getElementById('btn-rotate').style.color = '';
-  canvas.setPointerCapture(e.pointerId);
-});
-canvas.addEventListener('pointermove', e => {
-  if (drag) {
-    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
-    // Slow the drag at higher zoom so 1 px of drag ≈ 1 px of visible motion.
-    const sens = 0.4 / Math.max(1, scale);
-    rot.x = Math.max(-85, Math.min(85, drag.rx - dy * sens));
-    rot.y = drag.ry + dx * sens;
-  } else {
-    checkHover(e);
-  }
-});
-canvas.addEventListener('pointerup', () => { drag = null; });
-canvas.addEventListener('pointercancel', () => { drag = null; });
-canvas.addEventListener('wheel', e => {
-  e.preventDefault();
-  const rect = canvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
+let pinch = null;             // { startDist, startScale }
+let tapCandidate = null;      // down-point of a potential tap (cleared once it drags)
 
+// Pick the nearest ship to a screen point and single it out; empty space clears.
+function selectShipAtClient(clientX, clientY) {
+  const [mx, my] = canvasXY(clientX, clientY);
+  let best = null, bestD = 18;   // px hit radius
+  for (const ship of ships) {
+    if (!passesFilters(ship)) continue;
+    const p = projection([ship.lon, ship.lat]);
+    if (!p) continue;
+    const dd = Math.hypot(p[0] - mx, p[1] - my);
+    if (dd < bestD) { bestD = dd; best = ship; }
+  }
+  if (best) { selectedShipId = String(best.id); addLog('Selected ' + best.name); }
+  else { selectedShipId = null; }
+}
+
+function canvasXY(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  return [clientX - rect.left, clientY - rect.top];
+}
+
+// Zoom to `newScale`, keeping the lat/lon under (mx,my) pinned to that pixel.
+function applyZoom(newScale, mx, my) {
   if (!projection) updateProjection();
   const before = projection.invert([mx, my]);
-
-  // Exponential zoom: each wheel notch multiplies by ~1.15× (or 1/1.15 out).
-  const factor = Math.exp(-e.deltaY * 0.0015);
-  scale = Math.max(0.4, Math.min(25, scale * factor));
+  scale = Math.max(0.4, Math.min(120, newScale));
   updateProjection();
-
-  // Zoom toward the cursor: if the cursor was on the globe, rotate the
-  // projection so the same lat/lon ends up back under the cursor after zoom.
-  // center_lon = -rot.y, center_lat = rot.x. Shifting center by (geo0 - geo1)
-  // makes geo0 fall on the pixel where geo1 was after the scale change.
   if (before) {
     const after = projection.invert([mx, my]);
     if (after) {
@@ -727,6 +814,65 @@ canvas.addEventListener('wheel', e => {
       rot.x = Math.max(-85, Math.min(85, rot.x));
     }
   }
+}
+
+canvas.addEventListener('pointerdown', e => {
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  autoRotate = false;
+  document.getElementById('btn-rotate').style.color = '';
+  if (pointers.size >= 2) {
+    // Two fingers down → pinch; suspend single-finger rotation.
+    const pts = [...pointers.values()];
+    pinch = { startDist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1, startScale: scale };
+    drag = null;
+    tapCandidate = null;
+  } else {
+    drag = { x: e.clientX, y: e.clientY, rx: rot.x, ry: rot.y };
+    tapCandidate = { x: e.clientX, y: e.clientY };
+  }
+});
+canvas.addEventListener('pointermove', e => {
+  if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch && pointers.size >= 2) {
+    const pts = [...pointers.values()];
+    const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    const [mx, my] = canvasXY((pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2);
+    applyZoom(pinch.startScale * (dist / pinch.startDist), mx, my);
+  } else if (drag) {
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    // Movement beyond a few px means it's a rotate, not a tap.
+    if (tapCandidate && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) tapCandidate = null;
+    // Slow the drag at higher zoom so 1 px of drag ≈ 1 px of visible motion.
+    const sens = 0.4 / Math.max(1, scale);
+    rot.x = Math.max(-85, Math.min(85, drag.rx + dy * sens));
+    rot.y = drag.ry + dx * sens;
+  } else if (pointers.size === 0) {
+    checkHover(e);   // mouse hover (no button held)
+  }
+});
+function endPointer(e) {
+  const wasTap = tapCandidate && pointers.size === 1;   // single finger lifting cleanly
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinch = null;
+  if (pointers.size === 1) {
+    // Re-seat the drag on the remaining finger so the globe doesn't jump.
+    const [p] = [...pointers.values()];
+    drag = { x: p.x, y: p.y, rx: rot.x, ry: rot.y };
+    tapCandidate = null;
+  } else if (pointers.size === 0) {
+    drag = null;
+    if (wasTap) selectShipAtClient(e.clientX, e.clientY);
+    tapCandidate = null;
+  }
+}
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const [mx, my] = canvasXY(e.clientX, e.clientY);
+  // Exponential zoom: each wheel notch multiplies by ~1.15× (or 1/1.15 out).
+  applyZoom(scale * Math.exp(-e.deltaY * 0.0015), mx, my);
 }, { passive: false });
 
 function checkHover(e) {
@@ -758,6 +904,7 @@ document.getElementById('btn-rotate').addEventListener('click', () => {
 document.getElementById('btn-reset').addEventListener('click', () => {
   rot = { x: 15, y: 0 };
   scale = 1;
+  selectedShipId = null;
 });
 document.getElementById('btn-trails').addEventListener('click', () => {
   showTrails = !showTrails;
@@ -808,15 +955,21 @@ window.focusShip = function(id) {
   const ship = ships.find(s => String(s.id) === String(id));
   if (!ship) return;
   rot.y = -ship.lon;
-  rot.x = ship.lat;
+  rot.x = Math.max(-85, Math.min(85, ship.lat));
+  scale = Math.max(scale, 8);          // zoom in so the ship stands alone
+  selectedShipId = String(ship.id);    // single it out with highlight + label
   autoRotate = false;
   document.getElementById('btn-rotate').style.color = '';
+  // On a phone the sidebar is a drawer covering the globe — close it so the
+  // focused ship is actually visible.
+  if (window.matchMedia('(max-width: 768px)').matches) toggleSidebar(true);
   addLog('Focused on ' + ship.name);
 };
 
 window.removeShip = function(id) {
   const ship = ships.find(s => String(s.id) === String(id));
   if (ship) addLog('Removed vessel ' + ship.name);
+  if (String(id) === selectedShipId) selectedShipId = null;
   ships = ships.filter(s => String(s.id) !== String(id));
   markVisibleDirty(); renderSidebar();
 };
@@ -938,6 +1091,27 @@ function renderFlagPills() {
   });
 }
 renderFlagPills();
+
+/* Sidebar retract + responsive drawer */
+const appEl = document.getElementById('app');
+const btnSidebar = document.getElementById('btn-sidebar');
+function syncSidebarBtn() {
+  btnSidebar.setAttribute('aria-expanded', String(!appEl.classList.contains('sidebar-hidden')));
+}
+function toggleSidebar(forceHidden) {
+  if (typeof forceHidden === 'boolean') appEl.classList.toggle('sidebar-hidden', forceHidden);
+  else appEl.classList.toggle('sidebar-hidden');
+  syncSidebarBtn();
+  // On desktop the globe column width changes, so resize the canvas once the
+  // layout settles (transitionend is exact; the timeout is a mobile fallback).
+  setTimeout(resize, 240);
+}
+appEl.addEventListener('transitionend', e => { if (e.propertyName === 'grid-template-columns') resize(); });
+btnSidebar.addEventListener('click', () => toggleSidebar());
+document.getElementById('sidebar-backdrop').addEventListener('click', () => toggleSidebar(true));
+// Start collapsed on phones so the globe is immediately usable.
+if (window.matchMedia('(max-width: 768px)').matches) appEl.classList.add('sidebar-hidden');
+syncSidebarBtn();
 
 /* Foldable vessel list */
 function setShipListCollapsed(collapsed) {
@@ -1118,6 +1292,7 @@ function clearEverything() {
   if (!confirm('Clear everything? This removes all vessels, resets filters and the view, and deletes the saved snapshot.')) return;
   ships = [];
   nextId = 1;
+  selectedShipId = null;
   rot = { x: 15, y: 0 };
   scale = 1;
   autoRotate = true;
