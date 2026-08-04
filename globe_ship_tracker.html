@@ -90,6 +90,100 @@ header {
 .tooltip-box .t-name { font-weight: 600; color: var(--color-text); margin-bottom: 4px; }
 .tooltip-box .t-row { color: var(--color-text-muted); line-height: 1.6; }
 .tooltip-box .t-row span { color: var(--color-text); }
+.tooltip-box .t-type { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; margin-bottom: 5px; font-size: 0.72rem; }
+.tooltip-box .t-type i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+
+/* ---- Two-scale view controls (top-left of the globe) ---- */
+.view-overlay {
+  position: absolute; top: var(--space-4); left: var(--space-4);
+  display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-start;
+  z-index: 15; max-width: calc(100% - 2rem); pointer-events: none;
+}
+.view-overlay > * { pointer-events: auto; }
+.scale-switch {
+  display: flex; gap: 2px; background: rgba(19,23,32,0.85);
+  border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  padding: 3px; backdrop-filter: blur(8px);
+}
+.scale-btn {
+  background: transparent; border: none; color: var(--color-text-muted);
+  padding: 5px 9px; font-size: 0.66rem; font-weight: 600; letter-spacing: 0.06em;
+  border-radius: 5px; cursor: pointer; transition: all 0.15s ease; white-space: nowrap;
+}
+.scale-btn:hover { color: var(--color-text); }
+.scale-btn.active { background: rgba(62,168,255,0.15); color: var(--color-primary); }
+.view-chip {
+  background: rgba(19,23,32,0.85); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); padding: 5px 10px; font-size: 0.68rem;
+  color: var(--color-text-muted); backdrop-filter: blur(8px); white-space: nowrap;
+}
+.view-chip b { color: var(--color-text); font-weight: 600; }
+.view-chip .mode { color: var(--color-primary); font-weight: 600; letter-spacing: 0.05em; }
+.view-chip .to-scale { color: #3eff9a; font-weight: 600; }
+.region-select {
+  background: rgba(19,23,32,0.85); border: 1px solid var(--color-border);
+  color: var(--color-text); border-radius: var(--radius-md); padding: 5px 8px;
+  font-size: 0.7rem; outline: none; backdrop-filter: blur(8px); max-width: 200px; cursor: pointer;
+}
+.region-select:focus { border-color: rgba(62,168,255,0.5); }
+@media (max-width: 600px) {
+  .view-overlay { top: var(--space-2); left: var(--space-2); gap: 4px; }
+  .scale-btn { padding: 4px 6px; font-size: 0.6rem; }
+  .view-chip { font-size: 0.62rem; padding: 4px 7px; }
+}
+
+/* ---- Vessel-type legend / filter ---- */
+.type-row {
+  display: flex; align-items: center; gap: 7px; font-size: 0.73rem;
+  color: var(--color-text-muted); padding: 3px 0; cursor: pointer; user-select: none;
+}
+.type-row input[type=checkbox] { accent-color: var(--color-primary); margin: 0; }
+.type-shape { flex-shrink: 0; display: block; }
+
+/* Floating key over the globe, so the map can be read without leaving it. */
+.legend-panel {
+  position: absolute; top: var(--space-4); right: var(--space-4);
+  background: rgba(19,23,32,0.9); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); padding: 8px 10px; backdrop-filter: blur(8px);
+  z-index: 16; min-width: 158px; max-height: calc(100% - 2rem); overflow-y: auto;
+}
+.legend-panel.hidden { display: none; }
+.legend-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 0.61rem; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--color-text-muted); font-weight: 600; margin-bottom: 6px;
+}
+.legend-close {
+  background: none; border: none; color: var(--color-text-muted);
+  cursor: pointer; font-size: 0.95rem; line-height: 1; padding: 0 2px;
+}
+.legend-close:hover { color: var(--color-primary); }
+.legend-item {
+  display: flex; align-items: center; gap: 7px; font-size: 0.7rem;
+  color: var(--color-text-muted); padding: 2px 0;
+}
+/* Classes switched off in the filters are still listed, but dimmed — the key
+   should describe what's on the globe right now. */
+.legend-item.off { opacity: 0.32; }
+.legend-item .legend-count { margin-left: auto; color: var(--color-text); font-variant-numeric: tabular-nums; }
+.legend-note {
+  font-size: 0.6rem; color: var(--color-text-muted); margin-top: 7px;
+  line-height: 1.45; border-top: 1px solid var(--color-border); padding-top: 6px;
+}
+.speed-ramp { height: 8px; border-radius: 99px; margin: 5px 0 3px;
+  background: linear-gradient(90deg, rgb(55,138,221), rgb(216,90,48)); }
+.speed-ramp-labels { display: flex; justify-content: space-between; font-size: 0.6rem; color: var(--color-text-muted); }
+/* On a phone the key would cover most of the globe, so it starts closed there
+   (in JS, so the toggle button still works) and stays narrow when opened. */
+@media (max-width: 768px) { .legend-panel { min-width: 128px; font-size: 0.66rem; padding: 6px 8px; } }
+.type-count { margin-left: auto; color: var(--color-text); font-variant-numeric: tabular-nums; font-size: 0.7rem; }
+.mini-btns { display: flex; gap: var(--space-2); margin-top: 6px; }
+.mini-btn {
+  flex: 1; background: var(--color-surface-2); border: 1px solid var(--color-border);
+  color: var(--color-text-muted); border-radius: var(--radius-md); padding: 4px;
+  font-size: 0.68rem; cursor: pointer; transition: all 0.15s ease;
+}
+.mini-btn:hover { color: var(--color-primary); border-color: rgba(62,168,255,0.4); }
 
 #sidebar {
   background: var(--color-surface);
@@ -234,11 +328,59 @@ header {
 
 <div id="globe-container">
   <canvas id="globe-canvas"></canvas>
+
+  <div class="view-overlay">
+    <div class="scale-switch" id="scale-switch">
+      <button class="scale-btn" data-scale="1" title="Whole earth">GLOBE</button>
+      <button class="scale-btn" data-scale="14" title="Sea area — roughly 1600 km across">AREA</button>
+      <button class="scale-btn" data-scale="140" title="Region — roughly 160 km across">REGION</button>
+      <button class="scale-btn" data-scale="1400" title="Harbour / strait — roughly 16 km across, vessels near true scale">HARBOUR</button>
+    </div>
+    <div class="view-chip" id="view-chip"></div>
+    <select class="region-select" id="region-jump" title="Fly to a busy area">
+      <option value="">Jump to area&hellip;</option>
+      <optgroup label="Straits &amp; canals">
+        <option value="26.57,56.40,400">Strait of Hormuz</option>
+        <option value="51.05,1.50,900">Strait of Dover</option>
+        <option value="35.95,-5.60,900">Strait of Gibraltar</option>
+        <option value="41.10,29.05,1600">Bosphorus</option>
+        <option value="1.25,103.75,700">Singapore Strait</option>
+        <option value="12.58,43.33,700">Bab-el-Mandeb</option>
+        <option value="30.60,32.35,1400">Suez Canal</option>
+        <option value="9.30,-79.90,1400">Panama Canal</option>
+      </optgroup>
+      <optgroup label="Ports">
+        <option value="51.95,4.10,1200">Rotterdam</option>
+        <option value="53.87,8.70,1000">Elbe / Hamburg approach</option>
+        <option value="22.32,114.10,1200">Hong Kong</option>
+        <option value="29.72,-94.95,1400">Houston Ship Channel</option>
+      </optgroup>
+      <optgroup label="Sea areas">
+        <option value="52.00,3.00,40">North Sea</option>
+        <option value="36.00,18.00,25">Mediterranean</option>
+        <option value="26.50,53.00,40">Persian Gulf</option>
+        <option value="34.50,130.00,30">Japan / Korea</option>
+      </optgroup>
+    </select>
+  </div>
+
   <div class="globe-overlay">
     <button class="ctrl-btn" id="btn-rotate" title="Toggle auto-rotate" style="color:var(--color-primary)">&#8635;</button>
     <button class="ctrl-btn" id="btn-reset" title="Reset view">&#8962;</button>
     <button class="ctrl-btn" id="btn-trails" title="Toggle trails" style="color:var(--color-primary)">&#12316;</button>
+    <button class="ctrl-btn" id="btn-zoom-out" title="Zoom out">&minus;</button>
+    <button class="ctrl-btn" id="btn-zoom-in" title="Zoom in">+</button>
+    <button class="ctrl-btn" id="btn-legend" title="Toggle legend" style="color:var(--color-primary)">&#9636;</button>
   </div>
+
+  <div class="legend-panel" id="legend-panel">
+    <div class="legend-head">
+      <span id="legend-title">Vessel types</span>
+      <button class="legend-close" id="legend-close" title="Hide legend" aria-label="Hide legend">&times;</button>
+    </div>
+    <div id="legend-body"></div>
+  </div>
+
   <div class="tooltip-box" id="tooltip"></div>
 </div>
 
@@ -248,6 +390,7 @@ header {
       <button class="tab-btn active" data-tab="ships">Ships</button>
       <button class="tab-btn" data-tab="add">Add</button>
       <button class="tab-btn" data-tab="filters">Filters</button>
+      <button class="tab-btn" data-tab="map">Map</button>
       <button class="tab-btn" data-tab="session">Session</button>
     </div>
   </div>
@@ -275,13 +418,19 @@ header {
       <div><label class="form-label" for="f-speed">Speed (kn)</label><input class="form-input" id="f-speed" type="number" placeholder="12" min="0" max="40"/></div>
       <div><label class="form-label" for="f-hdg">Heading (&deg;)</label><input class="form-input" id="f-hdg" type="number" placeholder="90" min="0" max="359"/></div>
     </div>
-    <div class="form-row">
-      <label class="form-label" for="f-status">Status</label>
-      <select class="form-input" id="f-status">
-        <option value="underway">Underway</option>
-        <option value="anchored">Anchored</option>
-        <option value="docked">Docked</option>
-      </select>
+    <div class="form-row form-row-2">
+      <div>
+        <label class="form-label" for="f-status">Status</label>
+        <select class="form-input" id="f-status">
+          <option value="underway">Underway</option>
+          <option value="anchored">Anchored</option>
+          <option value="docked">Docked</option>
+        </select>
+      </div>
+      <div>
+        <label class="form-label" for="f-type">Type</label>
+        <select class="form-input" id="f-type"></select>
+      </div>
     </div>
     <button class="btn-primary" id="btn-add">Add Vessel</button>
     <div style="display:flex; gap: var(--space-2); margin-top: var(--space-3);">
@@ -306,6 +455,27 @@ header {
         Matches the country of the vessel's MMSI prefix (AIS ships only).
       </div>
       <div class="filter-pills" id="filter-country-pills"></div>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label">Vessel type</label>
+      <div id="type-filter-list"></div>
+      <div class="mini-btns">
+        <button class="mini-btn" id="btn-types-all">All</button>
+        <button class="mini-btn" id="btn-types-none">None</button>
+      </div>
+      <div style="font-size:0.66rem; color: var(--color-text-muted); margin-top: 6px; line-height:1.4;">
+        Type comes from the vessel's AIS static report, which is broadcast every
+        few minutes — vessels count as “Other / unknown” until theirs arrives.
+      </div>
+    </div>
+
+    <div class="form-row">
+      <label class="form-label" for="filter-color-mode">Colour vessels by</label>
+      <select class="form-input" id="filter-color-mode">
+        <option value="type">Vessel type</option>
+        <option value="speed">Speed over ground</option>
+      </select>
     </div>
 
     <div class="form-row">
@@ -335,6 +505,30 @@ header {
     <button class="btn-primary" id="btn-clear-filters" style="background: var(--color-surface-2); color: var(--color-text); border: 1px solid var(--color-border);">Clear all filters</button>
   </div>
 
+  <div class="panel tab-panel" id="tab-map">
+    <div class="panel-title">Basemap</div>
+    <div class="filter-row"><label><input type="checkbox" id="map-borders" checked> Country borders</label></div>
+    <div class="filter-row"><label><input type="checkbox" id="map-countryNames" checked> Country names</label></div>
+    <div class="filter-row"><label><input type="checkbox" id="map-waterNames" checked> Ocean &amp; sea names</label></div>
+    <div class="filter-row"><label><input type="checkbox" id="map-rivers" checked> Rivers &amp; lakes</label></div>
+    <div class="filter-row"><label><input type="checkbox" id="map-ports" checked> Ports &amp; harbours</label></div>
+    <div class="filter-row"><label><input type="checkbox" id="map-detail" checked> High-detail coastline</label></div>
+
+    <div class="panel-title" style="margin-top: var(--space-6);">Layer downloads</div>
+    <div id="map-status"></div>
+    <div style="font-size:0.66rem; color: var(--color-text-muted); margin-top: 8px; line-height:1.45;">
+      Each layer is fetched the first time you zoom in far enough to need it
+      &mdash; nothing extra downloads while you stay at globe scale. The 1:10m
+      coastline is the largest at about 3.5&nbsp;MB and only loads past 400&times;.
+      <br><br>
+      <b style="color:var(--color-text)">Vessels shown on land</b> are usually
+      correct positions on a map that is too coarse: even at 1:10m the coastline
+      is around 1&nbsp;km out, and river ports (Nanjing, Galati, Antwerp) sit on
+      channels that Natural&nbsp;Earth does not cut out of the land at all. Major
+      rivers are drawn as a nominal channel to compensate.
+    </div>
+  </div>
+
   <div class="panel tab-panel" id="tab-session">
     <div class="panel-title">Session</div>
     <button class="btn-primary" id="btn-save-state">Save current view</button>
@@ -356,6 +550,67 @@ const COLORS = ['#3eff9a','#3ea8ff','#ffb83e','#ff5e7a','#c97bff','#ff9f3e','#3e
 let ships = [];
 let nextId = 1;
 let selectedShipId = null;   // String(id) of the singled-out ship, or null
+
+/* ============================================================ */
+/* Vessel taxonomy — AIS "type of ship and cargo" code → class  */
+/* ============================================================ */
+/* ITU-R M.1371 message 5 encodes the class in the leading digit and the cargo
+ * carried in the trailing one, so bucketing by leading digit (plus a handful
+ * of standalone codes) is enough to tell a tanker from a trawler.
+ *
+ * lengthM/beamRatio are fallbacks used to draw a plausible silhouette for
+ * vessels whose ShipStaticData hasn't arrived yet — real dimensions replace
+ * them as soon as it does. */
+const SHIP_TYPES = {
+  cargo:        { label: 'Cargo',           color: '#ffb83e', lengthM: 180, beamRatio: 0.15 },
+  tanker:       { label: 'Tanker',          color: '#ff5e7a', lengthM: 240, beamRatio: 0.17 },
+  passenger:    { label: 'Passenger',       color: '#3ea8ff', lengthM: 200, beamRatio: 0.13 },
+  fishing:      { label: 'Fishing',         color: '#3eff9a', lengthM: 28,  beamRatio: 0.30 },
+  tug:          { label: 'Tug / service',   color: '#c97bff', lengthM: 32,  beamRatio: 0.34 },
+  highspeed:    { label: 'High-speed',      color: '#ff7ae0', lengthM: 45,  beamRatio: 0.24 },
+  recreational: { label: 'Sail / pleasure', color: '#3effee', lengthM: 16,  beamRatio: 0.30 },
+  special:      { label: 'Gov / special',   color: '#ffe066', lengthM: 55,  beamRatio: 0.24 },
+  other:        { label: 'Other / unknown', color: '#7d8a96', lengthM: 60,  beamRatio: 0.20 }
+};
+const TYPE_KEYS = Object.keys(SHIP_TYPES);
+
+function typeKeyFromAisCode(code) {
+  const c = Math.floor(Number(code));
+  if (!isFinite(c) || c <= 0) return 'other';
+  if (c >= 70 && c <= 79) return 'cargo';
+  if (c >= 80 && c <= 89) return 'tanker';
+  if (c >= 60 && c <= 69) return 'passenger';
+  if (c >= 40 && c <= 49) return 'highspeed';
+  if (c >= 20 && c <= 29) return 'highspeed';               // wing-in-ground craft
+  if (c === 30) return 'fishing';
+  if (c === 31 || c === 32 || c === 52 || c === 53) return 'tug';
+  if (c === 36 || c === 37) return 'recreational';
+  if (c === 33 || c === 34 || c === 35) return 'special';   // dredger / diving / military
+  if (c >= 50 && c <= 59) return 'special';                 // pilot, SAR, law, medical
+  return 'other';
+}
+
+function typeInfo(ship) { return SHIP_TYPES[ship.typeKey] || SHIP_TYPES.other; }
+
+/* 'type' paints the fleet by what each vessel is, 'speed' keeps the original
+ * blue→red speed ramp. Type is the default now that the class is available. */
+let colorMode = 'type';
+function shipColor(ship) {
+  if (colorMode === 'type') return typeInfo(ship).color;
+  return ship.color || typeInfo(ship).color;
+}
+
+/* Stable per-vessel animation offset so a hundred trawlers don't all pulse in
+ * lockstep. Derived from the id, so it survives save/restore. */
+function phaseOf(ship) {
+  if (ship.phase == null) {
+    let h = 0;
+    const s = String(ship.id);
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    ship.phase = (h % 1000) / 1000;
+  }
+  return ship.phase;
+}
 
 // Cache filtered ships so we don't re-run passesFilters() across every ship
 // every animation frame. Anything that mutates `ships` or `filters` must call
@@ -383,9 +638,56 @@ let autoRotate = true;
 let showTrails = true;
 let pulse = 0;
 
+/* ---- Two-scale viewing ------------------------------------------------
+ * The globe and the region view are the same orthographic projection at very
+ * different zooms, not two separate renderers. What changes with zoom is how
+ * much of a vessel we draw:
+ *
+ *   scale < 6      globe scale  — every ship is a 7 px course glyph
+ *   6 … 20         transition   — glyph grows into a typed silhouette
+ *   scale > 20     region scale — hull shape, deck detail, wake, labels
+ *
+ * Above ~2800 a 180 m ship finally covers 30 px, so silhouettes stop being
+ * icons and start being drawn at true size against the sea. MAX_SCALE is set
+ * to reach that; the old ceiling of 120 put a container ship at ~1 px. */
+const MIN_SCALE = 0.4;
+const MAX_SCALE = 4000;
+const DETAIL_START = 6;     // silhouettes begin to appear
+const DETAIL_FULL  = 20;    // fully detailed region view
+const EARTH_R_KM = 6371;
+
+function smoothstep(a, b, x) {
+  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+function globeRadiusPx() {
+  return Math.min(container.clientWidth, container.clientHeight) / 2 * 0.85 * scale;
+}
+// Near the centre of an orthographic projection the scale distortion is
+// negligible, so one constant km/px is accurate enough for a scale bar and
+// for sizing hulls in the region view.
+function kmPerPixel() { return EARTH_R_KM / globeRadiusPx(); }
+function viewSpanKm() { return container.clientWidth * kmPerPixel(); }
+function detailLevel() { return smoothstep(DETAIL_START, DETAIL_FULL, scale); }
+function isRegionView() { return scale >= DETAIL_START; }
+
 let projection = null;
 let pathGen = null;
 let graticule = null;
+let graticuleStep = null;
+
+// Meridian spacing that stays useful as you descend: 20° across the globe is
+// unreadable clutter at harbour zoom, and 0.05° is invisible from orbit.
+function graticuleStepForSpan(spanKm) {
+  if (spanKm > 8000) return 20;
+  if (spanKm > 3000) return 10;
+  if (spanKm > 1200) return 5;
+  if (spanKm > 400)  return 2;
+  if (spanKm > 150)  return 1;
+  if (spanKm > 60)   return 0.5;
+  if (spanKm > 20)   return 0.2;
+  return 0.1;
+}
 
 function updateProjection() {
   const w = container.clientWidth, h = container.clientHeight;
@@ -394,9 +696,52 @@ function updateProjection() {
     .scale(r)
     .translate([w/2, h/2])
     .rotate([rot.y, -rot.x, 0])
-    .clipAngle(90);
+    .clipAngle(90)
+    // Clip to the viewport in projected space. d3 does this correctly for
+    // spherical polygons — winding, holes and all — which hand-rolled lon/lat
+    // clipping cannot, because a straight edge in lon/lat is not the great
+    // circle d3 reads it as. It also means off-screen geometry costs no canvas
+    // path operations.
+    .clipExtent([[-40, -40], [w + 40, h + 40]]);
   pathGen = d3.geoPath(projection, ctx);
 }
+
+/* ---- Camera flights ---------------------------------------------------
+ * Jumping straight to a region 4000× closer is disorienting — you lose track
+ * of where on the globe you landed. Every programmatic move eases instead,
+ * interpolating zoom geometrically so the descent feels linear. */
+let camAnim = null;
+function flyTo(opts) {
+  const target = {
+    lat: opts.lat != null ? Math.max(-85, Math.min(85, opts.lat)) : rot.x,
+    lon: opts.lon != null ? -opts.lon : rot.y,
+    scale: opts.scale != null ? Math.max(MIN_SCALE, Math.min(MAX_SCALE, opts.scale)) : scale
+  };
+  // Take the short way around the antimeridian.
+  let dLon = ((target.lon - rot.y + 540) % 360) - 180;
+  camAnim = {
+    fromX: rot.x, fromY: rot.y, dY: dLon,
+    toX: target.lat, fromS: scale, toS: target.scale,
+    t: 0, dur: opts.ms != null ? opts.ms : 900
+  };
+  autoRotate = false;
+  syncControlButtons();
+}
+function stepCamera(dtMs) {
+  if (!camAnim) return;
+  camAnim.t = Math.min(1, camAnim.t + dtMs / camAnim.dur);
+  const e = camAnim.t < 0.5
+    ? 4 * camAnim.t * camAnim.t * camAnim.t
+    : 1 - Math.pow(-2 * camAnim.t + 2, 3) / 2;   // easeInOutCubic
+  rot.x = camAnim.fromX + (camAnim.toX - camAnim.fromX) * e;
+  rot.y = camAnim.fromY + camAnim.dY * e;
+  // Geometric interpolation: each frame multiplies the zoom by a constant
+  // factor, which is what "moving at a steady speed toward the surface" looks
+  // like. Linear interpolation would crawl at the start and slam at the end.
+  scale = camAnim.fromS * Math.pow(camAnim.toS / camAnim.fromS, e);
+  if (camAnim.t >= 1) camAnim = null;
+}
+function cancelCameraFlight() { camAnim = null; }
 
 function resize() {
   const dpr = window.devicePixelRatio || 1;
@@ -475,25 +820,543 @@ const LAND = [
   [[166,-46],[170,-46],[172,-42],[170,-40],[166,-44],[166,-46]],
 ];
 
-let landFeature = null;
+/* ============================================================ */
+/* Basemap — loaded progressively as you descend                */
+/* ============================================================ */
+/* The globe only ever needs a coarse coastline; rivers, ports and a finer
+ * coastline are several megabytes between them, so each layer is fetched the
+ * first time you zoom far enough for it to matter, and never again. */
+/* What the basemap draws. Turning a layer off also stops it downloading. */
+const mapLayers = {
+  detail: true,        // finer coastline once you descend
+  borders: true,
+  countryNames: true,
+  waterNames: true,
+  rivers: true,
+  ports: true
+};
 
-async function loadLandData() {
+const MAP_SOURCES = {
+  world110: 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json',
+  world50:  'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-50m.json',
+  rivers:   'https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_50m_rivers_lake_centerlines.geojson',
+  lakes:    'https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_50m_lakes.geojson',
+  ports:    'https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_10m_ports.geojson',
+  coast10:  'https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_10m_land.geojson',
+  islands10:'https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector@master/geojson/ne_10m_minor_islands.geojson'
+};
+// Zoom at which each layer becomes worth its download.
+const LAYER_TRIGGER = { world50: 25, lakes: 25, rivers: 25, ports: 60, coast10: 150, islands10: 150 };
+
+/* Which land dataset draws, as a sticky tier: 0 = coarse culled, 1 = 1:50m
+ * clipped, 2 = 1:10m clipped.
+ *
+ * The zoom that adopts a finer coastline is deliberately higher than the one
+ * that drops it. Without that gap, resting the view near a threshold swaps
+ * datasets on every frame, and since the coastlines disagree by kilometres the
+ * whole map jitters. The gap turns a flicker into a single transition.
+ *
+ * The 10m step is taken at 150× rather than 400× for the same reason: the two
+ * coastlines differ by ~4 km, which is 90 px of jump at 400× but 25 px at
+ * 150× — the earlier the swap, the less of it you see. */
+const TIER_ADOPT = [0, 25, 150];
+const TIER_DROP  = [0, 20, 115];
+let landTier = 0;
+function currentLandTier() {
+  const available = [
+    true,
+    !!(mapLayers.detail && basemap.landPolys50),
+    !!(mapLayers.detail && basemap.landPolys10)
+  ];
+  let t = landTier;
+  while (t < 2 && available[t + 1] && scale >= TIER_ADOPT[t + 1]) t++;
+  while (t > 0 && (!available[t] || scale < TIER_DROP[t])) t--;
+  landTier = t;
+  return t;
+}
+
+const basemap = {
+  // Each resolution contributes cullable country polygons, coastline lines,
+  // border lines and label anchors. 110m is fetched at startup, 50m on descent.
+  countries: null, coast: null, borders: null, places: [], land: null,
+  countries50: null, coast50: null, borders50: null, places50: [], land50: null,
+  coast10: null,                                // raw 1:10m land polygons
+  rivers: null, lakes: null, ports: null
+};
+const layerState = {};   // key → 'loading' | 'ready' | 'failed'
+
+async function loadLayer(key, prepare) {
+  if (layerState[key]) return;                 // already tried, in flight, or done
+  layerState[key] = 'loading';
+  updateMapStatus();
   try {
-    const res = await fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json');
+    const res = await fetch(MAP_SOURCES[key]);
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    const topo = await res.json();
-    landFeature = topojson.feature(topo, topo.objects.land);
-  } catch(e) {
-    console.warn('Land data fetch failed, using fallback:', e.message);
+    prepare(await res.json());
+    layerState[key] = 'ready';
+    addLog('Map layer loaded: ' + key);
+  } catch (e) {
+    layerState[key] = 'failed';
+    console.warn('Map layer ' + key + ' failed:', e.message);
+    addLog('Map layer ' + key + ' unavailable (' + e.message + ')');
+  }
+  updateMapStatus();
+}
+
+/* A topojson mesh is a single MultiLineString, which means it can only be
+ * drawn in full — no good at 50m, where most of it is off screen. Splitting it
+ * into bounding-boxed pieces lets the ones off screen cost nothing.
+ *
+ * Strands are also chopped into short runs: a single strand can be an entire
+ * national border or the whole Norwegian coast, whose bounding box overlaps
+ * the view whenever any part of the country does, which would defeat the cull.
+ * Consecutive runs share a vertex so the line stays continuous. */
+function splitMesh(mesh, chunk) {
+  const N = chunk || 48;
+  const features = [];
+  const lines = mesh.coordinates || [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    for (let j = 0; j < line.length - 1; j += N) {
+      const seg = line.slice(j, Math.min(line.length, j + N + 1));
+      if (seg.length >= 2) {
+        features.push({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: seg } });
+      }
+    }
+  }
+  return prepareGeo({ features });
+}
+
+/* world-atlas ships land and countries in one topology, so a single fetch
+ * yields the land fill, the coastline, the interior borders (meshed, so a
+ * shared boundary is drawn once rather than twice) and the country names.
+ *
+ * Everything is stored as cullable pieces: the merged land polygon would have
+ * to be walked in full every frame, which at 50m is ~100k path segments and
+ * enough to halve the frame rate on its own. */
+function prepareWorld(topo, suffix) {
+  const countries = topojson.feature(topo, topo.objects.countries);
+  const land = topojson.feature(topo, topo.objects.land);
+  basemap['land' + suffix] = land;
+  basemap['landPolys' + suffix] = prepareLandPolys(land.features || [land]);
+  basemap['countries' + suffix] = prepareGeo(countries);
+  basemap['coast' + suffix] = splitMesh(topojson.mesh(topo, topo.objects.countries, (a, b) => a === b));
+  basemap['borders' + suffix] = splitMesh(topojson.mesh(topo, topo.objects.countries, (a, b) => a !== b));
+  basemap['places' + suffix] = countries.features
+    .filter(f => f.properties && f.properties.name)
+    .map(f => ({
+      name: f.properties.name,
+      c: d3.geoCentroid(f),
+      // Solid angle in steradians; multiplied by the globe radius squared it
+      // gives roughly the country's on-screen area, which is what decides
+      // whether its name will fit inside it.
+      area: d3.geoArea(f)
+    }));
+}
+
+// Bounding box per feature, computed once, so per-frame culling is a handful
+// of comparisons instead of a projection of every coordinate.
+function prepareGeo(geo, extra) {
+  return geo.features.map(f => {
+    const b = d3.geoBounds(f);
+    return Object.assign({
+      f, name: (f.properties && f.properties.name) || '',
+      rank: f.properties && f.properties.scalerank,
+      w: b[0][0], s: b[0][1], e: b[1][0], n: b[1][1]
+    }, extra);
+  });
+}
+
+/* ---- Fine coastlines (1:50m and 1:10m) ---------------------------------
+ * These are drawn as whole polygons, bounding-box culled, and trimmed at the
+ * viewport by the projection's clipExtent.
+ *
+ * An earlier version clipped the polygons to a lon/lat rectangle by hand to
+ * save work. It was measurably wrong: d3 reads a ring spherically, so the
+ * straight rectangle edges were not the great-circle edges it assumed, and
+ * cut rings ended up with winding that describes the complement of the shape.
+ * Around Denmark that erased a fifth of the land and turned open sea into
+ * coastline. Correctness has to come from d3's own clipper. */
+
+/* Break a land layer into its individual polygons, each with a bounding box.
+ * Both layers look like a handful of features but decompose into thousands of
+ * islands — 1427 at 50m, 6837 at 10m — so a clip that skips the ones nowhere
+ * near the view walks a few thousand coordinates instead of half a million.
+ * Without this every re-clip costs a frame, which is felt as a stutter mid-
+ * zoom rather than as a slow map. */
+function prepareLandPolys(features) {
+  const out = [];
+  for (let f = 0; f < features.length; f++) {
+    const g = features[f] && features[f].geometry;
+    if (!g || !g.coordinates) continue;
+    const list = g.type === 'Polygon' ? [g.coordinates] : g.coordinates;
+    for (let i = 0; i < list.length; i++) {
+      const rings = list[i], outer = rings[0];
+      if (!outer || outer.length < 4) continue;
+      let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity;
+      for (let k = 0; k < outer.length; k++) {
+        const p = outer[k];
+        if (p[0] < w) w = p[0];
+        if (p[0] > e) e = p[0];
+        if (p[1] < s) s = p[1];
+        if (p[1] > n) n = p[1];
+      }
+      out.push({
+        rings, w, s, e, n,
+        feature: { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: rings } }
+      });
+    }
+  }
+  return out;
+}
+
+/* Clipping the land to the view is what makes the fine tiers affordable — a
+ * continent is one polygon of up to 84k points, and projecting all of them
+ * every frame costs a quarter of a second.
+ *
+ * The clipper is d3's own. An earlier hand-rolled Sutherland–Hodgman pass was
+ * measurably wrong here: it is only sound for convex subjects, and a coastline
+ * that leaves and re-enters the window gets its pieces joined along the window
+ * edge, which fills open sea with land. d3.geoIdentity().clipExtent() is a
+ * correct rectangle clipper, and running a path through a recording context
+ * hands back the clipped rings as coordinates. */
+function makeRingRecorder() {
+  const rings = [];
+  let cur = null;
+  return {
+    rings,
+    ctx: {
+      beginPath() {},
+      moveTo(x, y) { cur = [[x, y]]; rings.push(cur); },
+      lineTo(x, y) { if (cur) cur.push([x, y]); },
+      closePath() { if (cur && cur.length > 2) cur.push(cur[0].slice()); cur = null; },
+      arc() {}
+    }
+  };
+}
+
+let clipCache = null, clipRect = null, clipTag = '';
+
+function clippedLandFor(win, polys, tag) {
+  const viewLat = Math.max(0.01, win.halfDiagDeg);
+  const viewLon = viewLat / Math.max(0.05, Math.cos(win.lat * DEG));
+  // Re-clip when the view escapes the cached rectangle, or when the cache has
+  // grown far larger than the view needs (so zooming in keeps getting cheaper).
+  const slack = clipRect && (clipRect[3] - clipRect[1]) > viewLat * 12;
+  if (clipTag === tag && clipRect && !slack &&
+      win.lon - viewLon >= clipRect[0] && win.lon + viewLon <= clipRect[2] &&
+      win.lat - viewLat >= clipRect[1] && win.lat + viewLat <= clipRect[3]) {
+    return clipCache;
+  }
+  const mult = viewLat > 2 ? 2 : 4;
+  const dLat = Math.min(25, viewLat * mult), dLon = Math.min(45, viewLon * mult);
+  const w = win.lon - dLon, e = win.lon + dLon;
+  const s = Math.max(-89.9, win.lat - dLat), n = Math.min(89.9, win.lat + dLat);
+  // A rectangle straddling the antimeridian would need splitting in two; at
+  // these zooms that is a sliver of the planet, so leave it to the coarse tier.
+  if (w < -180 || e > 180) { clipCache = null; clipRect = null; clipTag = ''; return null; }
+
+  const rec = makeRingRecorder();
+  const clipper = d3.geoIdentity().clipExtent([[w, s], [e, n]]);
+  const gen = d3.geoPath(clipper, rec.ctx);
+  for (let i = 0; i < polys.length; i++) {
+    const P = polys[i];
+    if (P.e < w || P.w > e || P.n < s || P.s > n) continue;
+    gen(P.feature);
+  }
+  // Each clipped ring becomes its own polygon. Holes therefore fill as land,
+  // which is what we want here — inland water is drawn by the lakes layer.
+  clipCache = { type: 'Feature', properties: {},
+                geometry: { type: 'MultiPolygon', coordinates: rec.rings.map(r => [r]) } };
+  clipRect = [w, s, e, n];
+  clipTag = tag;
+  return clipCache;
+}
+
+/* The land for the current tier, already clipped, or null while the coarse
+ * culled tiers are in charge. */
+function fineLandFor(win) {
+  const tier = currentLandTier();
+  if (tier === 2) return clippedLandFor(win, basemap.landPolys10, '10m');
+  if (tier === 1) return clippedLandFor(win, basemap.landPolys50, '50m');
+  return null;
+}
+
+function loadBaseMap() {
+  loadLayer('world110', topo => prepareWorld(topo, ''));
+}
+// Called every frame; each layer fires exactly once thanks to layerState.
+function ensureDetailLayers() {
+  if (!mapLayers.detail) return;
+  if (scale >= LAYER_TRIGGER.world50) loadLayer('world50', topo => prepareWorld(topo, '50'));
+  if (scale >= LAYER_TRIGGER.lakes && mapLayers.rivers) loadLayer('lakes', g => basemap.lakes = prepareGeo(g));
+  if (scale >= LAYER_TRIGGER.rivers && mapLayers.rivers) loadLayer('rivers', g => basemap.rivers = prepareGeo(g));
+  if (scale >= LAYER_TRIGGER.ports && mapLayers.ports) loadLayer('ports', g => basemap.ports = prepareGeo(g));
+  if (scale >= LAYER_TRIGGER.coast10) {
+    // Minor islands are a separate file and only 0.3 MB, but they carry most
+    // of the small offshore rocks and islets a harbour view needs.
+    const add10 = g => {
+      basemap.coast10 = (basemap.coast10 || []).concat(g.features);
+      basemap.landPolys10 = prepareLandPolys(basemap.coast10);
+    };
+    loadLayer('coast10', add10);
+    loadLayer('islands10', add10);
   }
 }
 
+/* The built-in LAND outline was written without regard to winding order, and
+ * on a sphere a ring wound the wrong way describes everything *except* the
+ * shape it traces — 11 of its 17 rings enclose 95-100% of the globe. Used
+ * as-is it renders the map inside-out and makes every point test as land, so
+ * the rings are normalised once, on first use. */
+let fallbackLand = null;
+function getFallbackLand() {
+  if (!fallbackLand) {
+    fallbackLand = {
+      type: 'Feature', properties: {},
+      geometry: {
+        type: 'MultiPolygon',
+        coordinates: LAND.map(ring => {
+          const a = d3.geoArea({ type: 'Polygon', coordinates: [ring] });
+          return [a > 2 * Math.PI ? ring.slice().reverse() : ring];
+        })
+      }
+    };
+  }
+  return fallbackLand;
+}
+
+// Last-resort outline, used only until the first layer arrives or if the
+// network is unavailable. Everything else draws from cullable pieces.
 function getLandFeature() {
-  if (landFeature) return landFeature;
+  if (basemap.land) return basemap.land;
+  return getFallbackLand();
+}
+function getPlaces() {
+  // Follows the same sticky tier as the land, so country labels don't swap
+  // between the 110m and 50m centroid lists — and visibly hop — at the border.
+  return (landTier >= 1 && basemap.places50) ? basemap.places50 : basemap.places;
+}
+
+/* ---- Visible window + bbox culling ---- */
+function visibleWindow() {
+  const r = globeRadiusPx();
+  const halfDiagDeg = Math.asin(Math.min(1, Math.hypot(viewW, viewH) / 2 / r)) * 180 / Math.PI;
+  const lat = rot.x, lon = -rot.y;
   return {
-    type: 'Feature',
-    geometry: { type: 'MultiPolygon', coordinates: LAND.map(ring => [ring]) }
+    lat, lon, halfDiagDeg,
+    dLat: Math.min(90, halfDiagDeg + 2),
+    dLon: Math.min(180, (halfDiagDeg + 2) / Math.max(0.02, Math.cos(lat * DEG))),
+    all: halfDiagDeg >= 88
   };
+}
+function bboxVisible(d, win) {
+  if (win.all) return true;
+  if (d.n < win.lat - win.dLat || d.s > win.lat + win.dLat) return false;
+  /* A box that wraps the antimeridian, or spans half the globe, cannot be
+   * reduced to a centre and a half-width — and must not be.
+   *
+   * Afro-Eurasia is one polygon reaching from -180° to 179.9°. Folding that
+   * into a centre and half-span made it 0.05° wide, so past a certain zoom the
+   * continent failed the test and vanished while Zealand and Fyn, which are
+   * their own polygons, stayed. Denmark broke into islands and then into open
+   * sea. Wide boxes are simply never culled by longitude. */
+  if (d.w > d.e || d.e - d.w >= 180) return true;
+  const mid = (d.w + d.e) / 2, halfSpan = (d.e - d.w) / 2;
+  const delta = Math.abs((((mid - win.lon) + 540) % 360) - 180);
+  return delta <= win.dLon + halfSpan + 1;
+}
+
+/* ============================================================ */
+/* Map labelling                                                */
+/* ============================================================ */
+/* No compact public dataset of ocean and sea labels exists, so this is a hand
+ * table. Tier 1 reads from orbit, tier 2 covers the seas and gulfs at area
+ * zoom, tier 3 the straits and channels you only see once you're inside them.
+ * Positions are the open-water centre of each body, not its narrowest point. */
+const WATER_LABELS = [
+  ['North Pacific Ocean', 30, -160, 1], ['South Pacific Ocean', -25, -125, 1],
+  ['North Atlantic Ocean', 34, -45, 1], ['South Atlantic Ocean', -25, -15, 1],
+  ['Indian Ocean', -20, 78, 1], ['Southern Ocean', -62, 60, 1], ['Arctic Ocean', 84, 0, 1],
+
+  ['Mediterranean Sea', 35, 17, 2], ['Caribbean Sea', 15, -75, 2], ['Gulf of Mexico', 25, -90, 2],
+  ['North Sea', 56, 3, 2], ['Norwegian Sea', 68, 2, 2], ['Baltic Sea', 58, 20, 2],
+  ['Black Sea', 43, 34, 2], ['Red Sea', 20, 38, 2], ['Arabian Sea', 15, 63, 2],
+  ['Bay of Bengal', 15, 88, 2], ['South China Sea', 14, 114, 2], ['East China Sea', 29, 125, 2],
+  ['Sea of Japan', 40, 135, 2], ['Philippine Sea', 15, 132, 2], ['Coral Sea', -16, 152, 2],
+  ['Tasman Sea', -38, 160, 2], ['Bering Sea', 58, -178, 2], ['Gulf of Alaska', 56, -145, 2],
+  ['Hudson Bay', 60, -86, 2], ['Labrador Sea', 58, -55, 2], ['Greenland Sea', 75, -5, 2],
+  ['Barents Sea', 74, 40, 2], ['Kara Sea', 74, 65, 2], ['Laptev Sea', 76, 125, 2],
+  ['Sea of Okhotsk', 53, 148, 2], ['Gulf of Guinea', 2, 3, 2], ['Mozambique Channel', -18, 41, 2],
+  ['Persian Gulf', 27, 51, 2], ['Gulf of Aden', 12, 47, 2], ['Andaman Sea', 11, 96, 2],
+  ['Java Sea', -5, 112, 2], ['Banda Sea', -5, 127, 2], ['Timor Sea', -11, 128, 2],
+  ['Great Australian Bight', -37, 132, 2], ['Bay of Biscay', 45, -5, 2], ['Celtic Sea', 50, -8, 2],
+  ['Irish Sea', 53.5, -5, 2], ['Adriatic Sea', 43, 15, 2], ['Aegean Sea', 38, 25, 2],
+  ['Tyrrhenian Sea', 40, 12, 2], ['Ionian Sea', 37.5, 18, 2], ['Gulf of Bothnia', 62, 20, 2],
+  ['Gulf of Finland', 60, 26, 2], ['Yellow Sea', 35.5, 123, 2], ['Arafura Sea', -9, 136, 2],
+  ['Beaufort Sea', 72, -137, 2], ['Chukchi Sea', 70, -170, 2], ['Gulf of Thailand', 9, 101.5, 2],
+  ['Sulu Sea', 8.5, 120, 2], ['Celebes Sea', 3.5, 122, 2], ['Scotia Sea', -57, -45, 2],
+
+  ['English Channel', 50, -1.2, 3], ['Strait of Dover', 51.05, 1.5, 3],
+  ['Strait of Gibraltar', 35.95, -5.6, 3], ['Strait of Hormuz', 26.57, 56.4, 3],
+  ['Strait of Malacca', 3.5, 99.5, 3], ['Singapore Strait', 1.22, 103.8, 3],
+  ['Bab-el-Mandeb', 12.58, 43.33, 3], ['Bosphorus', 41.1, 29.05, 3],
+  ['Sea of Marmara', 40.7, 28.2, 3], ['Dardanelles', 40.2, 26.4, 3],
+  ['Taiwan Strait', 24.5, 119.5, 3], ['Korea Strait', 34.5, 129, 3],
+  ['Bass Strait', -39.5, 146, 3], ['Cook Strait', -41.3, 174.4, 3],
+  ['Kattegat', 57, 11.3, 3], ['Skagerrak', 58, 9, 3], ['Øresund', 55.8, 12.7, 3],
+  ['Suez Canal', 30.6, 32.35, 3], ['Gulf of Suez', 28.5, 33.2, 3], ['Gulf of Aqaba', 28.8, 34.7, 3],
+  ['Panama Canal', 9.3, -79.9, 3], ['Kiel Canal', 54.1, 9.7, 3],
+  ['Strait of Messina', 38.2, 15.6, 3], ['Strait of Otranto', 40.2, 19, 3],
+  ['Kerch Strait', 45.3, 36.5, 3], ['Strait of Juan de Fuca', 48.3, -124, 3],
+  ['Bristol Channel', 51.4, -4.2, 3], ['Elbe Estuary', 53.9, 8.6, 3],
+  ['Thames Estuary', 51.5, 0.9, 3], ['Solent', 50.78, -1.3, 3]
+];
+function waterTierVisible(tier) {
+  if (tier === 1) return scale <= 9;
+  if (tier === 2) return scale >= 1.6 && scale <= 340;
+  return scale >= 30;
+}
+
+/* Greedy label placement: first label to claim a rectangle keeps it. Vessels
+ * register their labels before the basemap does, so ship names win ties — this
+ * is a ship tracker, and a port name is never worth hiding a vessel for. */
+let placedLabels = [];
+function placeLabel(x, y, w, h) {
+  for (let i = 0; i < placedLabels.length; i++) {
+    const p = placedLabels[i];
+    if (x < p.x + p.w && x + w > p.x && y < p.y + p.h && y + h > p.y) return false;
+  }
+  placedLabels.push({ x, y, w, h });
+  return true;
+}
+
+// Centred text with a dark halo, rejected if it leaves the viewport or
+// collides with something already placed.
+function drawMapText(x, y, text, font, color, size, align) {
+  ctx.font = font;
+  const w = ctx.measureText(text).width, h = size + 3;
+  const lx = align === 'left' ? x : x - w / 2;
+  if (lx < 3 || lx + w > viewW - 3 || y - h / 2 < 3 || y + h / 2 > viewH - 3) return false;
+  if (!placeLabel(lx - 2, y - h / 2, w + 4, h)) return false;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(7,10,16,0.85)';
+  ctx.strokeText(text, lx, y);
+  ctx.fillStyle = color;
+  ctx.fillText(text, lx, y);
+  return true;
+}
+
+function drawWaterLabels() {
+  for (let i = 0; i < WATER_LABELS.length; i++) {
+    const [name, lat, lon, tier] = WATER_LABELS[i];
+    if (!waterTierVisible(tier)) continue;
+    if (!isOnFrontHemisphereFast(lat, lon)) continue;
+    const p = projection([lon, lat]);
+    if (!p) continue;
+    const size = tier === 1 ? 14 : tier === 2 ? 11.5 : 10;
+    ctx.letterSpacing = tier === 1 ? '3px' : tier === 2 ? '1.5px' : '0.5px';
+    drawMapText(p[0], p[1], tier === 1 ? name.toUpperCase() : name,
+                'italic ' + (tier === 1 ? 500 : 400) + ' ' + size + 'px Inter, sans-serif',
+                tier === 1 ? 'rgba(125,190,255,0.5)' : 'rgba(120,180,240,0.62)', size);
+    ctx.letterSpacing = '0px';
+  }
+}
+
+function drawCountryLabels() {
+  const places = getPlaces();
+  if (!places || !places.length) return;
+  const r = globeRadiusPx();
+  for (let i = 0; i < places.length; i++) {
+    const d = places[i];
+    // Projected area ≈ solid angle × r². A name that would spill outside its
+    // own country is noise, so small countries simply go unlabelled.
+    if (d.area * r * r < 2600) continue;
+    if (!isOnFrontHemisphereFast(d.c[1], d.c[0])) continue;
+    const p = projection(d.c);
+    if (!p) continue;
+    const size = Math.max(9, Math.min(15, 8 + Math.sqrt(d.area * r * r) / 26));
+    ctx.letterSpacing = '1px';
+    drawMapText(p[0], p[1], d.name.toUpperCase(),
+                '600 ' + size.toFixed(1) + 'px Inter, sans-serif', 'rgba(206,220,242,0.72)', size);
+    ctx.letterSpacing = '0px';
+  }
+}
+
+// Ports get their marks with the basemap (under the fleet) and their names
+// with the other labels (over it), so a vessel never hides the harbour it is
+// entering but the name can still yield to the vessel's own.
+function portRankLimit() {
+  if (scale >= 900) return 8;
+  if (scale >= 300) return 6;
+  if (scale >= 120) return 5;
+  return 4;
+}
+function drawPortMarks(win) {
+  const limit = portRankLimit();
+  ctx.fillStyle = '#ffc46b';
+  ctx.strokeStyle = 'rgba(255,196,107,0.55)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < basemap.ports.length; i++) {
+    const d = basemap.ports[i];
+    if (d.rank > limit || !bboxVisible(d, win)) continue;
+    const c = d.f.geometry.coordinates;
+    if (!isOnFrontHemisphereFast(c[1], c[0])) continue;
+    const p = projection(c);
+    if (!p || p[0] < 0 || p[1] < 0 || p[0] > viewW || p[1] > viewH) continue;
+    ctx.beginPath();
+    ctx.rect(p[0] - 2.5, p[1] - 2.5, 5, 5);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(p[0], p[1], 6, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+function drawPortLabels(win) {
+  const limit = portRankLimit();
+  for (let i = 0; i < basemap.ports.length; i++) {
+    const d = basemap.ports[i];
+    if (d.rank > limit || !d.name || !bboxVisible(d, win)) continue;
+    const c = d.f.geometry.coordinates;
+    if (!isOnFrontHemisphereFast(c[1], c[0])) continue;
+    const p = projection(c);
+    if (!p) continue;
+    drawMapText(p[0] + 9, p[1], d.name, '500 10px Inter, sans-serif', '#ffd694', 10, 'left');
+  }
+}
+
+// Anchor a river's name at the midpoint of its longest strand — computed once
+// per river and cached on the record.
+function riverAnchor(d) {
+  if (!d._anchor) {
+    const lines = d.f.geometry.coordinates;
+    let best = lines[0];
+    for (let i = 1; i < lines.length; i++) if (lines[i].length > best.length) best = lines[i];
+    d._anchor = best[Math.floor(best.length / 2)];
+  }
+  return d._anchor;
+}
+function drawRiverLabels(win) {
+  for (let i = 0; i < basemap.rivers.length; i++) {
+    const d = basemap.rivers[i];
+    if (!d.name || !bboxVisible(d, win)) continue;
+    const c = riverAnchor(d);
+    if (!c || !isOnFrontHemisphereFast(c[1], c[0])) continue;
+    const p = projection(c);
+    if (!p) continue;
+    drawMapText(p[0], p[1], d.name, 'italic 400 10px Inter, sans-serif', 'rgba(130,195,255,0.75)', 10);
+  }
+}
+
+function drawMapLabels() {
+  const win = visibleWindow();
+  if (mapLayers.waterNames) drawWaterLabels();
+  if (mapLayers.countryNames) drawCountryLabels();
+  if (mapLayers.ports && basemap.ports && scale >= LAYER_TRIGGER.ports) drawPortLabels(win);
+  if (mapLayers.rivers && basemap.rivers && scale >= 120) drawRiverLabels(win);
 }
 
 function drawGlobe() {
@@ -503,44 +1366,163 @@ function drawGlobe() {
   const cx = w/2, cy = h/2;
   ctx.clearRect(0, 0, w, h);
 
-  // Atmosphere glow
-  const grad = ctx.createRadialGradient(cx, cy, r * 0.98, cx, cy, r * 1.18);
-  grad.addColorStop(0, 'rgba(62,168,255,0.22)');
-  grad.addColorStop(1, 'rgba(62,168,255,0)');
-  ctx.beginPath();
-  ctx.arc(cx, cy, r * 1.18, 0, Math.PI*2);
-  ctx.fillStyle = grad;
-  ctx.fill();
+  // Past a certain zoom the limb is far outside the viewport — we're looking
+  // at open sea, not at a planet. Painting a multi-million-pixel arc and its
+  // gradient would cost real time and show nothing, so fill flat instead.
+  const limbVisible = r < Math.hypot(w, h);
 
-  // Ocean
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI*2);
-  ctx.fillStyle = '#0a1628';
-  ctx.fill();
+  if (limbVisible) {
+    // Atmosphere glow
+    const grad = ctx.createRadialGradient(cx, cy, r * 0.98, cx, cy, r * 1.18);
+    grad.addColorStop(0, 'rgba(62,168,255,0.22)');
+    grad.addColorStop(1, 'rgba(62,168,255,0)');
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 1.18, 0, Math.PI*2);
+    ctx.fillStyle = grad;
+    ctx.fill();
 
-  // Graticule
-  if (!graticule) graticule = d3.geoGraticule().step([20, 20]);
+    // Ocean
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI*2);
+    ctx.fillStyle = '#0a1628';
+    ctx.fill();
+  } else {
+    ctx.fillStyle = '#0a1628';
+    ctx.fillRect(0, 0, w, h);
+  }
+
+  // Graticule — spacing follows the zoom so it reads as a local grid up close.
+  // The extent must be clamped to what's on screen as well: a 0.1° grid drawn
+  // over the whole sphere is 3600 meridians, nearly all of them off-view.
+  const step = graticuleStepForSpan(viewSpanKm());
+  const halfDiagDeg = Math.asin(Math.min(1, Math.hypot(w, h) / 2 / r)) * 180 / Math.PI;
+  const cLatDeg = rot.x, cLonDeg = -rot.y;
+  if (graticuleStep !== step) {
+    graticule = d3.geoGraticule().step([step, step])
+                  // Precision has to shrink with the step or fine grids come
+                  // out as visibly straight-edged polygons.
+                  .precision(Math.max(0.02, step / 4));
+    graticuleStep = step;
+  }
+  if (halfDiagDeg >= 88) {
+    graticule.extent([[-180, -89.9], [180, 89.9]]);
+  } else {
+    const padLat = Math.min(89.9, halfDiagDeg + step);
+    const latLo = Math.max(-89.9, cLatDeg - padLat), latHi = Math.min(89.9, cLatDeg + padLat);
+    // Meridians converge with latitude, so the longitude window has to widen
+    // by 1/cos(lat) to cover the same ground distance.
+    const lonPad = Math.min(180, (halfDiagDeg + step) / Math.max(0.02, Math.cos(cLatDeg * DEG)));
+    graticule.extent([[cLonDeg - lonPad, latLo], [cLonDeg + lonPad, latHi]]);
+  }
   ctx.beginPath();
   pathGen(graticule());
   ctx.strokeStyle = 'rgba(62,168,255,0.08)';
   ctx.lineWidth = 0.5;
   ctx.stroke();
 
-  // Land
+  const win = visibleWindow();
+  // Resolves the sticky tier as a side effect. Everything below follows it, so
+  // the land, coastline, borders and place labels can never disagree about
+  // which resolution they are drawing.
+  const fine = fineLandFor(win);
+  const res = (landTier >= 1 && basemap.countries50) ? '50' : '';
+
+  // Adds every visible piece of a cullable layer to the current path.
+  function pathCulled(list) {
+    if (!list) return 0;
+    let n = 0;
+    for (let i = 0; i < list.length; i++) {
+      if (bboxVisible(list[i], win)) { pathGen(list[i].f); n++; }
+    }
+    return n;
+  }
+
+  // The 1:10m coastline's median error against real port positions is ~1.3 km
+  // rather than the 4.3 km of the 50m data — the difference between a berthed
+  // vessel sitting on the quay and sitting several streets inland.
+  //
+  // Land — filled as one path so adjacent countries paint together and leave
+  // no seams between them.
   ctx.beginPath();
-  pathGen(getLandFeature());
+  if (fine) pathGen(fine);
+  else if (basemap['countries' + res]) pathCulled(basemap['countries' + res]);
+  else pathGen(getLandFeature());          // built-in outline until data lands
   ctx.fillStyle = '#15263a';
   ctx.fill();
+
+  // Inland water, drawn in the sea colour so lakes read as water and the
+  // rivers feeding them line up with something.
+  if (mapLayers.rivers && basemap.lakes && scale >= LAYER_TRIGGER.lakes) {
+    ctx.beginPath();
+    pathCulled(basemap.lakes);
+    ctx.fillStyle = '#0d1c30';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(62,168,255,0.25)';
+    ctx.lineWidth = 0.6;
+    ctx.stroke();
+  }
+
+  /* Rivers. The data is centrelines with no width, and Natural Earth's land
+   * polygon does not cut river channels out of the land — which is why a
+   * vessel correctly reported at Nanjing or Galati lands on solid colour.
+   * Drawing the major rivers as a nominal channel at close zoom restores the
+   * water under them. The width is indicative, not surveyed. */
+  if (mapLayers.rivers && basemap.rivers && scale >= LAYER_TRIGGER.rivers) {
+    const hairline = Math.min(1.6, 0.5 + curDetail * 0.9);
+    const channelPx = Math.min(22, 0.45 / curKmPerPx);   // ~450 m across
+    const majors = [], minors = [];
+    for (let i = 0; i < basemap.rivers.length; i++) {
+      const d = basemap.rivers[i];
+      if (!bboxVisible(d, win)) continue;
+      (d.rank <= 3 ? majors : minors).push(d);
+    }
+    if (channelPx > hairline && majors.length) {
+      ctx.beginPath();
+      for (let i = 0; i < majors.length; i++) pathGen(majors[i].f);
+      ctx.strokeStyle = '#0d1c30';               // same water as the lakes
+      ctx.lineWidth = channelPx;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+      ctx.lineCap = 'butt';
+    }
+    ctx.beginPath();
+    for (let i = 0; i < majors.length; i++) pathGen(majors[i].f);
+    for (let i = 0; i < minors.length; i++) pathGen(minors[i].f);
+    ctx.strokeStyle = 'rgba(90,180,255,0.42)';
+    ctx.lineWidth = hairline;
+    ctx.stroke();
+  }
+
+  // Country boundaries — meshed, so a shared border is drawn once, and split
+  // into strands so the ones off screen cost nothing.
+  if (mapLayers.borders && basemap['borders' + res]) {
+    ctx.beginPath();
+    pathCulled(basemap['borders' + res]);
+    ctx.strokeStyle = 'rgba(140,170,210,0.30)';
+    ctx.lineWidth = 0.6;
+    ctx.stroke();
+  }
+
+  // Coastline last, so it reads on top of rivers meeting the sea.
+  ctx.beginPath();
+  if (fine) pathGen(fine);
+  else if (basemap['coast' + res]) pathCulled(basemap['coast' + res]);
+  else pathGen(getLandFeature());
   ctx.strokeStyle = 'rgba(62,200,255,0.18)';
   ctx.lineWidth = 0.8;
   ctx.stroke();
 
+  if (mapLayers.ports && basemap.ports && scale >= LAYER_TRIGGER.ports) drawPortMarks(win);
+
   // Limb
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI*2);
-  ctx.strokeStyle = 'rgba(62,168,255,0.35)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
+  if (limbVisible) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI*2);
+    ctx.strokeStyle = 'rgba(62,168,255,0.35)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
 }
 
 function drawTrail(ship) {
@@ -548,9 +1530,9 @@ function drawTrail(ship) {
   // d3.geoOrthographic with clipAngle(90) returns null for points behind the
   // globe — so we can stroke each visible segment without invoking d3.geoPath
   // (which is ~10× heavier due to GeoJSON parsing and antimeridian handling).
-  ctx.strokeStyle = ship.color;
+  ctx.strokeStyle = shipColor(ship);
   ctx.globalAlpha = 0.45;
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 1.5 + curDetail;
   ctx.beginPath();
   let started = false;
   const trail = ship.trail;
@@ -575,31 +1557,62 @@ function isOnFrontHemisphereFast(lat, lon) {
          cLatCos * Math.cos(sLat) * Math.cos(sLon - cLon) >= 0;
 }
 
-function drawShip(ship) {
+/* Colour helper — memoised because the detail renderer asks for half a dozen
+ * alpha variants of the same hull colour every frame. Handles both the '#rgb'
+ * type palette and the 'rgb(r,g,b)' strings the speed ramp produces. */
+const rgbCache = new Map();
+function rgbaOf(color, a) {
+  let c = rgbCache.get(color);
+  if (!c) {
+    if (color && color[0] === '#') {
+      c = [parseInt(color.slice(1,3),16), parseInt(color.slice(3,5),16), parseInt(color.slice(5,7),16)];
+    } else {
+      const m = String(color).match(/\d+/g);
+      c = m ? m.slice(0,3).map(Number) : [125,138,150];
+    }
+    rgbCache.set(color, c);
+  }
+  return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')';
+}
+
+function drawShip(ship, tms) {
   if (!isOnFrontHemisphereFast(ship.lat, ship.lon)) return;
   const p = projection([ship.lon, ship.lat]);
   if (!p) return;
   const x = p[0], y = p[1];
+  // Off-viewport cull. Cheap at globe scale, essential at region scale where
+  // most of the fleet sits outside the frame but still passes the hemisphere
+  // test — drawing their hulls and wakes would be pure waste.
+  const pad = 80 + 120 * curDetail;
+  if (x < -pad || y < -pad || x > viewW + pad || y > viewH + pad) return;
+
   const selected = selectedShipId != null && String(ship.id) === selectedShipId;
+  if (curDetail < 0.02) drawShipGlyph(ship, x, y, selected);
+  else drawShipDetailed(ship, x, y, selected, tms);
+}
+
+// Globe scale: the original course triangle. Kept as its own fast path — the
+// inlined rotation beats save/translate/rotate/restore, which matters when
+// there are thousands of these on screen.
+function drawShipGlyph(ship, x, y, selected) {
+  const col = shipColor(ship);
 
   // Pulsing ring — larger and white when this ship is singled out.
   const ringR = (selected ? 14 : 8) + 4 * pulse;
   ctx.beginPath();
   ctx.arc(x, y, ringR, 0, Math.PI*2);
-  ctx.strokeStyle = selected ? '#ffffff' : ship.color;
+  ctx.strokeStyle = selected ? '#ffffff' : col;
   ctx.globalAlpha = (selected ? 0.5 : 0.15) + 0.5 * (1 - pulse);
   ctx.lineWidth = selected ? 2.5 : 2;
   ctx.stroke();
   ctx.globalAlpha = 1;
 
-  // Ship triangle rotated to heading — inlined math beats ctx.save/translate/
-  // rotate/restore (which is one of the slowest 2d-context call sequences).
-  const sz = selected ? 1.8 : 1;   // scale the marker up when selected
+  const sz = (selected ? 1.8 : 1) * (1 + curDetail * 0.6);
   const hRad = ship.hdg * DEG;
   const cosH = Math.cos(hRad), sinH = Math.sin(hRad);
   // Local points: (0,-7), (4.5,5), (0,2.5), (-4.5,5) — scaled by sz
   const a = 7 * sz, b = 4.5 * sz, c = 5 * sz, d = 2.5 * sz;
-  ctx.fillStyle = ship.color;
+  ctx.fillStyle = col;
   ctx.beginPath();
   ctx.moveTo(x +  a * sinH,           y -  a * cosH);
   ctx.lineTo(x + (b * cosH - c * sinH), y + (b * sinH + c * cosH));
@@ -615,6 +1628,305 @@ function drawShip(ship) {
   }
 }
 
+/* ---- Region scale: typed silhouettes ----------------------------------
+ * Outlines are normalised: x spans ±1 half-beam, y spans ±1 half-length with
+ * the bow at -1. Listed bow → starboard → stern, then mirrored to port, so
+ * each entry only describes half a hull plus the two centreline points. */
+const HULL_OUTLINES = {
+  cargo:        [[0,-1],[0.55,-0.78],[0.85,-0.55],[1,-0.3],[1,0.85],[0.9,1]],
+  tanker:       [[0,-1],[0.6,-0.8],[0.92,-0.5],[1,-0.15],[1,0.8],[0.85,1]],
+  passenger:    [[0,-1],[0.45,-0.7],[0.8,-0.35],[1,0.05],[0.95,0.7],[0.75,1]],
+  fishing:      [[0,-1],[0.7,-0.6],[1,-0.1],[1,0.55],[0.8,1]],
+  tug:          [[0,-1],[0.75,-0.65],[1,-0.15],[1,0.6],[0.85,1]],
+  highspeed:    [[0,-1],[0.35,-0.6],[0.7,-0.15],[1,0.35],[1,0.85],[0.7,1]],
+  recreational: [[0,-1],[0.55,-0.35],[0.8,0.2],[0.6,0.85],[0.2,1]],
+  special:      [[0,-1],[0.5,-0.68],[0.85,-0.3],[1,0.1],[0.95,0.75],[0.8,1]],
+  other:        [[0,-1],[0.6,-0.7],[0.95,-0.3],[1,0.1],[1,0.85],[0.85,1]]
+};
+// Vessels that visibly work the sea rather than plough through it get a slow
+// roll, in degrees of amplitude.
+const HULL_ROLL = { fishing: 2.5, recreational: 7, tug: 1.5 };
+
+function hullPath(key, L, B) {
+  const pts = HULL_OUTLINES[key] || HULL_OUTLINES.other;
+  const hl = L / 2, hb = B / 2;
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0] * hb, pts[0][1] * hl);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0] * hb, pts[i][1] * hl);
+  for (let i = pts.length - 1; i >= 1; i--) ctx.lineTo(-pts[i][0] * hb, pts[i][1] * hl);
+  ctx.closePath();
+}
+
+/* The same outline as an SVG polygon, for the legend and the type filter.
+ * Driven off HULL_OUTLINES and the class palette so the key can never drift
+ * out of step with what the canvas actually draws. Bow up, as on the globe
+ * when a vessel is heading north. */
+function hullSvg(key, color, w, h) {
+  const pts = HULL_OUTLINES[key] || HULL_OUTLINES.other;
+  const cx = w / 2, cy = h / 2, hb = w / 2 * 0.9, hl = h / 2 * 0.94;
+  const coords = [];
+  for (let i = 0; i < pts.length; i++) coords.push((cx + pts[i][0] * hb).toFixed(1) + ',' + (cy + pts[i][1] * hl).toFixed(1));
+  for (let i = pts.length - 1; i >= 1; i--) coords.push((cx - pts[i][0] * hb).toFixed(1) + ',' + (cy + pts[i][1] * hl).toFixed(1));
+  return '<svg class="type-shape" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" aria-hidden="true">' +
+    '<polygon points="' + coords.join(' ') + '" fill="' + color + '" fill-opacity="0.82" ' +
+    'stroke="' + color + '" stroke-width="1" stroke-linejoin="round"/></svg>';
+}
+
+function drawShipDetailed(ship, x, y, selected, tms) {
+  const info = typeInfo(ship);
+  const key = ship.typeKey || 'other';
+  const lengthM = ship.lengthM || info.lengthM;
+  const beamM = ship.beamM || lengthM * info.beamRatio;
+
+  // How big the vessel really is at this zoom, in pixels.
+  const truePx = (lengthM / 1000) / curKmPerPx;
+  // …and how big it needs to be to stay findable. Below ~10 px of true size
+  // the silhouette is drawn oversized as an icon; above ~30 px it is drawn at
+  // true scale, and in between the two blend so nothing pops.
+  const floorPx = (9 + 13 * curDetail) * (selected ? 1.5 : 1);
+  const trueness = smoothstep(10, 30, truePx);
+  const L = floorPx * (1 - trueness) + truePx * trueness;
+  const B = Math.max(2.5, L * (beamM / lengthM));
+  const col = shipColor(ship);
+  const ph = phaseOf(ship);
+  const speed = ship.speed || 0;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(ship.hdg * DEG);
+
+  drawWake(L, B, speed, tms, ph, col);
+
+  const roll = HULL_ROLL[key];
+  if (roll && speed >= 0) ctx.rotate(Math.sin(tms / 1700 + ph * 6.283) * roll * DEG * curDetail);
+
+  // Hull
+  hullPath(key, L, B);
+  ctx.fillStyle = rgbaOf(col, 0.82);
+  ctx.fill();
+  ctx.lineWidth = Math.max(0.6, L * 0.018);
+  ctx.strokeStyle = selected ? '#ffffff' : rgbaOf(col, 0.95);
+  ctx.stroke();
+
+  // Deck detail is only legible once the hull is a decent size; below that the
+  // silhouette alone carries the type.
+  if (L > 13) {
+    ctx.save();
+    hullPath(key, L, B);
+    ctx.clip();                       // keep deck furniture inside the hull
+    drawDeck(key, L, B, tms, ph, col);
+    ctx.restore();
+    drawRig(key, L, B, tms, ph, col); // masts, sweeps and nets fall outside it
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // Predicted position six minutes out — a plain dead-reckoning projection of
+  // the reported course and speed, drawn dashed to mark it as inferred.
+  if (curDetail > 0.5 && speed > 0.5) {
+    const aheadPx = Math.min(500, (speed * 0.1 * 1.852) / curKmPerPx);
+    if (aheadPx > 8) {
+      const hRad = ship.hdg * DEG;
+      ctx.save();
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = rgbaOf(col, 0.5 * curDetail);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x + Math.sin(hRad) * L * 0.5, y - Math.cos(hRad) * L * 0.5);
+      ctx.lineTo(x + Math.sin(hRad) * (L * 0.5 + aheadPx), y - Math.cos(hRad) * (L * 0.5 + aheadPx));
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  if (selected) {
+    // The singled-out vessel is drawn (and claims its space) immediately, so
+    // nothing can take the label the user actually asked for.
+    drawShipLabel(x, y, ship);
+  } else if (curDetail > 0.55 && labelBudget > 0 && L > 11) {
+    // Everyone else queues. Place names are drawn in between and get first
+    // refusal: there are only ever a handful of them and they're what tells
+    // you which strait you're looking at, whereas a vessel's name is one
+    // hover away and its class is already legible from the silhouette.
+    labelBudget--;
+    pendingShipLabels.push({ x, y, ship, L, alpha: Math.min(1, (curDetail - 0.55) / 0.25) });
+  }
+}
+
+// Turbulent water astern, length scaled by speed. Drawn before the hull so it
+// tucks under the transom.
+function drawWake(L, B, speed, tms, ph, col) {
+  if (speed < 0.5) return;
+  const wl = L * Math.min(3.2, 0.5 + speed * 0.16);
+  const y0 = L * 0.45;
+  ctx.globalAlpha = 0.14 * curDetail;
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  ctx.moveTo(-B * 0.45, y0);
+  ctx.lineTo(B * 0.45, y0);
+  ctx.lineTo(B * 1.6, y0 + wl);
+  ctx.lineTo(-B * 1.6, y0 + wl);
+  ctx.closePath();
+  ctx.fill();
+
+  // Bow-wave arcs sliding astern, so the vessel reads as moving even when the
+  // globe is still.
+  ctx.strokeStyle = col;
+  ctx.lineWidth = Math.max(0.5, L * 0.012);
+  for (let i = 0; i < 3; i++) {
+    const t = ((tms / (2600 - Math.min(1800, speed * 70)) + ph + i / 3) % 1);
+    ctx.globalAlpha = (1 - t) * 0.35 * curDetail;
+    ctx.beginPath();
+    ctx.arc(0, y0 + t * wl, B * (0.5 + t * 1.1), Math.PI * 0.12, Math.PI * 0.88);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Superstructure and cargo, clipped to the hull outline.
+function drawDeck(key, L, B, tms, ph, col) {
+  ctx.globalAlpha = 1;
+  if (key === 'cargo') {
+    // Container stacks, with a highlight sweeping fore-to-aft.
+    const rows = 5, band = L * 0.62, rh = band / rows;
+    const sweep = ((tms / 1800 + ph) % 1) * rows;
+    for (let i = 0; i < rows; i++) {
+      const near = Math.max(0, 1 - Math.abs(sweep - i));
+      ctx.fillStyle = rgbaOf(col, 0.35 + 0.4 * near);
+      ctx.fillRect(-B * 0.4, -L * 0.34 + i * rh, B * 0.8, rh * 0.66);
+    }
+    ctx.fillStyle = rgbaOf('#0d0f14', 0.75);
+    ctx.fillRect(-B * 0.36, L * 0.3, B * 0.72, L * 0.14);
+  } else if (key === 'tanker') {
+    // Cargo block breathing slowly, plus the deck pipeline and manifold.
+    ctx.fillStyle = rgbaOf(col, 0.25 + 0.22 * (0.5 + 0.5 * Math.sin(tms / 1500 + ph * 6.283)));
+    ctx.fillRect(-B * 0.38, -L * 0.2, B * 0.76, L * 0.5);
+    ctx.strokeStyle = rgbaOf('#0d0f14', 0.7);
+    ctx.lineWidth = Math.max(0.6, B * 0.07);
+    ctx.beginPath();
+    ctx.moveTo(0, -L * 0.4); ctx.lineTo(0, L * 0.3);
+    ctx.stroke();
+    ctx.fillStyle = rgbaOf('#0d0f14', 0.75);
+    ctx.fillRect(-B * 0.4, L * 0.32, B * 0.8, L * 0.13);
+  } else if (key === 'passenger') {
+    ctx.fillStyle = rgbaOf('#0d0f14', 0.55);
+    ctx.fillRect(-B * 0.42, -L * 0.32, B * 0.84, L * 0.72);
+    // Two rows of cabin windows, each blinking on its own slow cycle.
+    const ww = Math.max(0.7, B * 0.07), wh = Math.max(0.7, L * 0.028);
+    for (let r = 0; r < 2; r++) {
+      for (let c = 0; c < 6; c++) {
+        const lit = 0.3 + 0.7 * Math.abs(Math.sin(tms / 1100 + ph * 6.283 + r * 0.7 + c * 0.9));
+        ctx.fillStyle = rgbaOf('#ffe9b0', lit * 0.9);
+        ctx.fillRect(-B * 0.3 + c * (B * 0.6 / 5) - ww / 2, -L * 0.2 + r * L * 0.22, ww, wh);
+      }
+    }
+  } else if (key === 'tug' || key === 'special') {
+    ctx.fillStyle = rgbaOf('#0d0f14', 0.6);
+    ctx.fillRect(-B * 0.34, -L * 0.18, B * 0.68, L * 0.42);
+  } else if (key === 'highspeed') {
+    ctx.fillStyle = rgbaOf('#0d0f14', 0.5);
+    ctx.beginPath();
+    ctx.moveTo(0, -L * 0.3); ctx.lineTo(B * 0.34, L * 0.3);
+    ctx.lineTo(-B * 0.34, L * 0.3); ctx.closePath();
+    ctx.fill();
+  } else if (key === 'fishing') {
+    ctx.fillStyle = rgbaOf('#0d0f14', 0.6);
+    ctx.fillRect(-B * 0.3, -L * 0.28, B * 0.6, L * 0.3);
+  } else if (key === 'other') {
+    ctx.fillStyle = rgbaOf('#0d0f14', 0.5);
+    ctx.fillRect(-B * 0.32, -L * 0.05, B * 0.64, L * 0.35);
+  }
+}
+
+// Everything that projects beyond the hull: gear, sweeps, spray, sails.
+function drawRig(key, L, B, tms, ph, col) {
+  if (key === 'fishing') {
+    // Gear streaming astern — arcs expanding away from the stern, faster when
+    // the boat is working slowly.
+    ctx.strokeStyle = col;
+    ctx.lineWidth = Math.max(0.5, L * 0.015);
+    for (let i = 0; i < 3; i++) {
+      const t = ((tms / 2400 + ph + i / 3) % 1);
+      ctx.globalAlpha = (1 - t) * 0.45 * curDetail;
+      ctx.beginPath();
+      ctx.arc(0, L * 0.45, B * 0.6 + t * L * 1.5, Math.PI * 0.18, Math.PI * 0.82);
+      ctx.stroke();
+    }
+  } else if (key === 'special') {
+    // Radar sweep.
+    const ang = ((tms / 2600 + ph) % 1) * Math.PI * 2 - Math.PI / 2;
+    ctx.globalAlpha = 0.28 * curDetail;
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.arc(0, 0, L * 0.95, ang, ang + 0.45);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 0.75 * curDetail;
+    ctx.strokeStyle = col;
+    ctx.lineWidth = Math.max(0.5, L * 0.012);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(Math.cos(ang + 0.45) * L * 0.95, Math.sin(ang + 0.45) * L * 0.95);
+    ctx.stroke();
+  } else if (key === 'recreational') {
+    // Mainsail, leaning with the roll already applied to the hull.
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = rgbaOf('#e2e6f0', 0.8);
+    ctx.beginPath();
+    ctx.moveTo(0, -L * 0.42);
+    ctx.lineTo(B * 0.95, L * 0.28);
+    ctx.lineTo(0, L * 0.22);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = rgbaOf(col, 0.9);
+    ctx.lineWidth = Math.max(0.5, L * 0.012);
+    ctx.stroke();
+  } else if (key === 'highspeed') {
+    // Spray peeling off the bow.
+    ctx.fillStyle = col;
+    for (let i = 0; i < 3; i++) {
+      const t = ((tms / 520 + ph + i / 3) % 1);
+      ctx.globalAlpha = (1 - t) * 0.5 * curDetail;
+      const sx = B * 0.5 + t * B * 0.6, sy = -L * 0.3 + t * L * 0.9;
+      const sw = Math.max(0.8, B * 0.09), sh = Math.max(1, L * 0.11);
+      ctx.fillRect(sx, sy, sw, sh);
+      ctx.fillRect(-sx - sw, sy, sw, sh);
+    }
+  } else if (key === 'tug') {
+    // Prop wash boiling under the stern.
+    ctx.strokeStyle = col;
+    ctx.lineWidth = Math.max(0.5, L * 0.02);
+    for (let i = 0; i < 3; i++) {
+      const t = ((tms / 750 + ph + i / 3) % 1);
+      ctx.globalAlpha = (1 - t) * 0.5 * curDetail;
+      ctx.beginPath();
+      ctx.arc((i - 1) * B * 0.3, L * 0.55 + t * L * 0.45, B * 0.2 * (0.5 + t), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Lightweight name tag used for unselected vessels in the region view — no
+// box, so a crowded strait doesn't turn into a wall of panels.
+function drawRegionLabel(x, y, ship, L, alpha) {
+  const text = ship.name || ('MMSI ' + String(ship.id).replace(/^ais-/, ''));
+  ctx.font = '500 10px Inter, sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.globalAlpha = alpha * 0.85;
+  ctx.fillStyle = 'rgba(13,15,20,0.75)';
+  const tw = ctx.measureText(text).width;
+  const lx = x + L * 0.5 + 6, ly = y;
+  // Claim the space, and skip the label outright if another vessel already
+  // has it — overlapping names are worse than a missing one.
+  if (!placeLabel(lx - 2, ly - 7, tw + 4, 14)) { ctx.globalAlpha = 1; return; }
+  ctx.fillRect(lx - 2, ly - 7, tw + 4, 14);
+  ctx.fillStyle = '#cfd6e6';
+  ctx.fillText(text, lx, ly + 0.5);
+  ctx.globalAlpha = 1;
+}
+
 // Floating name + readout label for the selected ship, kept inside the canvas.
 function drawShipLabel(x, y, ship) {
   const text = ship.name || ('MMSI ' + String(ship.id).replace(/^ais-/, ''));
@@ -626,6 +1938,9 @@ function drawShipLabel(x, y, ship) {
   if (lx + w > cw) lx = x - 18 - w;     // flip to the left near the right edge
   if (ly < 2) ly = 2;
   if (ly + h > ch - 2) ly = ch - 2 - h;
+  // The selected vessel always gets its label; reserving the space just keeps
+  // place names from being drawn over it.
+  placeLabel(lx, ly, w, h);
   const r = 5;
   ctx.beginPath();
   ctx.moveTo(lx + r, ly);
@@ -643,7 +1958,30 @@ function drawShipLabel(x, y, ship) {
   ctx.fillText(text, lx + padX, ly + h / 2 + 0.5);
 }
 
-function draw() {
+/* Per-frame constants shared with the ship renderers, so that zoom-dependent
+ * values aren't recomputed once per vessel. */
+let viewW = 0, viewH = 0, curDetail = 0, curKmPerPx = 1, labelBudget = 0;
+const MAX_REGION_LABELS = 55;
+// Unselected vessel names, deferred until the place names have been placed.
+const pendingShipLabels = [];
+function flushShipLabels() {
+  for (let i = 0; i < pendingShipLabels.length; i++) {
+    const q = pendingShipLabels[i];
+    drawRegionLabel(q.x, q.y, q.ship, q.L, q.alpha);
+  }
+  pendingShipLabels.length = 0;
+}
+
+function draw(tms) {
+  viewW = container.clientWidth;
+  viewH = container.clientHeight;
+  curDetail = detailLevel();
+  curKmPerPx = kmPerPixel();
+  labelBudget = MAX_REGION_LABELS;
+  placedLabels.length = 0;
+  pendingShipLabels.length = 0;
+
+  ensureDetailLayers();   // fetches at most once per layer, per session
   drawGlobe();
   // Prime per-frame hemisphere cull constants (centre lat/lon → sin/cos).
   // The cull test inside drawShip then only costs three trig calls per ship
@@ -661,9 +1999,46 @@ function draw() {
   for (let i = 0; i < visible.length; i++) {
     const s = visible[i];
     if (selectedShipId != null && String(s.id) === selectedShipId) { selShip = s; continue; }
-    drawShip(s);
+    drawShip(s, tms);
   }
-  if (selShip) drawShip(selShip);
+  if (selShip) drawShip(selShip, tms);
+
+  // Place names first, then the queued vessel names into whatever space is
+  // left. Both are drawn above the fleet either way.
+  drawMapLabels();
+  flushShipLabels();
+  if (curDetail > 0.02) drawScaleBar();
+}
+
+// Distance reference for the region view — without one, a silhouette that is
+// sometimes an icon and sometimes true-to-scale tells you nothing about size.
+function niceDistanceKm(km) {
+  const pow = Math.pow(10, Math.floor(Math.log10(km)));
+  const n = km / pow;
+  return (n >= 5 ? 5 : n >= 2 ? 2 : 1) * pow;
+}
+function drawScaleBar() {
+  const targetPx = 130;
+  const km = niceDistanceKm(targetPx * curKmPerPx);
+  const px = km / curKmPerPx;
+  if (!isFinite(px) || px < 20 || px > viewW * 0.6) return;
+  const x1 = viewW - 24 - px, y = viewH - 26;
+  const label = km >= 1 ? km + ' km' : Math.round(km * 1000) + ' m';
+
+  ctx.save();
+  ctx.globalAlpha = 0.85 * Math.min(1, curDetail * 3);
+  ctx.strokeStyle = 'rgba(226,230,240,0.75)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(x1, y - 5); ctx.lineTo(x1, y); ctx.lineTo(x1 + px, y); ctx.lineTo(x1 + px, y - 5);
+  ctx.stroke();
+  ctx.font = '500 10px Inter, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillStyle = 'rgba(226,230,240,0.85)';
+  ctx.fillText(label, x1 + px / 2, y - 3);
+  ctx.textAlign = 'left';
+  ctx.restore();
 }
 
 const DEG = Math.PI / 180;
@@ -711,6 +2086,34 @@ function aisShipColor(sog) {
   return 'rgb(' + r + ',' + g + ',' + b + ')';
 }
 
+/* ShipStaticData is broadcast every few minutes per vessel and often arrives
+ * before that vessel's first position, so unmatched ones are parked here and
+ * applied when the position shows up. */
+const pendingStatics = new Map();
+
+function applyStatic(ship, info) {
+  if (info.shipType != null) {
+    ship.aisType = info.shipType;
+    ship.typeKey = typeKeyFromAisCode(info.shipType);
+  }
+  if (info.lengthM) ship.lengthM = info.lengthM;
+  if (info.beamM) ship.beamM = info.beamM;
+  if (info.destination) ship.destination = info.destination;
+  if (info.name && !ship.name) ship.name = info.name;
+}
+
+function ingestAisStatic(msg) {
+  const id = 'ais-' + msg.mmsi;
+  const ship = ships.find(s => s.id === id);
+  if (ship) {
+    applyStatic(ship, msg);
+    markVisibleDirty();     // type is a filter dimension, so membership may change
+  } else {
+    if (pendingStatics.size > 8000) pendingStatics.clear();   // keep it bounded
+    pendingStatics.set(id, msg);
+  }
+}
+
 function ingestAisShip(msg) {
   const id = 'ais-' + msg.mmsi;
   let ship = ships.find(s => s.id === id);
@@ -727,12 +2130,22 @@ function ingestAisShip(msg) {
       country: getCountryFromMMSI(String(msg.mmsi)) || '',
       lat: msg.lat, lon: msg.lon,
       speed, hdg, status, color,
+      typeKey: 'other',
       trail: [{ lat: msg.lat, lon: msg.lon }],
       lastUpdate: Date.now()
     };
+    // Type/dimensions may have ridden along with this position, or have been
+    // waiting in the pending map since before the vessel first reported.
+    if (msg.shipType != null || msg.lengthM || msg.beamM) applyStatic(ship, msg);
+    const pending = pendingStatics.get(id);
+    if (pending) { applyStatic(ship, pending); pendingStatics.delete(id); }
     ships.push(ship);
     markVisibleDirty();
   } else {
+    if (ship.aisType == null && msg.shipType != null) {
+      applyStatic(ship, msg);
+      markVisibleDirty();
+    }
     const speedChanged = ship.speed !== speed;
     const statusChanged = ship.status !== status;
     ship.lat = msg.lat;
@@ -767,6 +2180,9 @@ aisChannel.addEventListener('message', ev => {
     if (!aisStreamActive) { aisStreamActive = true; addLog('AIS stream connected'); setLiveBadge(true); }
     lastAisMsgTs = Date.now();
     ingestAisShip(msg);
+  } else if (msg.type === 'static') {
+    lastAisMsgTs = Date.now();
+    ingestAisStatic(msg);
   } else if (msg.type === 'status') {
     if (msg.state === 'online' && !aisStreamActive) { aisStreamActive = true; addLog('AIS stream online'); setLiveBadge(true); }
     if (msg.state === 'offline' && aisStreamActive) { aisStreamActive = false; addLog('AIS stream offline'); setLiveBadge(false); }
@@ -804,7 +2220,7 @@ function canvasXY(clientX, clientY) {
 function applyZoom(newScale, mx, my) {
   if (!projection) updateProjection();
   const before = projection.invert([mx, my]);
-  scale = Math.max(0.4, Math.min(120, newScale));
+  scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, newScale));
   updateProjection();
   if (before) {
     const after = projection.invert([mx, my]);
@@ -820,6 +2236,7 @@ canvas.addEventListener('pointerdown', e => {
   canvas.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   autoRotate = false;
+  cancelCameraFlight();     // grabbing the globe overrides any flight in progress
   document.getElementById('btn-rotate').style.color = '';
   if (pointers.size >= 2) {
     // Two fingers down → pinch; suspend single-finger rotation.
@@ -843,10 +2260,15 @@ canvas.addEventListener('pointermove', e => {
     const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
     // Movement beyond a few px means it's a rotate, not a tap.
     if (tapCandidate && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) tapCandidate = null;
-    // Slow the drag at higher zoom so 1 px of drag ≈ 1 px of visible motion.
-    const sens = 0.4 / Math.max(1, scale);
+    // Degrees of rotation that move the surface exactly one pixel at the
+    // current zoom, so the globe tracks the pointer instead of outrunning it —
+    // which matters far more once a drag can cover 20 km or 20 000.
+    const sens = 1 / Math.max(1e-6, globeRadiusPx() * DEG);
+    // Meridians crowd together away from the equator, so the same pixel of
+    // horizontal drag has to cover more longitude the further north you are.
+    const lonSens = sens / Math.max(0.15, Math.cos(rot.x * DEG));
     rot.x = Math.max(-85, Math.min(85, drag.rx + dy * sens));
-    rot.y = drag.ry + dx * sens;
+    rot.y = drag.ry + dx * lonSens;
   } else if (pointers.size === 0) {
     checkHover(e);   // mouse hover (no button held)
   }
@@ -879,17 +2301,29 @@ function checkHover(e) {
   if (!projection) return;
   const rect = canvas.getBoundingClientRect();
   const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-  for (const ship of ships) {
+  // Only vessels the filters actually let through are on screen, so only those
+  // should answer the pointer.
+  const visible = getVisibleShips();
+  const hitR = 14 + 10 * curDetail;   // silhouettes are bigger than glyphs
+  for (const ship of visible) {
     const p = projection([ship.lon, ship.lat]);
     if (!p) continue;
-    if (Math.hypot(p[0] - mx, p[1] - my) < 14) {
+    if (Math.hypot(p[0] - mx, p[1] - my) < hitR) {
+      const info = typeInfo(ship);
+      const dims = ship.lengthM
+        ? '<div class="t-row">LOA <span>' + Math.round(ship.lengthM) + ' m</span>' +
+          (ship.beamM ? ' &nbsp; BEAM <span>' + Math.round(ship.beamM) + ' m</span>' : '') + '</div>'
+        : '';
       tooltip.style.display = 'block';
       tooltip.style.left = (mx + 14) + 'px';
       tooltip.style.top = (my - 10) + 'px';
       tooltip.innerHTML =
-        '<div class="t-name">' + ship.name + '</div>' +
-        '<div class="t-row">LAT <span>' + ship.lat.toFixed(2) + '</span> &nbsp; LON <span>' + ship.lon.toFixed(2) + '</span></div>' +
-        '<div class="t-row">SPEED <span>' + ship.speed + ' kn</span> &nbsp; HDG <span>' + ship.hdg + '&deg;</span></div>' +
+        '<div class="t-name">' + escapeHtml(ship.name) + '</div>' +
+        '<div class="t-type" style="color:' + info.color + '"><i style="background:' + info.color + '"></i>' + info.label + '</div>' +
+        '<div class="t-row">LAT <span>' + ship.lat.toFixed(3) + '</span> &nbsp; LON <span>' + ship.lon.toFixed(3) + '</span></div>' +
+        '<div class="t-row">SPEED <span>' + (+(ship.speed || 0)).toFixed(1) + ' kn</span> &nbsp; HDG <span>' + Math.round(ship.hdg || 0) + '&deg;</span></div>' +
+        dims +
+        (ship.destination ? '<div class="t-row">DEST <span>' + escapeHtml(ship.destination) + '</span></div>' : '') +
         '<div class="t-row">STATUS <span>' + ship.status.toUpperCase() + '</span></div>';
       return;
     }
@@ -902,10 +2336,80 @@ document.getElementById('btn-rotate').addEventListener('click', () => {
   document.getElementById('btn-rotate').style.color = autoRotate ? 'var(--color-primary)' : '';
 });
 document.getElementById('btn-reset').addEventListener('click', () => {
-  rot = { x: 15, y: 0 };
-  scale = 1;
   selectedShipId = null;
+  flyTo({ lat: 15, lon: 0, scale: 1, ms: 700 });
 });
+document.getElementById('btn-zoom-in').addEventListener('click', () => {
+  cancelCameraFlight();
+  applyZoom(scale * 2, viewW / 2, viewH / 2);
+});
+document.getElementById('btn-zoom-out').addEventListener('click', () => {
+  cancelCameraFlight();
+  applyZoom(scale / 2, viewW / 2, viewH / 2);
+});
+
+/* ---- Two-scale controls ---------------------------------------------- */
+/* The preset zooms are the four rungs the design is built around: whole
+ * earth, sea area, region, harbour. Each keeps the current centre — the
+ * button changes how close you are, not where you're looking. */
+const scaleSwitch = document.getElementById('scale-switch');
+scaleSwitch.addEventListener('click', e => {
+  const btn = e.target.closest('.scale-btn');
+  if (!btn) return;
+  flyTo({ scale: parseFloat(btn.dataset.scale), ms: 800 });
+});
+
+// Which rung the current zoom belongs to, for highlighting the switch.
+function activeScaleBtn() {
+  const btns = [...scaleSwitch.querySelectorAll('.scale-btn')];
+  let best = null, bestD = Infinity;
+  for (const b of btns) {
+    const d = Math.abs(Math.log(scale / parseFloat(b.dataset.scale)));
+    if (d < bestD) { bestD = d; best = b; }
+  }
+  return bestD < 0.9 ? best : null;   // no rung claimed when between them
+}
+
+document.getElementById('region-jump').addEventListener('change', e => {
+  const v = e.target.value;
+  if (!v) return;
+  const [lat, lon, sc] = v.split(',').map(Number);
+  const label = e.target.options[e.target.selectedIndex].textContent;
+  flyTo({ lat, lon, scale: sc, ms: 1400 });
+  addLog('Flying to ' + label);
+  e.target.value = '';
+  e.target.blur();
+});
+
+// Double-click / double-tap dives one rung deeper at the point you picked,
+// which is the fastest way from "somewhere in the North Sea" to a single
+// vessel's wake without touching the zoom control at all.
+canvas.addEventListener('dblclick', e => {
+  e.preventDefault();
+  const [mx, my] = canvasXY(e.clientX, e.clientY);
+  const target = projection && projection.invert ? projection.invert([mx, my]) : null;
+  const next = scale < 12 ? 14 : scale < 120 ? 140 : scale < 1200 ? 1400 : MAX_SCALE;
+  if (target) flyTo({ lat: target[1], lon: target[0], scale: next, ms: 850 });
+  else flyTo({ scale: next, ms: 850 });
+});
+
+// Live readout of where you are on the globe→harbour continuum.
+const viewChip = document.getElementById('view-chip');
+function updateViewChip() {
+  const span = viewSpanKm();
+  const spanTxt = span >= 1000 ? Math.round(span / 100) * 100 + ' km'
+                : span >= 10   ? Math.round(span) + ' km'
+                : span >= 1    ? span.toFixed(1) + ' km'
+                :                Math.round(span * 1000) + ' m';
+  const mode = scale < DETAIL_START ? 'GLOBE' : scale < 400 ? 'REGION' : 'HARBOUR';
+  // A 180 m vessel needs ~30 px before its silhouette stops being an icon.
+  const trueScale = (0.18 / curKmPerPx) >= 30;
+  viewChip.innerHTML =
+    '<span class="mode">' + mode + '</span> &middot; <b>' + spanTxt + '</b> across' +
+    (trueScale ? ' &middot; <span class="to-scale">vessels to scale</span>' : '');
+  const active = activeScaleBtn();
+  scaleSwitch.querySelectorAll('.scale-btn').forEach(b => b.classList.toggle('active', b === active));
+}
 document.getElementById('btn-trails').addEventListener('click', () => {
   showTrails = !showTrails;
   document.getElementById('btn-trails').style.color = showTrails ? 'var(--color-primary)' : '';
@@ -919,13 +2423,16 @@ function renderSidebar() {
   document.getElementById('ship-list').innerHTML = slice.map(s => {
     const idStr = JSON.stringify(String(s.id));
     const country = s.isAis ? (s.country || '') : '';
+    const info = typeInfo(s);
     return '<div class="ship-card" onclick="focusShip(' + idStr + ')">' +
       '<div class="ship-card-header">' +
-        '<div class="ship-dot" style="background:' + s.color + '"></div>' +
+        '<div class="ship-dot" style="background:' + shipColor(s) + '"></div>' +
         '<div class="ship-name">' + escapeHtml(s.name) + '</div>' +
         '<div class="ship-status status-' + s.status + '">' + s.status + '</div>' +
       '</div>' +
       '<div class="ship-detail">' +
+        'TYPE <span style="color:' + info.color + '">' + escapeHtml(info.label) + '</span>' +
+        (s.lengthM ? ' &nbsp; LOA <span>' + Math.round(s.lengthM) + ' m</span>' : '') + '<br>' +
         'LAT <span>' + s.lat.toFixed(2) + '</span> &nbsp; LON <span>' + s.lon.toFixed(2) + '</span><br>' +
         'SPD <span>' + (s.speed != null ? (+s.speed).toFixed(1) : '0') + ' kn</span> &nbsp; HDG <span>' + Math.round(s.hdg || 0) + '&deg;</span>' +
         (country ? '<br>FLAG <span>' + escapeHtml(country) + '</span>' : '') +
@@ -945,6 +2452,8 @@ function renderSidebar() {
   document.getElementById('stat-anchored').textContent = visible.filter(s => s.status === 'anchored').length;
   document.getElementById('filter-count').textContent = visible.length;
   document.getElementById('filter-total').textContent = ships.length;
+  renderTypeFilters();
+  renderLegend();
 }
 
 function escapeHtml(s) {
@@ -954,11 +2463,10 @@ function escapeHtml(s) {
 window.focusShip = function(id) {
   const ship = ships.find(s => String(s.id) === String(id));
   if (!ship) return;
-  rot.y = -ship.lon;
-  rot.x = Math.max(-85, Math.min(85, ship.lat));
-  scale = Math.max(scale, 8);          // zoom in so the ship stands alone
+  // Fly to region scale, where the vessel is drawn as its type rather than as
+  // a dot — but never zoom back out if the user is already closer than that.
+  flyTo({ lat: ship.lat, lon: ship.lon, scale: Math.max(scale, 140), ms: 900 });
   selectedShipId = String(ship.id);    // single it out with highlight + label
-  autoRotate = false;
   document.getElementById('btn-rotate').style.color = '';
   // On a phone the sidebar is a drawer covering the globe — close it so the
   // focused ship is actually visible.
@@ -981,8 +2489,9 @@ document.getElementById('btn-add').addEventListener('click', () => {
   const speed = parseFloat(document.getElementById('f-speed').value) || 0;
   const hdg = parseFloat(document.getElementById('f-hdg').value) || 0;
   const status = document.getElementById('f-status').value;
+  const typeKey = document.getElementById('f-type').value || 'other';
   const color = COLORS[nextId % COLORS.length];
-  ships.push({ id: nextId++, name, lat, lon, speed, hdg, status, color, trail: [{lat, lon}] });
+  ships.push({ id: nextId++, name, lat, lon, speed, hdg, status, color, typeKey, trail: [{lat, lon}] });
   markVisibleDirty(); renderSidebar();
   addLog('Added vessel ' + name);
   ['f-name','f-lat','f-lon','f-speed','f-hdg'].forEach(id => document.getElementById(id).value = '');
@@ -997,14 +2506,21 @@ function addLog(msg) {
 }
 
 let last = 0;
+let chipAccum = 0;
 function animate(ts) {
   requestAnimationFrame(animate);
   const dt = Math.min((ts - last) / 1000, 0.1);
   last = ts;
   pulse = (Math.sin(ts / 500) + 1) / 2;
-  if (autoRotate) rot.y += dt * 6;
+  stepCamera(dt * 1000);
+  // Auto-rotate belongs to the globe view: 6°/s at harbour zoom would sweep
+  // the area you just descended into out of frame in well under a second.
+  if (autoRotate && !isRegionView()) rot.y += dt * 6;
   simulateShips(dt);
-  draw();
+  draw(ts);
+  // The chip only has to keep up with the eye, not the frame rate.
+  chipAccum += dt;
+  if (chipAccum > 0.12) { chipAccum = 0; updateViewChip(); }
 }
 
 /* ============================================================ */
@@ -1015,6 +2531,7 @@ const filters = {
   name: '',
   country: '',
   status: { underway: true, anchored: true, docked: true },
+  types: TYPE_KEYS.reduce((o, k) => (o[k] = true, o), {}),
   minSpeed: 0,
   source: 'all'
 };
@@ -1022,6 +2539,7 @@ const filters = {
 function passesFilters(ship) {
   if (filters.source === 'ais' && !ship.isAis) return false;
   if (filters.source === 'manual' && ship.isAis) return false;
+  if (!filters.types[ship.typeKey || 'other']) return false;
   if (!filters.status[ship.status]) return false;
   if ((ship.speed || 0) < filters.minSpeed) return false;
   if (filters.name && !String(ship.name || '').toLowerCase().includes(filters.name)) return false;
@@ -1142,6 +2660,116 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
+/* Vessel-type legend, doubling as the type filter and the colour key.
+ * Built once, then only its counts and checkboxes are refreshed — rebuilding
+ * the markup on every sidebar tick would steal focus mid-click. */
+let typeListBuilt = false;
+function renderTypeFilters() {
+  const el = document.getElementById('type-filter-list');
+  if (!el) return;
+  const counts = {};
+  for (let i = 0; i < ships.length; i++) {
+    const k = ships[i].typeKey || 'other';
+    counts[k] = (counts[k] || 0) + 1;
+  }
+  if (!typeListBuilt) {
+    el.innerHTML = TYPE_KEYS.map(k => {
+      const t = SHIP_TYPES[k];
+      return '<label class="type-row">' +
+        '<input type="checkbox" data-type="' + k + '"' + (filters.types[k] ? ' checked' : '') + '>' +
+        hullSvg(k, t.color, 13, 20) +
+        escapeHtml(t.label) +
+        '<span class="type-count">0</span>' +
+      '</label>';
+    }).join('');
+    typeListBuilt = true;
+  }
+  const boxes = el.querySelectorAll('input[data-type]');
+  const nums = el.querySelectorAll('.type-count');
+  for (let i = 0; i < boxes.length; i++) {
+    boxes[i].checked = !!filters.types[boxes[i].dataset.type];
+    nums[i].textContent = counts[TYPE_KEYS[i]] || 0;
+  }
+}
+
+document.getElementById('type-filter-list').addEventListener('change', e => {
+  const cb = e.target.closest('input[data-type]');
+  if (!cb) return;
+  filters.types[cb.dataset.type] = cb.checked;
+  markVisibleDirty(); renderSidebar();
+});
+function setAllTypes(on) {
+  TYPE_KEYS.forEach(k => filters.types[k] = on);
+  markVisibleDirty(); renderSidebar();
+}
+document.getElementById('btn-types-all').addEventListener('click', () => setAllTypes(true));
+document.getElementById('btn-types-none').addEventListener('click', () => setAllTypes(false));
+
+document.getElementById('filter-color-mode').addEventListener('change', e => {
+  colorMode = e.target.value === 'speed' ? 'speed' : 'type';
+  sidebarDirty = true; renderSidebar();
+});
+
+/* ---- Floating key over the globe -------------------------------------
+ * Shape and colour both carry the vessel class, so the key shows both. The
+ * silhouettes come from the same table the canvas draws from, at the same
+ * bow-up orientation a northbound vessel has on the globe. */
+let legendVisible = true;
+const legendPanel = document.getElementById('legend-panel');
+const legendBody = document.getElementById('legend-body');
+const legendTitle = document.getElementById('legend-title');
+
+function renderLegend() {
+  if (!legendVisible) return;
+  const counts = {};
+  for (let i = 0; i < ships.length; i++) {
+    const k = ships[i].typeKey || 'other';
+    counts[k] = (counts[k] || 0) + 1;
+  }
+  const bySpeed = colorMode === 'speed';
+  legendTitle.textContent = bySpeed ? 'Vessel key' : 'Vessel types';
+
+  let html = '';
+  if (bySpeed) {
+    // Colour is carrying speed, so the class colours would be a lie — show the
+    // ramp instead and let the silhouettes carry the class on their own.
+    html += '<div style="font-size:0.62rem;margin-bottom:1px">Colour &mdash; speed over ground</div>' +
+            '<div class="speed-ramp"></div>' +
+            '<div class="speed-ramp-labels"><span>0 kn</span><span>20+ kn</span></div>' +
+            '<div class="legend-item" style="margin-top:5px">' +
+              hullSvg('other', '#7d8a96', 13, 20) + 'Stopped</div>' +
+            '<div class="legend-note" style="margin-bottom:5px">Shape still shows the class:</div>';
+  }
+  html += TYPE_KEYS.map(k => {
+    const t = SHIP_TYPES[k];
+    return '<div class="legend-item' + (filters.types[k] ? '' : ' off') + '">' +
+      hullSvg(k, bySpeed ? '#93a3bd' : t.color, 13, 20) +
+      escapeHtml(t.label) +
+      '<span class="legend-count">' + (counts[k] || 0) + '</span></div>';
+  }).join('');
+  html += '<div class="legend-note">Counts cover every known vessel of that class; dimmed rows are switched off in the type filter.</div>';
+  legendBody.innerHTML = html;
+}
+
+function setLegendVisible(v) {
+  legendVisible = v;
+  legendPanel.classList.toggle('hidden', !v);
+  document.getElementById('btn-legend').style.color = v ? 'var(--color-primary)' : '';
+  renderLegend();
+}
+document.getElementById('btn-legend').addEventListener('click', () => setLegendVisible(!legendVisible));
+document.getElementById('legend-close').addEventListener('click', () => setLegendVisible(false));
+// Start closed on phones, where the key would cover most of the globe.
+setLegendVisible(!window.matchMedia('(max-width: 768px)').matches);
+
+/* Type picker for manually added vessels, so the region view can be exercised
+ * without a live AIS feed. */
+(function populateTypeSelect() {
+  const sel = document.getElementById('f-type');
+  sel.innerHTML = TYPE_KEYS.map(k => '<option value="' + k + '">' + escapeHtml(SHIP_TYPES[k].label) + '</option>').join('');
+  sel.value = 'cargo';
+})();
+
 /* Filter input wiring */
 document.getElementById('filter-name').addEventListener('input', e => { filters.name = e.target.value.trim().toLowerCase(); markVisibleDirty(); renderSidebar(); });
 document.getElementById('filter-country').addEventListener('input', e => { filters.country = e.target.value.trim().toLowerCase(); markVisibleDirty(); renderSidebar(); });
@@ -1158,6 +2786,7 @@ document.getElementById('filter-source').addEventListener('change', e => { filte
 document.getElementById('btn-clear-filters').addEventListener('click', () => {
   filters.name = ''; filters.country = ''; filters.minSpeed = 0; filters.source = 'all';
   filters.status = { underway: true, anchored: true, docked: true };
+  TYPE_KEYS.forEach(k => filters.types[k] = true);
   document.getElementById('filter-name').value = '';
   document.getElementById('filter-country').value = '';
   document.getElementById('filter-min-speed').value = '0';
@@ -1167,18 +2796,89 @@ document.getElementById('btn-clear-filters').addEventListener('click', () => {
   markVisibleDirty(); renderSidebar();
 });
 
+/* Map layer toggles + download status */
+const LAYER_LABELS = {
+  world110: 'Coastline &amp; borders (110m)',
+  world50:  'Coastline &amp; borders (50m)',
+  lakes:    'Lakes',
+  rivers:   'Rivers',
+  ports:    'Ports',
+  coast10:  'Coastline (10m)',
+  islands10:'Minor islands (10m)'
+};
+function updateMapStatus() {
+  const el = document.getElementById('map-status');
+  if (!el) return;
+  el.innerHTML = Object.keys(LAYER_LABELS).map(k => {
+    const st = layerState[k];
+    const trigger = LAYER_TRIGGER[k];
+    const txt = st === 'ready' ? 'loaded'
+              : st === 'loading' ? 'loading…'
+              : st === 'failed' ? 'unavailable'
+              : trigger ? 'at ' + trigger + '× zoom' : 'pending';
+    const col = st === 'ready' ? '#3eff9a'
+              : st === 'loading' ? 'var(--color-primary)'
+              : st === 'failed' ? '#ff5e7a' : 'var(--color-text-muted)';
+    return '<div class="filter-row" style="margin-bottom:4px">' +
+      '<span>' + LAYER_LABELS[k] + '</span>' +
+      '<span style="color:' + col + '">' + txt + '</span></div>';
+  }).join('');
+}
+
+const MAP_TOGGLES = [
+  ['map-borders', 'borders'], ['map-countryNames', 'countryNames'],
+  ['map-waterNames', 'waterNames'], ['map-rivers', 'rivers'],
+  ['map-ports', 'ports'], ['map-detail', 'detail']
+];
+MAP_TOGGLES.forEach(([id, key]) => {
+  document.getElementById(id).addEventListener('change', e => {
+    mapLayers[key] = e.target.checked;
+    // Switching a layer back on mid-session lets ensureDetailLayers() fetch it
+    // on the next frame if the zoom already warrants it.
+  });
+});
+function syncMapUI() {
+  MAP_TOGGLES.forEach(([id, key]) => document.getElementById(id).checked = !!mapLayers[key]);
+  updateMapStatus();
+}
+updateMapStatus();
+
 /* Random ship generators (for the Add tab) */
 const RANDOM_NAMES = ['Atlantic','Pacific','Pioneer','Voyager','Polaris','Aurora','Mercury','Stellar','Mariner','Odyssey','Nautilus','Triton','Neptune','Helios','Tempest','Horizon','Phoenix','Endeavour'];
+// Roughly the mix a busy European coastal box actually shows, so a synthetic
+// fleet exercises every silhouette without being uniformly exotic.
+const RANDOM_TYPE_MIX = ['cargo','cargo','cargo','cargo','tanker','tanker','tanker',
+                         'fishing','fishing','passenger','tug','recreational','highspeed','special','other'];
+/* Uniform random coordinates put roughly a third of a synthetic fleet on dry
+ * land — trawlers in the Sahara, tankers in Kazakhstan. Reject those against
+ * the coastline instead. Falls through after enough tries so this can never
+ * spin if the basemap hasn't loaded. */
+function randomSeaPosition() {
+  // getLandFeature() falls back to the built-in coarse outline, so this still
+  // works in the first second after load before the basemap has arrived.
+  const land = getLandFeature();
+  for (let i = 0; i < 40; i++) {
+    const lat = Math.random() * 160 - 80;
+    const lon = Math.random() * 360 - 180;
+    if (!land || !d3.geoContains(land, [lon, lat])) return { lat, lon };
+  }
+  return { lat: Math.random() * 120 - 60, lon: Math.random() * 360 - 180 };
+}
+
 function addRandomShip() {
   const baseName = RANDOM_NAMES[Math.floor(Math.random() * RANDOM_NAMES.length)];
   const name = 'MV ' + baseName + '-' + nextId;
-  const lat = Math.random() * 160 - 80;
-  const lon = Math.random() * 360 - 180;
+  const { lat, lon } = randomSeaPosition();
   const speed = Math.random() < 0.75 ? +(Math.random() * 22 + 1).toFixed(1) : 0;
   const hdg = Math.floor(Math.random() * 360);
   const status = speed > 0.5 ? 'underway' : (Math.random() < 0.5 ? 'anchored' : 'docked');
+  const typeKey = RANDOM_TYPE_MIX[Math.floor(Math.random() * RANDOM_TYPE_MIX.length)];
+  // Scatter the dimensions around the class default so hulls aren't clones.
+  const base = SHIP_TYPES[typeKey];
+  const lengthM = Math.round(base.lengthM * (0.7 + Math.random() * 0.7));
   const color = COLORS[nextId % COLORS.length];
-  ships.push({ id: nextId++, name, lat, lon, speed, hdg, status, color, trail: [{lat, lon}] });
+  ships.push({ id: nextId++, name, lat, lon, speed, hdg, status, color, typeKey,
+               lengthM, beamM: Math.round(lengthM * base.beamRatio), trail: [{lat, lon}] });
 }
 document.getElementById('btn-add-random').addEventListener('click', () => {
   addRandomShip();
@@ -1200,12 +2900,15 @@ const STATE_VERSION = 1;
 function serializeState(includeTrails) {
   return JSON.stringify({
     v: STATE_VERSION,
-    view: { rotX: rot.x, rotY: rot.y, scale, autoRotate, showTrails,
+    view: { rotX: rot.x, rotY: rot.y, scale, autoRotate, showTrails, colorMode,
+            legend: legendVisible, mapLayers: Object.assign({}, mapLayers),
             shipListCollapsed: document.getElementById('ship-list').classList.contains('collapsed') },
     ships: ships.map(s => ({
       id: s.id, isAis: !!s.isAis, name: s.name, country: s.country || '',
       lat: s.lat, lon: s.lon, speed: s.speed, hdg: s.hdg,
       status: s.status, color: s.color, lastUpdate: s.lastUpdate || 0,
+      typeKey: s.typeKey || 'other', aisType: s.aisType,
+      lengthM: s.lengthM, beamM: s.beamM, destination: s.destination,
       // Trails can balloon localStorage with thousands of AIS ships, so we
       // drop them to a single point if the full snapshot blows the quota.
       trail: includeTrails && Array.isArray(s.trail) ? s.trail : [{ lat: s.lat, lon: s.lon }]
@@ -1237,8 +2940,10 @@ function syncFilterUI() {
   document.getElementById('filter-min-speed').value = filters.minSpeed || 0;
   document.getElementById('filter-min-speed-val').textContent = (filters.minSpeed || 0) + ' kn';
   document.getElementById('filter-source').value = filters.source || 'all';
+  document.getElementById('filter-color-mode').value = colorMode;
   ['underway','anchored','docked'].forEach(st =>
     document.getElementById('filter-status-' + st).checked = !!filters.status[st]);
+  renderTypeFilters();
 }
 
 function syncControlButtons() {
@@ -1257,9 +2962,18 @@ function restoreState() {
   if (st.view) {
     if (typeof st.view.rotX === 'number') rot.x = st.view.rotX;
     if (typeof st.view.rotY === 'number') rot.y = st.view.rotY;
-    if (typeof st.view.scale === 'number') scale = st.view.scale;
+    if (typeof st.view.scale === 'number') scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, st.view.scale));
     autoRotate = !!st.view.autoRotate;
     showTrails = st.view.showTrails !== false;
+    colorMode = st.view.colorMode === 'speed' ? 'speed' : 'type';
+    if (typeof st.view.legend === 'boolean') setLegendVisible(st.view.legend);
+    if (st.view.mapLayers) {
+      // Snapshots predating the basemap have no entry; defaults stay on.
+      Object.keys(mapLayers).forEach(k => {
+        if (typeof st.view.mapLayers[k] === 'boolean') mapLayers[k] = st.view.mapLayers[k];
+      });
+      syncMapUI();
+    }
     setShipListCollapsed(!!st.view.shipListCollapsed);
   }
   if (Array.isArray(st.ships)) {
@@ -1279,6 +2993,9 @@ function restoreState() {
       anchored: st.filters.status.anchored !== false,
       docked: st.filters.status.docked !== false
     };
+    // Snapshots written before vessel types existed simply have no `types`
+    // key; leaving the defaults alone keeps every class visible.
+    if (st.filters.types) TYPE_KEYS.forEach(k => filters.types[k] = st.filters.types[k] !== false);
   }
   syncFilterUI();
   syncControlButtons();
@@ -1293,12 +3010,16 @@ function clearEverything() {
   ships = [];
   nextId = 1;
   selectedShipId = null;
+  cancelCameraFlight();
+  pendingStatics.clear();
   rot = { x: 15, y: 0 };
   scale = 1;
   autoRotate = true;
   showTrails = true;
+  colorMode = 'type';
   filters.name = ''; filters.country = ''; filters.minSpeed = 0; filters.source = 'all';
   filters.status = { underway: true, anchored: true, docked: true };
+  TYPE_KEYS.forEach(k => filters.types[k] = true);
   try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
   setShipListCollapsed(false);
   syncFilterUI();
@@ -1317,7 +3038,7 @@ addLog('System initialized');
 addLog('Globe rendering active');
 restoreState();
 renderSidebar();
-loadLandData();
+loadBaseMap();
 
 setInterval(() => {
   // If we haven't seen an AIS message for a while, treat the stream as offline

@@ -216,6 +216,10 @@ const bc = new BroadcastChannel('ais-stream');
 
 /* AIS state */
 const ships = new Map();           // mmsi -> { lat, lon, sog, cog, name, last }
+/* Vessel type / dimensions arrive in a separate ShipStaticData message that is
+ * broadcast far less often than PositionReport (every few minutes per vessel),
+ * so we keep it in its own map and merge it into every outgoing position. */
+const statics = new Map();         // mmsi -> { shipType, lengthM, beamM, destination }
 const STALE_MS = 10 * 60 * 1000;
 let ws = null;
 let socketOpened = false;
@@ -282,7 +286,7 @@ function aisShipColor(sog) {
 function pruneStale() {
   const now = Date.now();
   for (const [mmsi, s] of ships) {
-    if (now - s.last > STALE_MS) ships.delete(mmsi);
+    if (now - s.last > STALE_MS) { ships.delete(mmsi); statics.delete(mmsi); }
   }
 }
 
@@ -323,7 +327,7 @@ function connect(key) {
 
   ws.onopen = () => {
     socketOpened = true;
-    const sub = { APIKey: key, BoundingBoxes: [[[s, w], [n, e]]], FilterMessageTypes: ['PositionReport'] };
+    const sub = { APIKey: key, BoundingBoxes: [[[s, w], [n, e]]], FilterMessageTypes: ['PositionReport', 'ShipStaticData'] };
     ws.send(JSON.stringify(sub));
     setBadge('connecting', 'AWAITING DATA');
     addLog('Handshake OK — sent subscribe (region ' + s + ',' + w + ' to ' + n + ',' + e + ')');
@@ -346,6 +350,30 @@ function connect(key) {
       bc.postMessage({ type: 'status', state: 'online' });
     }
 
+    if (data.MessageType === 'ShipStaticData') {
+      const meta = data.MetaData || {};
+      const st = (data.Message && data.Message.ShipStaticData) || {};
+      const mmsi = meta.MMSI;
+      if (mmsi == null) return;
+      // Dimension is measured from the AIS antenna: A/B are the distances fore
+      // and aft, C/D to port and starboard. Sum them for overall length/beam.
+      const dim = st.Dimension || {};
+      const lengthM = (dim.A != null && dim.B != null) ? dim.A + dim.B : null;
+      const beamM   = (dim.C != null && dim.D != null) ? dim.C + dim.D : null;
+      const info = {
+        shipType: st.Type != null ? st.Type : null,
+        lengthM: lengthM > 0 ? lengthM : null,
+        beamM: beamM > 0 ? beamM : null,
+        destination: (st.Destination || '').trim() || null
+      };
+      statics.set(mmsi, info);
+      const known = ships.get(mmsi);
+      if (known) known.shipType = info.shipType;
+      bc.postMessage({ type: 'static', mmsi, ...info,
+                       name: (st.Name || meta.ShipName || '').trim() || null });
+      return;
+    }
+
     if (data.MessageType !== 'PositionReport') return;
     const meta = data.MetaData || {};
     const rep = (data.Message && data.Message.PositionReport) || {};
@@ -356,12 +384,14 @@ function connect(key) {
     if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return;
 
     const prev = ships.get(mmsi) || {};
+    const info = statics.get(mmsi) || {};
     const ship = {
       mmsi,
       lat, lon,
       cog: (rep.Cog != null && rep.Cog < 360) ? rep.Cog : prev.cog,
       sog: (rep.Sog != null && rep.Sog < 100) ? rep.Sog : prev.sog,
       name: (meta.ShipName || '').trim() || prev.name || null,
+      shipType: info.shipType != null ? info.shipType : prev.shipType,
       last: Date.now()
     };
     ships.set(mmsi, ship);
@@ -371,7 +401,12 @@ function connect(key) {
       mmsi: ship.mmsi,
       lat: ship.lat, lon: ship.lon,
       sog: ship.sog, cog: ship.cog,
-      name: ship.name
+      name: ship.name,
+      // Static data may have arrived before this vessel's first position, so
+      // ride along with it — the globe then never shows an untyped marker for
+      // a vessel we already know the type of.
+      shipType: ship.shipType != null ? ship.shipType : undefined,
+      lengthM: info.lengthM, beamM: info.beamM, destination: info.destination
     });
   };
 
