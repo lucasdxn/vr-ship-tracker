@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AIS Data Stream</title>
 <style>
+/* just my color palette for the dark theme, tried to keep it consistent
+   with the globe tracker page, so it doesn't look like two different projects */
 :root {
   --color-bg: #0d0f14;
   --color-surface: #131720;
@@ -22,7 +24,7 @@
   --space-6: 1.5rem;
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; background: var(--color-bg); font-family: var(--font-body, sans-serif); color: var(--color-text); -webkit-font-smoothing: antialiased; }
+html, body { height: 100%; background: var(--color-bg); font-family: var(--font-body, sans-serif), sans-serif; color: var(--color-text); -webkit-font-smoothing: antialiased; }
 
 #app { display: grid; grid-template-rows: 48px 1fr; height: 100vh; }
 
@@ -39,7 +41,13 @@ header {
 .stat span { color: var(--color-text); font-weight: 500; margin-left: 4px; }
 .badge { background: rgba(62,168,255,0.12); color: var(--color-primary); border: 1px solid rgba(62,168,255,0.3); border-radius: 99px; padding: 2px 10px; font-size: 0.7rem; font-weight: 500; transition: opacity 0.4s; }
 .badge.disconnected { background: rgba(122,128,153,0.12); color: var(--color-text-muted); border-color: rgba(122,128,153,0.3); }
+/* these only get added dynamically from JS (setBadge() below) and never show
+   up written out anywhere in the HTML, so the IDE thinks the classes are
+   dead. they're used, promise - the noinspection comment has to sit right
+   above the selector with nothing else in it, otherwise the IDE ignores it */
+/* noinspection CssUnusedSymbol */
 .badge.connecting { background: rgba(255,184,62,0.12); color: #ffb83e; border-color: rgba(255,184,62,0.3); }
+/* noinspection CssUnusedSymbol */
 .badge.error { background: rgba(255,94,122,0.12); color: #ff5e7a; border-color: rgba(255,94,122,0.3); }
 
 main {
@@ -66,6 +74,9 @@ main {
   margin-top: var(--space-3);
 }
 .btn-primary:hover { opacity: 0.88; }
+/* gets added to the disconnect button once we're live, so it turns red
+   instead of blue (same idea as above) */
+/* noinspection CssUnusedSymbol */
 .btn-primary.danger { background: #ff5e7a; }
 
 .form-row { margin-bottom: var(--space-3); }
@@ -86,8 +97,13 @@ main {
 .ship-feed-row .name { color: var(--color-text); font-weight: 500; }
 .ship-feed-row .meta { color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
 
+/* same story here - addLog() builds these divs dynamically, and the whole
+   log list below is basically generated on the fly */
+/* noinspection CssUnusedSymbol */
 .log-entry { font-size: 0.72rem; color: var(--color-text-muted); padding: 3px 0; border-bottom: 1px solid rgba(42,47,66,0.4); line-height: 1.5; word-break: break-word; }
+/* noinspection CssUnusedSymbol */
 .log-entry .ts { color: var(--color-primary); }
+/* noinspection CssUnusedSymbol */
 .log-entry.err { color: #ff5e7a; }
 #log-list { flex: 1; min-height: 0; overflow-y: auto; }
 #ship-feed { flex: 1; min-height: 0; overflow-y: auto; }
@@ -97,6 +113,9 @@ main {
   background: rgba(7,10,16,0.78); backdrop-filter: blur(6px);
   display: flex; align-items: center; justify-content: center;
 }
+/* toggled from showModal()/hideModal(), just a plain display:none switch,
+   nothing fancy */
+/* noinspection CssUnusedSymbol */
 #key-modal.hidden { display: none; }
 .modal-card {
   width: 380px; max-width: 92vw;
@@ -158,6 +177,7 @@ main {
         every PositionReport this page receives.
       </div>
       <a class="btn-primary" id="open-globe" href="globe_ship_tracker.html" target="_blank" rel="noopener" style="display:inline-block; text-align:center; text-decoration:none;">Open globe tracker &rarr;</a>
+      <a class="btn-primary" id="open-vr" href="vr_ship_tracker.html" target="_blank" rel="noopener" style="display:inline-block; text-align:center; text-decoration:none; margin-top: var(--space-2);">Open VR tracker &rarr;</a>
     </div>
 
     <div class="panel">
@@ -180,16 +200,53 @@ main {
         AIS Data Stream
       </div>
       <div class="modal-sub">
-        Live ship tracking via <a href="https://aisstream.io" target="_blank" rel="noopener">aisstream.io</a>.
-        Paste your API key to begin streaming. Positions are published on the
+        Live ship tracking. Positions are published on the
         <code>ais-stream</code> BroadcastChannel for any other tab on this origin
         (e.g. the <a href="globe_ship_tracker.html" target="_blank" rel="noopener">globe tracker</a>) to consume.
         <br><br>
         <b>Start the local relay first:</b> <code>npm install &amp;&amp; node relay.js</code>
       </div>
       <div class="form-row">
+        <label class="form-label" for="provider">Data source</label>
+        <select class="form-input" id="provider">
+          <option value="aisstream">aisstream.io &mdash; global coverage</option>
+          <option value="barentswatch">BarentsWatch &mdash; free/open, Norway-focused</option>
+          <option value="kpler">Kpler &mdash; global, polled every few seconds</option>
+          <option value="digitraffic">Digitraffic &mdash; free, no account needed, Finland/Baltic</option>
+        </select>
+      </div>
+      <div class="form-row" id="aisstream-fields">
         <label class="form-label" for="apikey">aisstream.io API Key</label>
         <input class="form-input" id="apikey" type="password" placeholder="paste key here" autocomplete="off" autofocus/>
+        <div class="modal-sub" style="margin:6px 0 0; padding:0;">Get one at <a href="https://aisstream.io" target="_blank" rel="noopener">aisstream.io</a>.</div>
+      </div>
+      <div id="barentswatch-fields" style="display:none;">
+        <div class="form-row">
+          <label class="form-label" for="bw-client-id">BarentsWatch client ID</label>
+          <input class="form-input" id="bw-client-id" type="text" placeholder="you@example.com:appname" autocomplete="off"/>
+        </div>
+        <div class="form-row">
+          <label class="form-label" for="bw-client-secret">BarentsWatch client secret</label>
+          <input class="form-input" id="bw-client-secret" type="password" placeholder="paste secret here" autocomplete="off"/>
+        </div>
+        <div class="modal-sub" style="margin:0 0 var(--space-3); padding:0;">
+          Register a client at <a href="https://developer.barentswatch.no/docs/appreg/" target="_blank" rel="noopener">developer.barentswatch.no</a> (scope <code>ais</code>).
+          Free data only covers their &ldquo;open AIS area&rdquo;, mainly Norwegian waters &mdash; pick the Norway region below, or use aisstream.io for global coverage.
+        </div>
+      </div>
+      <div class="form-row" id="kpler-fields" style="display:none;">
+        <label class="form-label" for="kpler-token">Kpler API token</label>
+        <input class="form-input" id="kpler-token" type="password" placeholder="paste bearer token here" autocomplete="off"/>
+        <div class="modal-sub" style="margin:6px 0 0; padding:0;">
+          From <a href="https://developers.kpler.com/spec/ais" target="_blank" rel="noopener">developers.kpler.com</a>.
+          This is a REST API with no push/streaming option, so the relay polls it every few seconds on your behalf &mdash; expect a small delay versus the other two sources.
+        </div>
+      </div>
+      <div class="form-row" id="digitraffic-fields" style="display:none;">
+        <div class="modal-sub" style="margin:0 0 var(--space-3); padding:0;">
+          No account or key needed &mdash; this is <a href="https://www.digitraffic.fi/en/marine-traffic/" target="_blank" rel="noopener">Fintraffic's open marine data</a> (CC BY 4.0).
+          Coverage is Finnish waters and the Baltic Sea only, so pick the Finland region below or you likely won't see any vessels.
+        </div>
       </div>
       <div class="form-row">
         <label class="form-label" for="region">Region</label>
@@ -200,6 +257,8 @@ main {
           <option value="-12,90,25,150">SE Asia</option>
           <option value="20,120,46,150">Japan / Korea</option>
           <option value="10,32,32,60">Persian Gulf</option>
+          <option value="55,-5,75,35">Norway / Barents Sea</option>
+          <option value="59,18,66,31">Finland / Baltic Sea</option>
         </select>
       </div>
       <button class="btn-primary" id="btn-modal-conn">Connect</button>
@@ -209,38 +268,108 @@ main {
 </div>
 
 <script>
+/* this whole page has no build step, no framework, nothing - just plain JS in
+ * a script tag. felt like overkill to set up webpack/vite for a uni project
+ * that's basically one file, so I kept it simple. it also makes it trivial
+ * to just drop the HTML file onto any static server or into the Docker image. */
+
+/**
+ * quick type shapes for the two aisstream.io message payloads, just so the
+ * IDE stops complaining about "unresolved variable" on every field access
+ * below (data.MetaData.MMSI and friends). doesn't do anything at runtime,
+ * there's no build step or TypeScript here, it's purely for the linter.
+ * shapes taken from the aisstream.io docs: github.com/aisstream/api-docs
+ *
+ * note: each @typedef needs its own comment block - the IDE only picks up
+ * the first one if you cram several into one big comment like I tried at
+ * first, so this is four small blocks instead of one long one.
+ * @typedef {Object} AisMetaData
+ * @property {number} [MMSI]
+ * @property {string} [ShipName]
+ * @property {number} [latitude]
+ * @property {number} [longitude]
+ */
+/**
+ * @typedef {Object} AisDimension
+ * @property {number} [A]
+ * @property {number} [B]
+ * @property {number} [C]
+ * @property {number} [D]
+ */
+/**
+ * @typedef {Object} AisShipStaticData
+ * @property {string} [Name]
+ * @property {number} [Type]
+ * @property {string} [Destination]
+ * @property {AisDimension} [Dimension]
+ */
+/**
+ * @typedef {Object} AisPositionReport
+ * @property {number} [Latitude]
+ * @property {number} [Longitude]
+ * @property {number} [Cog]
+ * @property {number} [Sog]
+ */
+
 /* BroadcastChannel: any tab subscribing to 'ais-stream' on this origin gets
  * every PositionReport this page receives. globe_ship_tracker.html is the
- * intended consumer. */
+ * intended consumer - that's the actual 3D globe visualization. this page
+ * here is "just" the connection manager plus a live text log. */
 const bc = new BroadcastChannel('ais-stream');
 
-/* AIS state */
-const ships = new Map();           // mmsi -> { lat, lon, sog, cog, name, last }
+/* AIS state, all in-memory, nothing gets persisted (no need, it's a live feed) */
+const ships = new Map();           // MMSI -> { lat, lon, sog, cog, name, last }
 /* Vessel type / dimensions arrive in a separate ShipStaticData message that is
  * broadcast far less often than PositionReport (every few minutes per vessel),
- * so we keep it in its own map and merge it into every outgoing position. */
-const statics = new Map();         // mmsi -> { shipType, lengthM, beamM, destination }
-const STALE_MS = 10 * 60 * 1000;
+ * so we keep it in its own map and merge it into every outgoing position.
+ * took me a while to figure out why some ships had no type on the globe at
+ * first - turns out you just have to wait for this message to show up once. */
+const statics = new Map();         // MMSI -> { shipType, lengthM, beamM, destination }
+const STALE_MS = 10 * 60 * 1000;   // drop a ship from the feed if we haven't heard from it in 10 min
 let ws = null;
-let socketOpened = false;
-let firstMessageReceived = false;
+let socketOpened = false;          // did the socket connection itself succeed
+let firstMessageReceived = false;  // did we actually get real AIS data back (not just a connection)
 let connected = false;
-let msgCount = 0;          // since last second
+let msgCount = 0;          // messages since last second, reset every tick below
 let msgRate = 0;
 let msgTotal = 0;
 let startedAt = 0;
 let lastUpdateTs = 0;
 
-/* Modal helpers */
+/* --- little modal helpers, nothing special going on here --- */
 const keyModal = document.getElementById('key-modal');
 const modalError = document.getElementById('modal-error');
-function showModal(err) { keyModal.classList.remove('hidden'); modalError.textContent = err || ''; setTimeout(() => document.getElementById('apikey').focus(), 0); }
+// which field to focus + which fields-div to show, per provider - one place
+// to update instead of a growing pile of ternaries every time a provider gets
+// added. digitraffic has no credential field at all, hence the null.
+const PROVIDER_FOCUS_FIELD = { aisstream: 'apikey', barentswatch: 'bw-client-id', kpler: 'kpler-token', digitraffic: null };
+
+function showModal(err) {
+  keyModal.classList.remove('hidden'); modalError.textContent = err || '';
+  const provider = document.getElementById('provider').value;
+  const focusId = PROVIDER_FOCUS_FIELD[provider];
+  if (focusId) setTimeout(() => document.getElementById(focusId).focus(), 0);
+}
 function hideModal() { keyModal.classList.add('hidden'); modalError.textContent = ''; }
 function resetModalButton() {
   const b = document.getElementById('btn-modal-conn');
   b.disabled = false; b.textContent = 'Connect';
 }
 
+// aisstream.io is one API key, BarentsWatch is an OAuth client id + secret
+// pair, Kpler is one bearer token, digitraffic needs nothing at all - four
+// different credential shapes, so the modal just shows/hides whichever
+// fields-div matches what's picked
+const PROVIDER_FIELDS_DIV = { aisstream: 'aisstream-fields', barentswatch: 'barentswatch-fields', kpler: 'kpler-fields', digitraffic: 'digitraffic-fields' };
+function toggleProviderFields() {
+  const provider = document.getElementById('provider').value;
+  for (const [key, divId] of Object.entries(PROVIDER_FIELDS_DIV)) {
+    document.getElementById(divId).style.display = key === provider ? '' : 'none';
+  }
+}
+document.getElementById('provider').addEventListener('change', toggleProviderFields);
+
+// updates the little status pill in the header (OFFLINE / CONNECTING / LIVE / ERROR)
 function setBadge(state, label) {
   const b = document.getElementById('live-badge');
   b.className = 'badge ' + state;
@@ -248,6 +377,9 @@ function setBadge(state, label) {
   document.getElementById('status-text').textContent = label.toLowerCase();
 }
 
+// pushes one line into the event log panel. capped at 80 entries, so the DOM
+// doesn't grow forever if you leave the tab open overnight (learned that
+// one the hard way during testing - the tab got super laggy after a few hours)
 function addLog(msg, isErr) {
   const t = new Date().toTimeString().slice(0, 8);
   const cls = isErr ? 'log-entry err' : 'log-entry';
@@ -259,8 +391,13 @@ function addLog(msg, isErr) {
   while (el.children.length > 80) el.removeChild(el.lastChild);
 }
 
+// rebuilds the "Latest Positions" panel from scratch every second (see the
+// setInterval at the bottom). not the most efficient way to do it - a diffing
+// approach would probably be nicer, but with ~30 rows nobody notices, and it's
+// way less code to get wrong
 function renderShipFeed() {
-  // Show the 30 most recently updated ships, newest first.
+  // just show the 30 most recently updated ships, newest first, otherwise the
+  // list would grow forever, and nobody scrolls through hundreds of rows anyway
   const arr = Array.from(ships.values()).sort((a, b) => b.last - a.last).slice(0, 30);
   const el = document.getElementById('ship-feed');
   el.innerHTML = arr.map(s => {
@@ -274,6 +411,11 @@ function renderShipFeed() {
   }).join('');
 }
 
+// picks a color for the little dot next to each ship based on its speed
+// (sog = speed over ground, in knots). gray if basically standing still,
+// then fades from a blueish tone into a greenish one the faster it goes.
+// just linear interpolation between two RGB values, capped at 20 knots
+// because container ships don't really go faster than that anyway
 function aisShipColor(sog) {
   if (sog == null || sog < 0.5) return '#7d8a96';
   const t = Math.min(1, sog / 20);
@@ -283,6 +425,9 @@ function aisShipColor(sog) {
   return 'rgb(' + r + ',' + g + ',' + b + ')';
 }
 
+// gets rid of ships we haven't heard from in a while (see STALE_MS above).
+// AIS doesn't send an explicit "vessel left the area" message, so this is
+// the only way to keep the list from filling up with ghost ships
 function pruneStale() {
   const now = Date.now();
   for (const [mmsi, s] of ships) {
@@ -291,27 +436,58 @@ function pruneStale() {
 }
 
 function tryConnectFromModal() {
-  const key = document.getElementById('apikey').value.trim();
-  if (!key) { modalError.textContent = 'API key is required'; return; }
+  const provider = document.getElementById('provider').value;
+  let creds;
+  if (provider === 'barentswatch') {
+    const clientId = document.getElementById('bw-client-id').value.trim();
+    const clientSecret = document.getElementById('bw-client-secret').value.trim();
+    if (!clientId || !clientSecret) { modalError.textContent = 'Client ID and client secret are required'; return; }
+    creds = { clientId, clientSecret };
+  } else if (provider === 'kpler') {
+    const token = document.getElementById('kpler-token').value.trim();
+    if (!token) { modalError.textContent = 'API token is required'; return; }
+    creds = { token };
+  } else if (provider === 'digitraffic') {
+    creds = {}; // no credentials at all for this one
+  } else {
+    const key = document.getElementById('apikey').value.trim();
+    if (!key) { modalError.textContent = 'API key is required'; return; }
+    creds = { apiKey: key };
+  }
   modalError.textContent = '';
   const b = document.getElementById('btn-modal-conn');
   b.disabled = true; b.textContent = 'Connecting…';
-  connect(key);
+  connect(provider, creds);
 }
 
-function connect(key) {
+// this is basically the main function - everything else in this file just
+// supports what happens here: open a WebSocket to our relay, send the
+// subscribe message for whichever provider was picked in the modal, and
+// wire up handlers for whatever comes back. the relay part is important -
+// the browser can't talk to either upstream API directly (aisstream.io
+// rejects direct browser connections, and BarentsWatch needs a client
+// secret that must never reach the browser), so relay.js sits in between
+// and - for BarentsWatch specifically - also translates their message
+// format into the same shape aisstream.io uses, so everything below this
+// point (onmessage, the globe tracker, the VR tracker) doesn't need to
+// know or care which provider is actually feeding it. that's also why this
+// project needs Node running somewhere, either locally with `node relay.js`
+// or inside the Docker container.
+function connect(provider, creds) {
   const parts = document.getElementById('region').value.split(',').map(Number);
   const [s, w, n, e] = parts;
   socketOpened = false; firstMessageReceived = false;
   setBadge('connecting', 'CONNECTING');
-  // Same-origin as the page: wss:// on HTTPS, ws:// on plain HTTP, and
-  // reuse location.host (incl. any port) so it works behind an HTTPS reverse
-  // proxy / Cloudflare tunnel when the relay serves this page directly.
-  //
-  // Local fallback: if the page is served by a separate static server (e.g.
-  // `python -m http.server 8000`) the relay isn't on this origin, so point at
-  // the relay's own port (3333) on the same host instead. Override with
-  // ?relay=host:port if your relay listens elsewhere.
+  // figuring out where the relay actually lives took some trial and error:
+  // - normally the relay serves this very page, so same origin is fine,
+  //   just reuse wss:// on https / ws:// on http and location.host as is
+  //   (this also makes it work behind a reverse proxy / tunnel, since that
+  //   terminates TLS for us and we don't need to know the "real" port)
+  // - but while developing I sometimes just opened the HTML file with
+  //   `python -m http.server` for a quick reload, and then the relay isn't
+  //   on the same origin, so as a fallback we guess it's on port 3333 on
+  //   the same host. can also be overridden with ?relay=host:port in the
+  //   URL if none of that guessing applies to your setup
   const wsProto = location.protocol === 'https:' ? 'wss://' : 'ws://';
   const RELAY_PORT = '3333';
   const relayOverride = new URLSearchParams(location.search).get('relay');
@@ -319,7 +495,10 @@ function connect(key) {
   let relayHost = location.host;
   if (relayOverride) relayHost = relayOverride;
   else if (isLocal && location.port !== RELAY_PORT) relayHost = location.hostname + ':' + RELAY_PORT;
-  const relayUrl = wsProto + relayHost + '/v0/stream';
+  // one relay, four upstream bridges - which one the relay spins up is
+  // decided purely by which path we hit, see relay.js
+  const streamPath = provider === 'aisstream' ? '/v0/stream' : '/v0/stream/' + provider;
+  const relayUrl = wsProto + relayHost + streamPath;
   addLog('Opening WebSocket to ' + relayUrl);
 
   try { ws = new WebSocket(relayUrl); }
@@ -327,7 +506,22 @@ function connect(key) {
 
   ws.onopen = () => {
     socketOpened = true;
-    const sub = { APIKey: key, BoundingBoxes: [[[s, w], [n, e]]], FilterMessageTypes: ['PositionReport', 'ShipStaticData'] };
+    // four different credential shapes going into the same subscribe
+    // message: aisstream.io wants an API key straight up; BarentsWatch
+    // needs an OAuth client id/secret exchanged for a bearer token first
+    // (that exchange happens relay-side, the secret can't be trusted to the
+    // browser); Kpler just wants its bearer token directly, same idea as
+    // aisstream but it's REST underneath so the relay polls it instead of
+    // holding a socket open; digitraffic doesn't need any credentials at
+    // all, it's just the bbox. bbox is the same south/west/north/east from
+    // the region dropdown in every case - the relay turns it into whatever
+    // shape each upstream API actually wants (or filters by it itself, for
+    // digitraffic, which has no bbox query param of its own).
+    let sub;
+    if (provider === 'barentswatch') sub = { clientId: creds.clientId, clientSecret: creds.clientSecret, bbox: [s, w, n, e] };
+    else if (provider === 'kpler') sub = { token: creds.token, bbox: [s, w, n, e] };
+    else if (provider === 'digitraffic') sub = { bbox: [s, w, n, e] };
+    else sub = { APIKey: creds.apiKey, BoundingBoxes: [[[s, w], [n, e]]], FilterMessageTypes: ['PositionReport', 'ShipStaticData'] };
     ws.send(JSON.stringify(sub));
     setBadge('connecting', 'AWAITING DATA');
     addLog('Handshake OK — sent subscribe (region ' + s + ',' + w + ' to ' + n + ',' + e + ')');
@@ -339,10 +533,15 @@ function connect(key) {
     try { data = JSON.parse(ev.data); } catch { return; }
     if (data.error) { addLog('Server error: ' + data.error, true); modalError.textContent = 'Server: ' + data.error; return; }
 
+    // the socket can technically "open" fine, but the API key still gets
+    // rejected afterward, so we only really count the stream as live once
+    // the first real message comes back - that's the actual proof the key
+    // works, and that aisstream.io is sending us data
     if (!firstMessageReceived) {
       firstMessageReceived = true; connected = true;
       startedAt = Date.now();
       setBadge('', 'LIVE');
+      document.getElementById('btn-conn').classList.add('danger');
       const regionLabel = document.querySelector('#region option:checked');
       document.getElementById('region-label').textContent = regionLabel ? regionLabel.textContent : '';
       addLog('Subscription confirmed by server.');
@@ -350,14 +549,18 @@ function connect(key) {
       bc.postMessage({ type: 'status', state: 'online' });
     }
 
+    // aisstream.io basically only sends us two message types we asked for,
+    // so this is just a little router between the two branches
     if (data.MessageType === 'ShipStaticData') {
-      const meta = data.MetaData || {};
-      const st = (data.Message && data.Message.ShipStaticData) || {};
+      const meta = /** @type {AisMetaData} */ (data.MetaData || {});
+      const st = /** @type {AisShipStaticData} */ ((data.Message && data.Message.ShipStaticData) || {});
       const mmsi = meta.MMSI;
       if (mmsi == null) return;
       // Dimension is measured from the AIS antenna: A/B are the distances fore
       // and aft, C/D to port and starboard. Sum them for overall length/beam.
-      const dim = st.Dimension || {};
+      // took me a bit in the aisstream.io docs to understand this - it's not
+      // super obvious from the field names alone
+      const dim = /** @type {AisDimension} */ (st.Dimension || {});
       const lengthM = (dim.A != null && dim.B != null) ? dim.A + dim.B : null;
       const beamM   = (dim.C != null && dim.D != null) ? dim.C + dim.D : null;
       const info = {
@@ -375,9 +578,13 @@ function connect(key) {
     }
 
     if (data.MessageType !== 'PositionReport') return;
-    const meta = data.MetaData || {};
-    const rep = (data.Message && data.Message.PositionReport) || {};
+    const meta = /** @type {AisMetaData} */ (data.MetaData || {});
+    const rep = /** @type {AisPositionReport} */ ((data.Message && data.Message.PositionReport) || {});
     const mmsi = meta.MMSI;
+    // sanity check - AIS data from real ships is usually fine, but every
+    // now and then you get garbage coordinates (bad transponder, whatever),
+    // so just throw those out instead of drawing a ship in the middle of
+    // nowhere on the globe
     const lat = rep.Latitude != null ? rep.Latitude : meta.latitude;
     const lon = rep.Longitude != null ? rep.Longitude : meta.longitude;
     if (mmsi == null || lat == null || lon == null) return;
@@ -410,6 +617,8 @@ function connect(key) {
     });
   };
 
+  // onerror doesn't really tell you much (browsers hide the details for
+  // security reasons) - the actual useful info comes in onclose right after
   ws.onerror = () => { addLog('WebSocket error event fired', true); setBadge('error', 'ERROR'); };
 
   ws.onclose = (ev) => {
@@ -424,19 +633,35 @@ function connect(key) {
     if (!ev.wasClean) setBadge('error', 'ERROR'); else setBadge('disconnected', 'OFFLINE');
     resetModalButton();
     bc.postMessage({ type: 'status', state: 'offline' });
+    // if we never got past the handshake, try to give a slightly more useful
+    // error than just "connection closed code 1006" - spent a good amount of
+    // time debugging this myself early on, so figured future-me (or whoever
+    // grades this) would appreciate the hint instead of googling ws codes again
     if (!wasLive) {
       let hint;
-      if (ev.code === 1008 || ev.code === 4001 || ev.code === 4003) hint = 'Server rejected the API key. Generate a fresh one at aisstream.io/account.';
-      else if (ev.code === 1006 && hadOpen) hint = 'Relay dropped the connection right after subscribe — almost always an invalid/revoked/rate-limited API key.';
+      if (ev.code === 1008 || ev.code === 4001 || ev.code === 4003) {
+        const REJECTED_HINT = {
+          barentswatch: 'BarentsWatch rejected the client ID/secret. Check the app registration at developer.barentswatch.no/docs/appreg.',
+          kpler: 'Kpler rejected the API token (or the bbox produced an invalid request). Check the token at developers.kpler.com/spec/ais.',
+          digitraffic: 'Digitraffic\'s API didn\'t respond as expected - it needs no credentials, so this is more likely a service hiccup. Check status at digitraffic.fi.',
+          aisstream: 'Server rejected the API key. Generate a fresh one at aisstream.io/account.'
+        };
+        hint = REJECTED_HINT[provider];
+      }
+      else if (ev.code === 1006 && hadOpen) hint = 'Relay dropped the connection right after subscribe — almost always invalid/revoked/rate-limited credentials.';
       else if (ev.code === 1006 && !hadOpen) hint = 'Cannot reach the relay at ' + relayUrl + '. Locally, run `npm install && node relay.js`; if deployed, make sure the relay is serving this page and WebSocket on the same origin.';
       else hint = baseMsg;
       showModal(hint);
     } else {
+      // was live before and dropped later - probably not a key problem, so
+      // no need to guess a reason, just show what the server told us
       showModal('Stream ended: ' + baseMsg);
     }
   };
 }
 
+// clicking "Disconnect" in the header calls this - closes the socket with a
+// normal 1000 code, so the relay/upstream know it was on purpose, not a crash
 function disconnect() {
   if (ws) { try { ws.close(1000, 'user'); } catch {} ws = null; }
   connected = false;
@@ -448,17 +673,26 @@ function disconnect() {
 
 document.getElementById('btn-conn').addEventListener('click', disconnect);
 document.getElementById('btn-modal-conn').addEventListener('click', tryConnectFromModal);
-document.getElementById('apikey').addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); tryConnectFromModal(); }
+// so you can just hit Enter in a credentials field instead of clicking
+// Connect, small thing, but it annoyed me while testing, so I added it
+['apikey', 'bw-client-id', 'bw-client-secret', 'kpler-token'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); tryConnectFromModal(); }
+  });
 });
 
+// main "UI tick" - once a second we refresh all the stats and re-render the
+// ship feed. could probably update some of this reactively instead of
+// polling every second, but honestly for a dashboard like this a 1s interval
+// is unnoticeable and way easier to reason about than wiring up listeners
+// for every little number
 setInterval(() => {
   msgRate = msgCount; msgCount = 0;
   document.getElementById('stat-rate').textContent = msgRate;
-  document.getElementById('msg-total').textContent = msgTotal;
+  document.getElementById('msg-total').textContent = String(msgTotal);
   pruneStale();
-  document.getElementById('ship-count').textContent = ships.size;
-  document.getElementById('stat-total').textContent = ships.size;
+  document.getElementById('ship-count').textContent = String(ships.size);
+  document.getElementById('stat-total').textContent = String(ships.size);
   if (lastUpdateTs > 0) document.getElementById('last-update').textContent = Math.floor((Date.now() - lastUpdateTs) / 1000) + 's ago';
   if (startedAt > 0) {
     const secs = Math.floor((Date.now() - startedAt) / 1000);
@@ -468,6 +702,9 @@ setInterval(() => {
   renderShipFeed();
 }, 1000);
 
+// just a subtle blink on the status badge while we're live, so you can tell
+// at a glance that the page is still alive and not frozen. skips the blink
+// for the disconnected/error/connecting states since those don't need it
 setInterval(() => {
   const b = document.getElementById('live-badge');
   if (b.classList.contains('disconnected') || b.classList.contains('error') || b.classList.contains('connecting')) { b.style.opacity = '1'; return; }

@@ -25,7 +25,7 @@
   --space-6: 1.5rem;
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; overflow: hidden; background: var(--color-bg); font-family: var(--font-body, sans-serif); color: var(--color-text); -webkit-font-smoothing: antialiased; }
+html, body { height: 100%; overflow: hidden; background: var(--color-bg); font-family: var(--font-body), sans-serif; color: var(--color-text); -webkit-font-smoothing: antialiased; }
 
 #app {
   display: grid;
@@ -322,6 +322,7 @@ header {
   </div>
   <div class="header-right">
     <div class="badge offline" id="live-badge">● OFFLINE</div>
+    <a class="icon-btn" href="vr_ship_tracker.html" target="_blank" rel="noopener" title="Open VR tracker" aria-label="Open VR tracker" style="text-decoration:none; font-size:0.85rem;">VR</a>
     <button class="icon-btn" id="btn-sidebar" title="Toggle panel" aria-label="Toggle sidebar" aria-expanded="true">&#9776;</button>
   </div>
 </header>
@@ -891,7 +892,13 @@ async function loadLayer(key, prepare) {
   updateMapStatus();
   try {
     const res = await fetch(MAP_SOURCES[key]);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (!res.ok) {
+      layerState[key] = 'failed';
+      console.warn('Map layer ' + key + ' failed: HTTP ' + res.status);
+      addLog('Map layer ' + key + ' unavailable (HTTP ' + res.status + ')');
+      updateMapStatus();
+      return;
+    }
     prepare(await res.json());
     layerState[key] = 'ready';
     addLog('Map layer loaded: ' + key);
@@ -2531,7 +2538,7 @@ const filters = {
   name: '',
   country: '',
   status: { underway: true, anchored: true, docked: true },
-  types: TYPE_KEYS.reduce((o, k) => (o[k] = true, o), {}),
+  types: TYPE_KEYS.reduce((o, k) => { o[k] = true; return o; }, {}),
   minSpeed: 0,
   source: 'all'
 };
