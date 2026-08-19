@@ -31,11 +31,19 @@ html, body { height: 100%; overflow: hidden; background: var(--color-bg); font-f
   display: grid;
   grid-template-columns: 1fr 280px;
   grid-template-rows: 48px 1fr;
-  height: 100vh; height: 100dvh;
+  height: 100vh;
+  /* 100dvh fallback pattern: this second declaration intentionally overwrites
+     the one above in browsers that support dvh - not a leftover duplicate */
+  /* noinspection CssOverwrittenProperties */
+  height: 100dvh;
   transition: grid-template-columns 0.22s ease;
 }
-/* Retracted sidebar (desktop): collapse the column, globe takes the full width. */
+/* Retracted sidebar (desktop): collapse the column, globe takes the full width.
+   Applied/removed only via appEl.classList.toggle('sidebar-hidden', ...) in JS,
+   which a static CSS scanner can't see - hence the suppressions below. */
+/* noinspection CssUnusedSymbol */
 #app.sidebar-hidden { grid-template-columns: 1fr 0; }
+/* noinspection CssUnusedSymbol */
 #app.sidebar-hidden > #sidebar { border-left: none; }
 
 header {
@@ -87,9 +95,16 @@ header {
   padding: var(--space-3) var(--space-4); font-size: 0.78rem; backdrop-filter: blur(12px);
   pointer-events: none; z-index: 20; min-width: 170px;
 }
+/* .t-name/.t-row/.t-type below are only ever applied via string-concatenated
+   HTML in renderTooltip() (search "class=\"t-name\"" etc.) - a static CSS
+   scanner can't trace class names built by string concatenation, hence the
+   suppressions. */
+/* noinspection CssUnusedSymbol */
 .tooltip-box .t-name { font-weight: 600; color: var(--color-text); margin-bottom: 4px; }
+/* noinspection CssUnusedSymbol */
 .tooltip-box .t-row { color: var(--color-text-muted); line-height: 1.6; }
 .tooltip-box .t-row span { color: var(--color-text); }
+/* noinspection CssUnusedSymbol */
 .tooltip-box .t-type { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; margin-bottom: 5px; font-size: 0.72rem; }
 .tooltip-box .t-type i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
 
@@ -118,7 +133,11 @@ header {
   color: var(--color-text-muted); backdrop-filter: blur(8px); white-space: nowrap;
 }
 .view-chip b { color: var(--color-text); font-weight: 600; }
+/* .mode/.to-scale below are only ever applied via string-concatenated HTML
+   in the view-chip renderer (search "class=\"mode\""/"class=\"to-scale\"") */
+/* noinspection CssUnusedSymbol */
 .view-chip .mode { color: var(--color-primary); font-weight: 600; letter-spacing: 0.05em; }
+/* noinspection CssUnusedSymbol */
 .view-chip .to-scale { color: #3eff9a; font-weight: 600; }
 .region-select {
   background: rgba(19,23,32,0.85); border: 1px solid var(--color-border);
@@ -147,6 +166,8 @@ header {
   border-radius: var(--radius-md); padding: 8px 10px; backdrop-filter: blur(8px);
   z-index: 16; min-width: 158px; max-height: calc(100% - 2rem); overflow-y: auto;
 }
+/* toggled via legendPanel.classList.toggle('hidden', ...) in JS */
+/* noinspection CssUnusedSymbol */
 .legend-panel.hidden { display: none; }
 .legend-head {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -163,7 +184,9 @@ header {
   color: var(--color-text-muted); padding: 2px 0;
 }
 /* Classes switched off in the filters are still listed, but dimmed — the key
-   should describe what's on the globe right now. */
+   should describe what's on the globe right now. Applied via string-
+   concatenated HTML in the legend renderer, not visible to a static scanner. */
+/* noinspection CssUnusedSymbol */
 .legend-item.off { opacity: 0.32; }
 .legend-item .legend-count { margin-left: auto; color: var(--color-text); font-variant-numeric: tabular-nums; }
 .legend-note {
@@ -199,6 +222,7 @@ header {
 /* ---- Phone / narrow screens: sidebar becomes a slide-in drawer ---- */
 @media (max-width: 768px) {
   #app { grid-template-columns: 1fr; }       /* globe always full width */
+  /* noinspection CssUnusedSymbol */
   #app.sidebar-hidden { grid-template-columns: 1fr; }
   #sidebar {
     position: fixed; top: 48px; right: 0; bottom: 0;
@@ -209,7 +233,9 @@ header {
     transition: transform 0.22s ease;
     z-index: 30;
   }
+  /* noinspection CssUnusedSymbol */
   #app.sidebar-hidden #sidebar { transform: translateX(100%); }
+  /* noinspection CssUnusedSymbol */
   #app:not(.sidebar-hidden) #sidebar-backdrop {
     display: block; position: fixed; top: 48px; left: 0; right: 0; bottom: 0;
     background: rgba(5,8,16,0.5); backdrop-filter: blur(1px); z-index: 25;
@@ -228,7 +254,11 @@ header {
 .fold-title:focus-visible { color: var(--color-primary); }
 .fold-caret { display: inline-block; transition: transform 0.15s ease; font-size: 0.65rem; }
 .fold-title.collapsed .fold-caret { transform: rotate(-90deg); }
+/* .collapsed toggled via t.classList.toggle('collapsed', ...) below */
+/* noinspection CssUnusedSymbol */
 .fold-title.collapsed { margin-bottom: 0; }
+/* toggled via getElementById('ship-list').classList.toggle('collapsed', ...) */
+/* noinspection CssUnusedSymbol */
 #ship-list.collapsed { display: none; }
 
 .ship-card {
@@ -241,8 +271,13 @@ header {
 .ship-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .ship-name { font-size: 0.82rem; font-weight: 600; flex: 1; }
 .ship-status { font-size: 0.68rem; padding: 1px 7px; border-radius: 99px; font-weight: 500; }
+/* status-* classes are only ever applied via string concatenation -
+   'status-' + s.status - in the ship-card renderer, never written literally */
+/* noinspection CssUnusedSymbol */
 .status-underway { background: rgba(62,255,154,0.12); color: #3eff9a; }
+/* noinspection CssUnusedSymbol */
 .status-anchored { background: rgba(255,184,62,0.12); color: #ffb83e; }
+/* noinspection CssUnusedSymbol */
 .status-docked { background: rgba(255,94,122,0.12); color: #ff5e7a; }
 .ship-detail { font-size: 0.72rem; color: var(--color-text-muted); line-height: 1.7; }
 .ship-detail span { color: var(--color-text); }
@@ -294,7 +329,6 @@ header {
   background: rgba(62,168,255,0.12); color: var(--color-primary); border: 1px solid rgba(62,168,255,0.3);
   padding: 2px 8px; border-radius: 99px; font-size: 0.68rem; cursor: pointer;
 }
-.filter-pill .x { margin-left: 4px; color: rgba(255,255,255,0.6); }
 
 .match-count { font-size: 0.7rem; color: var(--color-text-muted); margin-bottom: var(--space-3); }
 .match-count span { color: var(--color-text); }
@@ -2454,11 +2488,11 @@ function renderSidebar() {
     ? ships.length
     : visible.length + ' / ' + ships.length;
 
-  document.getElementById('stat-total').textContent = visible.length;
-  document.getElementById('stat-moving').textContent = visible.filter(s => s.status === 'underway').length;
-  document.getElementById('stat-anchored').textContent = visible.filter(s => s.status === 'anchored').length;
-  document.getElementById('filter-count').textContent = visible.length;
-  document.getElementById('filter-total').textContent = ships.length;
+  document.getElementById('stat-total').textContent = String(visible.length);
+  document.getElementById('stat-moving').textContent = String(visible.filter(s => s.status === 'underway').length);
+  document.getElementById('stat-anchored').textContent = String(visible.filter(s => s.status === 'anchored').length);
+  document.getElementById('filter-count').textContent = String(visible.length);
+  document.getElementById('filter-total').textContent = String(ships.length);
   renderTypeFilters();
   renderLegend();
 }

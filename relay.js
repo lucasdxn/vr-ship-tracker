@@ -43,6 +43,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
 const { Readable } = require('stream');
 const WebSocket = require('ws');
 
@@ -81,6 +82,74 @@ function fileLog(line) {
 }
 fileLog('---- relay session started ----');
 
+/* ============================================================ */
+/* AIS message history log (for the VR tracker's playback mode)             */
+/* ============================================================ */
+// stream_log.txt above only ever recorded connection/error events - the
+// actual AIS traffic only went to console.log, so there was nothing to
+// replay. This is a second, separate append-only log, one JSON line per
+// message actually produced by any of the four providers: {ts, msg}, where
+// msg is the exact aisstream.io-shaped object the browser would have
+// received. vr_ship_tracker.html's playback mode reads this back through the
+// /api/history endpoint below.
+const HISTORY_LOG_PATH = path.join(__dirname, 'ais_message_log.jsonl');
+const HISTORY_LOG_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB - same truncate-on-overflow approach as stream_log.txt above
+
+let historyLogStream = fs.createWriteStream(HISTORY_LOG_PATH, { flags: 'a' });
+let historyLogBytes = (() => { try { return fs.statSync(HISTORY_LOG_PATH).size; } catch (_) { return 0; } })();
+
+// kept current on every write so /api/history/range is an O(1) lookup
+// instead of a full file scan on every request from the client
+const historyStats = { count: 0, firstTs: null, lastTs: null };
+
+function logAisMessage(msg) {
+  const entryTs = Date.now();
+  const entry = JSON.stringify({ ts: entryTs, msg }) + '\n';
+  const size = Buffer.byteLength(entry);
+  if (historyLogBytes + size > HISTORY_LOG_MAX_BYTES) {
+    historyLogStream.end();
+    historyLogStream = fs.createWriteStream(HISTORY_LOG_PATH, { flags: 'w' });
+    historyLogBytes = 0;
+    historyStats.count = 0;
+    historyStats.firstTs = null;
+  }
+  historyLogStream.write(entry);
+  historyLogBytes += size;
+  historyStats.count++;
+  if (historyStats.firstTs == null) historyStats.firstTs = entryTs;
+  historyStats.lastTs = entryTs;
+}
+
+// one-time startup scan so historyStats (and therefore /api/history/range)
+// is accurate for lines written by an *earlier* relay process too, not just
+// this one - streamed line-by-line so a large existing log doesn't get
+// loaded into memory all at once just to count it
+function scanHistoryLogBounds() {
+  return new Promise((resolve) => {
+    if (historyLogBytes === 0) { resolve(); return; }
+    const rl = readline.createInterface({ input: fs.createReadStream(HISTORY_LOG_PATH), crlfDelay: Infinity });
+    let count = 0, firstTs = null, lastTs = null;
+    rl.on('line', (line) => {
+      if (!line) return;
+      let entry;
+      try { entry = JSON.parse(line); } catch { return; }
+      if (typeof entry.ts !== 'number') return;
+      count++;
+      if (firstTs == null) firstTs = entry.ts;
+      lastTs = entry.ts;
+    });
+    rl.on('close', () => {
+      historyStats.count = count;
+      historyStats.firstTs = firstTs;
+      historyStats.lastTs = lastTs;
+      console.log('[' + ts() + '] history log: ' + count + ' message(s) on disk' +
+        (firstTs ? ', spanning ' + new Date(firstTs).toISOString() + ' to ' + new Date(lastTs).toISOString() : ''));
+      resolve();
+    });
+    rl.on('error', () => resolve());
+  });
+}
+
 // Serve the three HTML files (plus any sibling .html/.js/.css) so that the
 // data stream, globe tracker and VR tracker all live on the same
 // http://localhost origin — required for the BroadcastChannel that links them.
@@ -92,7 +161,52 @@ const STATIC_FILES = {
 };
 
 const server = http.createServer((req, res) => {
-  const url = req.url.split('?')[0];
+  const parsedUrl = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
+  const url = parsedUrl.pathname;
+
+  // cheap: historyStats is kept current in memory, no file access per request
+  if (url === '/api/history/range') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ count: historyStats.count, firstTs: historyStats.firstTs, lastTs: historyStats.lastTs }));
+    return;
+  }
+
+  // returns every logged message with since <= ts <= until, oldest first,
+  // each with its original _ts (epoch ms) attached so the client can pace
+  // replay against real elapsed time. capped at `limit` (default/max
+  // 50000/200000) so a wide time window can't hand the browser an
+  // unbounded response; `truncated: true` tells the client there's more.
+  if (url === '/api/history') {
+    const since = Number(parsedUrl.searchParams.get('since'));
+    const until = Number(parsedUrl.searchParams.get('until'));
+    const limit = Math.min(Number(parsedUrl.searchParams.get('limit')) || 50000, 200000);
+    if (!Number.isFinite(since) || !Number.isFinite(until)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'since and until query params (epoch ms) are required' }));
+      return;
+    }
+    const messages = [];
+    let truncated = false;
+    const rl = readline.createInterface({ input: fs.createReadStream(HISTORY_LOG_PATH), crlfDelay: Infinity });
+    rl.on('line', (line) => {
+      if (!line || messages.length >= limit) return;
+      let entry;
+      try { entry = JSON.parse(line); } catch { return; }
+      if (typeof entry.ts !== 'number' || entry.ts < since || entry.ts > until) return;
+      messages.push(Object.assign({ _ts: entry.ts }, entry.msg));
+      if (messages.length >= limit) { truncated = true; rl.close(); }
+    });
+    rl.on('close', () => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ messages, count: messages.length, truncated }));
+    });
+    rl.on('error', (err) => {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    });
+    return;
+  }
+
   const entry = STATIC_FILES[url];
   if (entry) {
     const full = path.join(__dirname, entry.file);
@@ -115,6 +229,7 @@ const server = http.createServer((req, res) => {
     'Globe:     http://localhost:' + PORT + '/globe_ship_tracker.html\n' +
     'VR:        http://localhost:' + PORT + '/vr_ship_tracker.html\n' +
     'WebSocket: ws://localhost:' + PORT + '/v0/stream\n' +
+    'History:   http://localhost:' + PORT + '/api/history?since=<ms>&until=<ms>\n' +
     'Upstream:  ' + UPSTREAM + '\n'
   );
 });
@@ -228,6 +343,7 @@ async function startBarentsWatchStream(token, bbox, client) {
       msgCount++;
       for (const msg of comboToAisstreamMessages(combo)) {
         if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(msg));
+        logAisMessage(msg);
       }
     }
   });
@@ -309,6 +425,7 @@ async function startKplerStream(token, bbox, client) {
     for (const row of rows) {
       for (const msg of kplerToAisstreamMessages(row)) {
         if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(msg));
+        logAisMessage(msg);
       }
     }
   }
@@ -370,16 +487,16 @@ async function startDigitrafficStream(bbox, client) {
     const v = metadataByMmsi.get(mmsi);
     if (!v) return; // no metadata cached yet for this vessel - try again once refreshMetadata() catches up
     staticSent.add(mmsi);
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify({
-        MessageType: 'ShipStaticData',
-        MetaData: { MMSI: mmsi, ShipName: v.name },
-        Message: { ShipStaticData: {
-          Name: v.name, Type: v.shipType, Destination: v.destination,
-          Dimension: { A: v.referencePointA, B: v.referencePointB, C: v.referencePointC, D: v.referencePointD }
-        } }
-      }));
-    }
+    const msg = {
+      MessageType: 'ShipStaticData',
+      MetaData: { MMSI: mmsi, ShipName: v.name },
+      Message: { ShipStaticData: {
+        Name: v.name, Type: v.shipType, Destination: v.destination,
+        Dimension: { A: v.referencePointA, B: v.referencePointB, C: v.referencePointC, D: v.referencePointD }
+      } }
+    };
+    if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(msg));
+    logAisMessage(msg);
   }
 
   async function pollLocations() {
@@ -394,18 +511,18 @@ async function startDigitrafficStream(bbox, client) {
       if (!withinBbox(lat, lon, bbox)) continue;
       sendStaticIfNew(f.mmsi);
       const p = f.properties || {};
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify({
-          MessageType: 'PositionReport',
-          MetaData: { MMSI: f.mmsi, ShipName: (metadataByMmsi.get(f.mmsi) || {}).name, latitude: lat, longitude: lon },
-          Message: { PositionReport: {
-            Latitude: lat, Longitude: lon,
-            // 360/102.3 are this API's own "not available" sentinels, same idea as the other providers
-            Cog: (p.cog != null && p.cog < 360) ? p.cog : undefined,
-            Sog: (p.sog != null && p.sog < 102.3) ? p.sog : undefined
-          } }
-        }));
-      }
+      const msg = {
+        MessageType: 'PositionReport',
+        MetaData: { MMSI: f.mmsi, ShipName: (metadataByMmsi.get(f.mmsi) || {}).name, latitude: lat, longitude: lon },
+        Message: { PositionReport: {
+          Latitude: lat, Longitude: lon,
+          // 360/102.3 are this API's own "not available" sentinels, same idea as the other providers
+          Cog: (p.cog != null && p.cog < 360) ? p.cog : undefined,
+          Sog: (p.sog != null && p.sog < 102.3) ? p.sog : undefined
+        } }
+      };
+      if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(msg));
+      logAisMessage(msg);
     }
   }
 
@@ -522,6 +639,7 @@ wss.on('connection', (client, req) => {
       client.send(text);
       bytesDown += text.length;
     }
+    try { logAisMessage(JSON.parse(text)); } catch (_) { /* not JSON - nothing to log, already forwarded above regardless */ }
     console.log('[' + ts() + '] UP #' + upMsgCount + ' ' + text);
   });
 
@@ -563,21 +681,24 @@ wss.on('connection', (client, req) => {
   });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log('AIS relay listening on http://localhost:' + PORT + '/');
   console.log('  UI:        http://localhost:' + PORT + '/');
   console.log('  Globe:     http://localhost:' + PORT + '/globe_ship_tracker.html');
   console.log('  VR:        http://localhost:' + PORT + '/vr_ship_tracker.html');
   console.log('  WebSocket: ws://localhost:' + PORT + '/v0/stream');
+  console.log('  History:   http://localhost:' + PORT + '/api/history');
   console.log('Forwarding to ' + UPSTREAM);
   console.log('Node version: ' + process.version);
   console.log('Appending stream log to ' + LOG_PATH);
+  console.log('Appending AIS message history to ' + HISTORY_LOG_PATH);
   if (INSECURE_TLS) {
     console.log('\n  ⚠  INSECURE_TLS=1 — upstream certificate verification is DISABLED.');
     console.log('     Use this only as a temporary workaround. Upgrade Node.js to fix properly.\n');
     fileLog('INSECURE_TLS enabled');
   }
   console.log('Press Ctrl+C to stop.');
+  await scanHistoryLogBounds();
 });
 
 process.on('SIGINT', () => {

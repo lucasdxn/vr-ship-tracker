@@ -8,5 +8,13 @@
   },
   "dependencies": {
     "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/aframe": "^1.2.9",
+    "@types/d3": "^7.4.3",
+    "@types/node": "^26.2.0",
+    "@types/three": "^0.185.4",
+    "@types/topojson-client": "^3.1.5",
+    "@types/ws": "^8.18.1"
   }
 }
