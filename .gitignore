@@ -1,0 +1,5 @@
+node_modules/
+stream_log.txt
+.DS_Store
+.mcp.json
+thesis/
