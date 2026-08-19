@@ -1,0 +1,1366 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIS VR Tracker</title>
+<script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+<style>
+:root {
+  --color-bg: #0d0f14;
+  --color-surface: #131720;
+  --color-border: #2a2f42;
+  --color-text: #e2e6f0;
+  --color-text-muted: #7a8099;
+  --color-primary: #3ea8ff;
+  --font-body: 'Inter', sans-serif;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: #04070c; font-family: var(--font-body, sans-serif), sans-serif; color: var(--color-text); }
+a-scene { position: fixed; inset: 0; }
+
+/* the actual UI overlay sits on top of the WebXR canvas as plain DOM - a-frame
+   only takes over the screen once you hit "Enter VR", so this still has to
+   look normal in a regular desktop/mobile browser tab */
+#hud {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 5;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  padding: 10px var(--space-4);
+  background: linear-gradient(rgba(13,15,20,0.85), rgba(13,15,20,0));
+  pointer-events: none;
+}
+#hud a, #hud button { pointer-events: auto; }
+.hud-left { display: flex; align-items: center; gap: var(--space-3); font-size: 0.85rem; font-weight: 600; letter-spacing: 0.03em; }
+.hud-left svg { color: var(--color-primary); }
+.badge { background: rgba(122,128,153,0.15); color: var(--color-text-muted); border: 1px solid rgba(122,128,153,0.35); border-radius: 99px; padding: 2px 10px; font-size: 0.68rem; font-weight: 500; }
+/* toggled from setLiveBadge() below via classList, same deal as the other two pages */
+/* noinspection CssUnusedSymbol */
+.badge.live { background: rgba(62,255,154,0.15); color: #3eff9a; border-color: rgba(62,255,154,0.35); }
+.stat { font-size: 0.68rem; color: var(--color-text-muted); }
+.stat span { color: var(--color-text); font-weight: 600; margin-left: 3px; }
+.hud-right { display: flex; align-items: center; gap: var(--space-3); }
+.link-btn {
+  font-size: 0.72rem; color: var(--color-text-muted); text-decoration: none;
+  border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  padding: 5px 10px; background: rgba(19,23,32,0.7);
+}
+.link-btn:hover { color: var(--color-text); border-color: rgba(62,168,255,0.4); }
+
+.toggle-btn {
+  display: flex; align-items: center; gap: 6px; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--color-text-muted); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  padding: 5px 10px; background: rgba(19,23,32,0.7); cursor: pointer; user-select: none;
+}
+.toggle-btn input[type="checkbox"] { accent-color: var(--color-primary); }
+/* toggled via #mode-toggle.classList in setPlaybackMode() below */
+/* noinspection CssUnusedSymbol */
+.toggle-btn.mode-btn.active { color: #ffb83e; border-color: rgba(255,184,62,0.5); background: rgba(255,184,62,0.12); }
+.lookahead-field { display: flex; align-items: center; gap: 4px; font-size: 0.68rem; color: var(--color-text-muted); }
+.lookahead-field input {
+  width: 34px; background: rgba(19,23,32,0.7); border: 1px solid var(--color-border); border-radius: 4px;
+  color: var(--color-text); font-size: 0.7rem; padding: 3px 4px; text-align: center;
+}
+
+#playback-panel {
+  position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%); z-index: 5;
+  width: min(720px, 92vw);
+  background: rgba(19,23,32,0.94); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4); font-size: 0.72rem; display: none;
+}
+/* toggled via #playback-panel.classList in setPlaybackMode() below */
+/* noinspection CssUnusedSymbol */
+#playback-panel.show { display: block; }
+.pb-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.pb-row:first-child { margin-top: 0; }
+.pb-header { justify-content: space-between; font-weight: 700; letter-spacing: 0.04em; color: #ffb83e; }
+.pb-range-label { font-weight: 500; color: var(--color-text-muted); font-size: 0.66rem; }
+.pb-caption { color: var(--color-text-muted); width: 52px; flex-shrink: 0; }
+.pb-btn {
+  flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--color-border);
+  background: rgba(62,168,255,0.15); color: var(--color-primary); cursor: pointer; font-size: 0.7rem;
+}
+.pb-btn:disabled, #playback-panel input:disabled, #playback-panel select:disabled { opacity: 0.4; cursor: default; }
+.pb-time { font-variant-numeric: tabular-nums; font-weight: 600; width: 68px; flex-shrink: 0; }
+#playback-panel input[type="range"] { flex: 1; accent-color: #ffb83e; }
+#pb-speed { background: rgba(19,23,32,0.7); border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text); font-size: 0.68rem; }
+.pb-status { color: var(--color-text-muted); font-size: 0.66rem; }
+
+/* bottom-left so it never collides with a-frame's own "Enter VR" button,
+   which it injects fixed to the bottom-right whenever a headset is present */
+#help-btn {
+  position: fixed; left: 14px; bottom: 14px; z-index: 6;
+  width: 30px; height: 30px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(19,23,32,0.85); border: 1px solid var(--color-border);
+  color: var(--color-text-muted); font-size: 0.85rem; font-weight: 700;
+  cursor: pointer; user-select: none;
+}
+#help-btn:hover { color: var(--color-text); border-color: rgba(62,168,255,0.5); }
+
+#controls-modal {
+  position: fixed; inset: 0; z-index: 10;
+  background: rgba(4,7,12,0.72);
+  display: flex; align-items: center; justify-content: center;
+  padding: var(--space-4);
+}
+/* toggled via classList in openControls()/closeControls() below */
+/* noinspection CssUnusedSymbol */
+#controls-modal:not(.show) { display: none; }
+#controls-panel {
+  width: min(560px, 100%); max-height: 84vh; overflow-y: auto;
+  background: rgba(19,23,32,0.97); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+  padding: var(--space-4); font-size: 0.8rem;
+}
+#controls-panel h2 { font-size: 0.95rem; display: flex; align-items: center; justify-content: space-between; }
+#controls-panel .close-btn {
+  cursor: pointer; color: var(--color-text-muted); border: 1px solid var(--color-border); border-radius: 50%;
+  width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+  font-size: 0.85rem; background: rgba(122,128,153,0.1);
+}
+#controls-panel .close-btn:hover { color: var(--color-text); border-color: rgba(62,168,255,0.4); }
+#controls-panel section { margin-top: var(--space-3); }
+#controls-panel h2 + section { margin-top: var(--space-3); }
+#controls-panel h3 {
+  font-size: 0.66rem; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--color-primary); margin-bottom: 6px;
+}
+#controls-panel .ctrl-row { display: flex; gap: 10px; padding: 3px 0; color: var(--color-text-muted); line-height: 1.4; }
+#controls-panel kbd {
+  flex-shrink: 0; min-width: 96px; background: rgba(122,128,153,0.15); border: 1px solid var(--color-border);
+  border-radius: 4px; padding: 2px 6px; font-size: 0.68rem; font-family: inherit; color: var(--color-text); text-align: center;
+}
+#controls-panel .foot-note { margin-top: var(--space-3); font-size: 0.68rem; color: var(--color-text-muted); }
+
+#info-panel {
+  position: fixed; top: 60px; right: var(--space-4); z-index: 5; width: 240px;
+  background: rgba(19,23,32,0.92); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4); font-size: 0.76rem; display: none;
+}
+/* toggled from renderInfoPanel()/clearSelection() below via classList */
+/* noinspection CssUnusedSymbol */
+#info-panel.show { display: block; }
+#info-panel .name { font-weight: 600; margin-bottom: 6px; }
+#info-panel .row { display: flex; justify-content: space-between; color: var(--color-text-muted); padding: 2px 0; }
+#info-panel .row span { color: var(--color-text); font-weight: 500; }
+#info-panel .estimate-note { margin-top: 6px; font-size: 0.66rem; color: #ffb83e; }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div class="hud-left">
+    <svg width="18" height="18" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
+    </svg>
+    AIS VR Tracker
+    <div class="badge" id="live-badge">● OFFLINE</div>
+    <div class="stat">VESSELS <span id="stat-total">0</span></div>
+    <div class="stat" title="Current grab-zoom scale - see the hint bar for how to change it">SCALE <span id="stat-scale">1.0×</span></div>
+  </div>
+  <div class="hud-right">
+    <label class="toggle-btn" id="cones-toggle-wrap" title="Forward course-projection cones, colored red where two tracks converge">
+      <input type="checkbox" id="cones-toggle" checked>
+      <span>COURSE CONES</span>
+    </label>
+    <label class="lookahead-field" title="How far ahead (minutes) each course cone projects">
+      <span>project</span>
+      <input type="number" id="lookahead-min" min="2" max="30" step="1" value="10">
+      <span>min</span>
+    </label>
+    <label class="toggle-btn" id="density-toggle-wrap" title="Extrude traffic density (AIS pings per grid cell, decaying over time) as columns above the ocean instead of a flat heatmap">
+      <input type="checkbox" id="density-toggle">
+      <span>DENSITY</span>
+    </label>
+    <button class="toggle-btn mode-btn" id="mode-toggle" title="Switch between the live feed and scrubbing through logged history">
+      <span id="mode-label">PLAYBACK</span>
+    </button>
+    <a class="link-btn" href="ais_data_stream.html" target="_blank" rel="noopener">&larr; connection manager</a>
+    <a class="link-btn" href="globe_ship_tracker.html" target="_blank" rel="noopener">2D globe</a>
+  </div>
+</div>
+
+<!-- shown automatically on load (class="show" below) so a first-time visitor
+     sees the controls before doing anything; closeable and reopenable any
+     time from the small "?" button in the bottom-left corner - see
+     "controls help modal" further down in the script for the wiring. -->
+<div id="controls-modal" class="show">
+  <div id="controls-panel">
+    <h2>Controls <span class="close-btn" id="controls-close" title="Close">&times;</span></h2>
+
+    <section>
+      <h3>Movement</h3>
+      <div class="ctrl-row"><kbd>mouse-look</kbd><span>look around (head-turn in VR)</span></div>
+      <div class="ctrl-row"><kbd>WASD</kbd><span>fly around for fine positioning</span></div>
+      <div class="ctrl-row"><kbd>click water</kbd><span>teleport there instantly</span></div>
+      <div class="ctrl-row"><kbd>R</kbd><span>recenter on current traffic and reset zoom</span></div>
+    </section>
+
+    <section>
+      <h3>Grab-and-resize zoom</h3>
+      <div class="ctrl-row"><kbd>right-drag</kbd><span>grab the world - drag down to pull it close and zoom into a region, drag up to push it away for an ocean-wide view</span></div>
+      <div class="ctrl-row"><kbd>grip (VR)</kbd><span>same idea with a hand controller - pull your hand toward you to zoom in, push it away to zoom out</span></div>
+    </section>
+
+    <section>
+      <h3>Ships</h3>
+      <div class="ctrl-row"><kbd>click a ship</kbd><span>see its real dimensions, speed and destination</span></div>
+      <div class="ctrl-row"><kbd>COURSE CONES</kbd><span>forward projection cones from each ship's bow, colored red where two tracks are on a collision course</span></div>
+      <div class="ctrl-row"><kbd>DENSITY</kbd><span>extrudes recent traffic density / dwell-time as columns above the ocean, instead of a flat heatmap</span></div>
+    </section>
+
+    <section>
+      <h3>Playback</h3>
+      <div class="ctrl-row"><kbd>PLAYBACK</kbd><span>switch from the live feed to scrubbing through logged history</span></div>
+      <div class="ctrl-row"><kbd>timeline bar</kbd><span>in playback mode, a 3D scrub bar rides in front of you - click along it to seek</span></div>
+    </section>
+
+    <div class="foot-note">works best over a tight region (a strait, a harbor) - real-world scale means a continent-wide feed spreads ships kilometers apart.</div>
+  </div>
+</div>
+
+<button id="help-btn" title="Show controls">?</button>
+
+<!-- playback mode control panel - hidden entirely while in LIVE mode. the
+     "jump" slider picks roughly where in the whole logged history to load a
+     window from; the "scrub" slider (and the in-scene 3D bar, see the
+     #timeline-rig entity below) moves through that loaded window. -->
+<div id="playback-panel">
+  <div class="pb-row pb-header">
+    <span>PLAYBACK</span>
+    <span class="pb-range-label" id="pb-log-range">no history logged yet</span>
+  </div>
+  <div class="pb-row">
+    <span class="pb-caption">jump to</span>
+    <input type="range" id="pb-jump" min="0" max="1000" value="0" disabled>
+  </div>
+  <div class="pb-row">
+    <button class="pb-btn" id="pb-playpause" disabled>&#9654;</button>
+    <span class="pb-time" id="pb-clock">--:--:--</span>
+    <input type="range" id="pb-scrub" min="0" max="1000" value="0" disabled>
+    <select id="pb-speed" disabled>
+      <option value="1">1&times;</option>
+      <option value="5">5&times;</option>
+      <option value="30" selected>30&times;</option>
+      <option value="120">120&times;</option>
+      <option value="600">600&times;</option>
+    </select>
+  </div>
+  <div class="pb-row pb-status" id="pb-status">loading history range&hellip;</div>
+</div>
+
+<div id="info-panel">
+  <div class="name" id="info-name">-</div>
+  <div class="row">Type <span id="info-type">-</span></div>
+  <div class="row">Length <span id="info-length">-</span></div>
+  <div class="row">Beam <span id="info-beam">-</span></div>
+  <div class="row">Speed <span id="info-speed">-</span></div>
+  <div class="row">Destination <span id="info-dest">-</span></div>
+  <div class="estimate-note" id="info-estimate">dimensions estimated - no ShipStaticData for this vessel yet</div>
+</div>
+
+<!--suppress HtmlUnknownTarget, HtmlUnknownTag, CssUnknownTarget --><!-- A-Frame's `background` component shares a name with the obsolete HTML `background` attribute, which the IDE tries to resolve as a URL; a-* tags are custom elements A-Frame registers at runtime. -->
+<a-scene background="color: #04070c" fog="type: linear; color: #04070c; near: 1500; far: 20000">
+  <a-assets></a-assets>
+
+  <!-- rig is a plain, unrotated container - click-teleport only ever has to
+       set its x/z, and the camera + hand controllers ride along with it -->
+  <a-entity id="rig" position="0 220 260">
+    <a-camera wasd-controls="fly: true; acceleration: 240" look-controls camera="far: 40000" rotation="-26 0 0">
+      <!-- the "physical timeline" for playback mode: a bar fixed in front of
+           whatever the viewer is looking at (a child of the camera, so it
+           rides along regardless of where click-teleport or WASD-fly has
+           taken the rig), with a marker showing the current scrub position.
+           hidden entirely in LIVE mode - see setPlaybackMode() below. click
+           anywhere along it to seek there, same click-to-act pattern as
+           click-teleport on the ocean plane. -->
+      <a-entity id="timeline-rig" visible="false" position="0 -0.55 -1.3">
+        <a-box id="timeline-bar" class="clickable" timeline-seek
+               width="1" height="0.05" depth="0.01"
+               material="color: #1b2230; opacity: 0.9; shader: flat"></a-box>
+        <a-box id="timeline-marker" width="0.02" height="0.11" depth="0.03"
+               material="color: #ffb83e; shader: flat" position="-0.5 0 0.01"></a-box>
+        <a-entity id="timeline-start-label" text="value: --:--; align: left; width: 1.6; color: #7a8099" position="-0.5 -0.08 0"></a-entity>
+        <a-entity id="timeline-end-label" text="value: --:--; align: right; width: 1.6; color: #7a8099" position="0.5 -0.08 0"></a-entity>
+        <a-entity id="timeline-now-label" text="value: --; align: center; width: 1.6; color: #ffb83e" position="0 0.09 0"></a-entity>
+      </a-entity>
+    </a-camera>
+    <a-entity id="hand-left" laser-controls="hand: left" raycaster="objects: .clickable; far: 20000" line="color: #3ea8ff; opacity: 0.6"></a-entity>
+    <a-entity id="hand-right" laser-controls="hand: right" raycaster="objects: .clickable; far: 20000" line="color: #3ea8ff; opacity: 0.6"></a-entity>
+  </a-entity>
+
+  <!-- desktop/mobile mouse "controller" - laser-controls above only fires in
+       an actual XR session, this is what makes clicking work in a normal tab -->
+  <a-entity cursor="rayOrigin: mouse" raycaster="objects: .clickable; far: 20000"></a-entity>
+
+  <!-- everything grab-zoom scales/pans is grouped here so the navigation code
+       (see "grab-and-resize world navigation" below) only ever has to touch
+       one entity's transform - the rig/camera stays outside it and never
+       moves on its own account when the world is being scaled -->
+  <a-entity id="world">
+    <a-plane id="ocean" class="clickable" click-teleport
+             rotation="-90 0 0" width="100000" height="100000"
+             material="color: #0c2436; metalness: 0.15; roughness: 0.85; shader: standard"></a-plane>
+
+    <a-entity id="ships"></a-entity>
+
+    <a-entity id="density" visible="false"></a-entity>
+  </a-entity>
+
+  <a-light type="ambient" color="#8fa0c0" intensity="0.6"></a-light>
+  <a-light type="directional" color="#ffffff" intensity="0.8" position="400 600 200"></a-light>
+</a-scene>
+
+<script>
+/* ============================================================ */
+/* scale-accurate hull component                                */
+/* ============================================================ */
+/* every ship gets built from its real length/beam in meters, at true 1:1
+ * scale (1 AIS meter = 1 a-frame unit) - that's the whole point of this
+ * page. no fudging the size to make the scene "look nicer", the size
+ * difference between a 20m fishing boat and a 366m tanker IS the feature.
+ *
+ * the hull is a flat pentagon (straight sides, pointed bow) run through
+ * THREE.ExtrudeGeometry for a bit of depth, plus a small box for the
+ * deckhouse. not trying to model actual ship types here, just enough of a
+ * silhouette that "big boxy thing = cargo ship" reads instantly next to a
+ * tiny one. */
+AFRAME.registerComponent('ship-hull', {
+  schema: {
+    length: { type: 'number', default: 30 },
+    beam: { type: 'number', default: 6 },
+    color: { type: 'color', default: '#7d8a96' },
+    opacity: { type: 'number', default: 1 }
+  },
+
+  init: function () {
+    this.group = new THREE.Group();
+    this.el.setObject3D('ship-hull', this.group);
+    this.hullMat = new THREE.MeshStandardMaterial({ roughness: 0.65, metalness: 0.1 });
+    this.deckMat = new THREE.MeshStandardMaterial({ color: '#dfe4ee', roughness: 0.8 });
+    this.build();
+  },
+
+  update: function (oldData) {
+    const dimsChanged = !oldData || oldData.length !== this.data.length || oldData.beam !== this.data.beam;
+    if (dimsChanged) this.build();
+    this.hullMat.color.set(this.data.color);
+    this.hullMat.transparent = this.data.opacity < 1;
+    this.hullMat.opacity = this.data.opacity;
+    this.deckMat.transparent = this.data.opacity < 1;
+    this.deckMat.opacity = this.data.opacity;
+  },
+
+  // (re)builds the hull geometry for the current length/beam. only called
+  // when the dimensions actually change (real ShipStaticData replacing a
+  // guessed fallback, mostly) - not on every position update, that would be
+  // a lot of wasted geometry churn for a ship that isn't growing every second
+  build: function () {
+    const L = Math.max(3, this.data.length);
+    const B = Math.max(1.5, this.data.beam);
+    const hl = L / 2, hw = B / 2;
+    const draft = Math.max(1.2, B * 0.35);
+
+    // hull outline in (beam, length) space, centered on the AIS-reported
+    // position: flat stern, straight sides for ~70% of the length, then a
+    // taper to a point at the bow
+    const shape = new THREE.Shape();
+    shape.moveTo(-hw, -hl);
+    shape.lineTo(hw, -hl);
+    shape.lineTo(hw, hl * 0.42);
+    shape.lineTo(0, hl);
+    shape.lineTo(-hw, hl * 0.42);
+    shape.closePath();
+
+    const hullGeo = new THREE.ExtrudeGeometry(shape, { depth: draft, bevelEnabled: false });
+    // ExtrudeGeometry lies flat in XY, extruded along +Z. rotating -90 about X
+    // turns "length" (shape Y) into world Z and "extrude depth" into world Y
+    // (up) - see the rotation-sign note above updateShipEntity() for why
+    // bow ends up pointing toward -Z once this is done.
+    hullGeo.rotateX(-Math.PI / 2);
+
+    const deckW = B * 0.5, deckL = L * 0.2, deckH = Math.max(2, B * 0.55);
+    const deckGeo = new THREE.BoxGeometry(deckW, deckH, deckL);
+
+    if (this.hullMesh) { this.hullMesh.geometry.dispose(); this.group.remove(this.hullMesh); }
+    if (this.deckMesh) { this.deckMesh.geometry.dispose(); this.group.remove(this.deckMesh); }
+
+    this.hullMesh = new THREE.Mesh(hullGeo, this.hullMat);
+    this.group.add(this.hullMesh);
+
+    this.deckMesh = new THREE.Mesh(deckGeo, this.deckMat);
+    // deckhouse sits toward the stern (+Z in this local space, see rotation
+    // note), on top of the hull deck - true for most cargo/tanker/passenger
+    // vessels, close enough for fishing boats and everything else too
+    this.deckMesh.position.set(0, draft + deckH / 2, hl * 0.35);
+    this.group.add(this.deckMesh);
+
+    this.currentLabelHeight = draft + deckH + 4;
+  },
+
+  remove: function () {
+    this.el.removeObject3D('ship-hull');
+    if (this.hullMesh) this.hullMesh.geometry.dispose();
+    if (this.deckMesh) this.deckMesh.geometry.dispose();
+    this.hullMat.dispose(); this.deckMat.dispose();
+  }
+});
+
+/* ============================================================ */
+/* course-projection cone - the "why VR" collision-spotting feature       */
+/* ============================================================ */
+/* a translucent cone reaching out from each ship's bow along its current
+ * heading, its length set by how far that ship will actually travel
+ * (SOG * lookahead time) rather than some fixed decoration - a fast ship
+ * projects a long cone, a slow one a short one, a stopped one none at all.
+ * this is the same idea VTS (vessel traffic service) collision-alert
+ * displays use, just spatial instead of a numbers table: lean in over a
+ * strait and you can *see* two cones about to cross instead of having to
+ * read COG/SOG and do the geometry in your head. checkConvergence() below
+ * colors a ship's cone red when its projected path actually comes close to
+ * another ship's in the lookahead window.
+ *
+ * built once per ship at a fixed unit size (radius 1, length 1, apex at the
+ * local origin pointing down -Z same as the hull) and then just scaled/
+ * repositioned on every update - much cheaper than rebuilding the geometry
+ * every time SOG changes, which for a live feed is basically every message. */
+AFRAME.registerComponent('course-cone', {
+  schema: {
+    length: { type: 'number', default: 0 },   // meters; 0 = hide (stopped/no speed)
+    radius: { type: 'number', default: 3 },   // meters, at the wide (far) end
+    bowOffset: { type: 'number', default: 15 }, // local -Z distance from ship center to bow tip
+    color: { type: 'color', default: '#3ea8ff' },
+    opacity: { type: 'number', default: 0.28 }
+  },
+
+  init: function () {
+    // unit cone: apex (radius 0) toward local -Z, base (radius 1) toward
+    // more-negative -Z, built once and reused via scale/position - see the
+    // rotateX comment on ship-hull.build() above for the same trick applied
+    // the other direction (this one uses +PI/2, not -PI/2, precisely so the
+    // apex ends up on the *near* side and the base on the *far* side - see
+    // the standalone rotation-sign note further down in this file)
+    this.geo = new THREE.ConeGeometry(1, 1, 16, 1, true);
+    this.geo.rotateX(Math.PI / 2);
+    this.mat = new THREE.MeshBasicMaterial({ color: this.data.color, transparent: true, opacity: this.data.opacity, side: THREE.DoubleSide, depthWrite: false });
+    this.mesh = new THREE.Mesh(this.geo, this.mat);
+    this.mesh.visible = false;
+    this.el.setObject3D('course-cone', this.mesh);
+  },
+
+  update: function () {
+    const L = this.data.length;
+    if (!(L > 0)) { this.mesh.visible = false; return; }
+    this.mesh.visible = true;
+    this.mesh.scale.set(this.data.radius, this.data.radius, L);
+    // apex sits at the bow tip; base extends further forward by L - see the
+    // unit-geometry comment above for why this offset math works out
+    this.mesh.position.set(0, 0.5, -(this.data.bowOffset + L / 2));
+    this.mat.color.set(this.data.color);
+    this.mat.opacity = this.data.opacity;
+  },
+
+  remove: function () {
+    this.el.removeObject3D('course-cone');
+    this.geo.dispose();
+    this.mat.dispose();
+  }
+});
+
+/* keeps text labels facing the camera without tilting them - a-frame core
+ * doesn't ship a look-at/billboard component (that's an aframe-extras
+ * thing), so this is the ~10 lines it takes to roll your own */
+AFRAME.registerComponent('billboard', {
+  init: function () { this._camPos = new THREE.Vector3(); this._myPos = new THREE.Vector3(); },
+  tick: function () {
+    const camera = this.el.sceneEl.camera;
+    if (!camera) return;
+    camera.getWorldPosition(this._camPos);
+    this.el.object3D.getWorldPosition(this._myPos);
+    this._camPos.y = this._myPos.y; // ignore camera pitch, keep the label upright
+    this.el.object3D.lookAt(this._camPos);
+  }
+});
+
+/* click-to-move: click/trigger anywhere on the ocean plane and the rig jumps
+ * there. flying the whole way across a multi-kilometer strait at walking
+ * speed isn't really an option, so this is the primary way to get around -
+ * WASD-fly is more for fine positioning once you're close */
+AFRAME.registerComponent('click-teleport', {
+  init: function () {
+    this.el.addEventListener('click', (evt) => {
+      // a grab-zoom drag (see below) ends on the same mousedown/mouseup pair
+      // a-frame's cursor uses to synthesize this click, on the same element
+      // (the ocean, being a single huge plane) - without this the last thing
+      // every zoom drag did was also teleport you to wherever you let go
+      if (suppressNextOceanClick) { suppressNextOceanClick = false; return; }
+      const point = evt.detail && evt.detail.intersection && evt.detail.intersection.point;
+      if (!point) return;
+      const rig = document.getElementById('rig');
+      const pos = rig.getAttribute('position');
+      rig.setAttribute('position', { x: point.x, y: pos.y, z: point.z });
+    });
+  }
+});
+
+/* ============================================================ */
+/* grab-and-resize world navigation                                        */
+/* ============================================================ */
+/* click-teleport (above) and WASD-fly cover fine positioning within a
+ * region; this is the other half of getting around - scaling the whole
+ * #world group around a point you grab, so pulling your hand toward you
+ * zooms into a region (the world grows relative to you, like pulling a map
+ * close to read the fine detail) and pushing it away shrinks back down to
+ * an ocean-wide view. ships stay real-world-proportioned to each other the
+ * whole time; only the map-to-you ratio changes, and it resets with the
+ * rest of the view on R (see recenter() below).
+ *
+ * the anchor point - wherever you grabbed - is kept visually fixed under
+ * your hand for the whole drag by solving for #world's position alongside
+ * its scale (pos_new = anchor - (anchor - pos_old) * scaleNew/scaleOld,
+ * the standard "scale about a pivot" identity), always computed from the
+ * fixed state captured at grab-start so repeated small moves can't drift.
+ *
+ * on desktop (no hand controller) the closest equivalent is a vertical
+ * drag, bound to the right mouse button so it can't be confused with the
+ * left-button click that teleport/ship-selection already own - see
+ * suppressNextOceanClick above for the one place that still isn't quite
+ * enough on its own. */
+const MIN_WORLD_SCALE = 0.05, MAX_WORLD_SCALE = 20;
+const MOUSE_ZOOM_SENSITIVITY = 0.006; // scale multiplies by exp(dy * this) per pixel of vertical drag
+const sceneEl = document.querySelector('a-scene');
+const worldEl = document.getElementById('world');
+let worldScale = 1;
+let grab = null; // { anchorX, anchorZ, scale0, posX0, posZ0, kind: 'mouse'|'vr', ...kind-specific }
+let suppressNextOceanClick = false;
+let mouseGrabMoved = 0;
+
+function rayPlaneIntersect(origin, dir, planeY) {
+  if (Math.abs(dir.y) < 1e-6) return null; // ray parallel to the ocean plane
+  const t = (planeY - origin.y) / dir.y;
+  if (t <= 0) return null; // plane is behind the ray origin
+  return { x: origin.x + dir.x * t, z: origin.z + dir.z * t };
+}
+
+function beginGrab(anchor, extra) {
+  if (!anchor) return null;
+  return Object.assign({
+    anchorX: anchor.x, anchorZ: anchor.z,
+    scale0: worldScale,
+    posX0: worldEl.object3D.position.x,
+    posZ0: worldEl.object3D.position.z
+  }, extra);
+}
+
+function applyGrabScale(scaleNew) {
+  scaleNew = Math.max(MIN_WORLD_SCALE, Math.min(MAX_WORLD_SCALE, scaleNew));
+  const ratio = scaleNew / grab.scale0;
+  const posX = grab.anchorX - (grab.anchorX - grab.posX0) * ratio;
+  const posZ = grab.anchorZ - (grab.anchorZ - grab.posZ0) * ratio;
+  worldScale = scaleNew;
+  worldEl.object3D.scale.set(scaleNew, scaleNew, scaleNew);
+  worldEl.object3D.position.set(posX, 0, posZ);
+  document.getElementById('stat-scale').textContent = scaleNew.toFixed(scaleNew < 1 ? 2 : 1) + '×';
+}
+
+function resetZoom() {
+  worldScale = 1;
+  worldEl.object3D.scale.set(1, 1, 1);
+  worldEl.object3D.position.set(0, 0, 0);
+  document.getElementById('stat-scale').textContent = '1.0×';
+}
+
+function mouseAnchorAt(clientX, clientY, camera, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
+  const ndcY = -(((clientY - rect.top) / rect.height) * 2 - 1);
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera({ x: ndcX, y: ndcY }, camera);
+  return rayPlaneIntersect(raycaster.ray.origin, raycaster.ray.direction, worldEl.object3D.position.y);
+}
+
+function onWindowMouseMove(e) {
+  if (!grab || grab.kind !== 'mouse') return;
+  const dy = e.clientY - grab.startY;
+  mouseGrabMoved = Math.max(mouseGrabMoved, Math.abs(dy));
+  applyGrabScale(grab.scale0 * Math.exp(dy * MOUSE_ZOOM_SENSITIVITY));
+}
+function onWindowMouseUp() {
+  if (grab && grab.kind === 'mouse' && mouseGrabMoved > 6) {
+    suppressNextOceanClick = true;
+    setTimeout(() => { suppressNextOceanClick = false; }, 300); // safety net if the click never arrives
+  }
+  grab = null;
+  window.removeEventListener('mousemove', onWindowMouseMove);
+}
+
+// hand-controller grab: driven continuously by hand-to-head distance (see
+// navTick below) rather than a one-shot delta, since a VR hand moves freely
+// in 3D rather than along a single mouse axis
+function controllerRay(handEl) {
+  const obj = handEl.object3D;
+  const origin = new THREE.Vector3();
+  obj.getWorldPosition(origin);
+  const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(obj.getWorldQuaternion(new THREE.Quaternion()));
+  return { origin, dir };
+}
+
+function initHandGrab(handEl) {
+  handEl.addEventListener('gripdown', () => {
+    if (grab) return; // one grab at a time; whichever hand grips first wins until release
+    const camera = sceneEl.camera;
+    if (!camera) return;
+    const { origin, dir } = controllerRay(handEl);
+    const anchor = rayPlaneIntersect(origin, dir, worldEl.object3D.position.y) || { x: worldEl.object3D.position.x, z: worldEl.object3D.position.z };
+    const camPos = new THREE.Vector3();
+    camera.getWorldPosition(camPos);
+    grab = beginGrab(anchor, { kind: 'vr', handEl, dist0: Math.max(0.05, camPos.distanceTo(origin)) });
+  });
+  handEl.addEventListener('gripup', () => {
+    if (grab && grab.kind === 'vr' && grab.handEl === handEl) grab = null;
+  });
+}
+
+function navTick() {
+  if (grab && grab.kind === 'vr') {
+    const camera = sceneEl.camera;
+    if (camera) {
+      const origin = new THREE.Vector3();
+      grab.handEl.object3D.getWorldPosition(origin);
+      const camPos = new THREE.Vector3();
+      camera.getWorldPosition(camPos);
+      const distNow = Math.max(0.05, camPos.distanceTo(origin));
+      applyGrabScale(grab.scale0 * (grab.dist0 / distNow)); // hand closer to head -> distNow shrinks -> zoom in
+    }
+  }
+  requestAnimationFrame(navTick);
+}
+
+sceneEl.addEventListener('loaded', () => {
+  const canvas = sceneEl.canvas;
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  canvas.addEventListener('mousedown', (e) => {
+    if (e.button !== 2 || grab) return;
+    const camera = sceneEl.camera;
+    if (!camera) return;
+    e.preventDefault();
+    const anchor = mouseAnchorAt(e.clientX, e.clientY, camera, canvas) || { x: worldEl.object3D.position.x, z: worldEl.object3D.position.z };
+    mouseGrabMoved = 0;
+    grab = beginGrab(anchor, { kind: 'mouse', startY: e.clientY });
+    window.addEventListener('mousemove', onWindowMouseMove);
+    window.addEventListener('mouseup', onWindowMouseUp, { once: true });
+  });
+  initHandGrab(document.getElementById('hand-left'));
+  initHandGrab(document.getElementById('hand-right'));
+  requestAnimationFrame(navTick);
+});
+
+/* ============================================================ */
+/* vessel taxonomy - same buckets/colors/fallback dims as the 2D globe   */
+/* tracker (globe_ship_tracker.html), copy-pasted on purpose so this page */
+/* stays a single drop-in file with no build step and no shared import   */
+/* ============================================================ */
+const SHIP_TYPES = {
+  cargo:        { label: 'Cargo',           color: '#ffb83e', lengthM: 180, beamRatio: 0.15 },
+  tanker:       { label: 'Tanker',          color: '#ff5e7a', lengthM: 240, beamRatio: 0.17 },
+  passenger:    { label: 'Passenger',       color: '#3ea8ff', lengthM: 200, beamRatio: 0.13 },
+  fishing:      { label: 'Fishing',         color: '#3eff9a', lengthM: 28,  beamRatio: 0.30 },
+  tug:          { label: 'Tug / service',   color: '#c97bff', lengthM: 32,  beamRatio: 0.34 },
+  highspeed:    { label: 'High-speed',      color: '#ff7ae0', lengthM: 45,  beamRatio: 0.24 },
+  recreational: { label: 'Sail / pleasure', color: '#3effee', lengthM: 16,  beamRatio: 0.30 },
+  special:      { label: 'Gov / special',   color: '#ffe066', lengthM: 55,  beamRatio: 0.24 },
+  other:        { label: 'Other / unknown', color: '#7d8a96', lengthM: 60,  beamRatio: 0.20 }
+};
+
+function typeKeyFromAisCode(code) {
+  const c = Math.floor(Number(code));
+  if (!isFinite(c) || c <= 0) return 'other';
+  if (c >= 70 && c <= 79) return 'cargo';
+  if (c >= 80 && c <= 89) return 'tanker';
+  if (c >= 60 && c <= 69) return 'passenger';
+  if (c >= 40 && c <= 49) return 'highspeed';
+  if (c >= 20 && c <= 29) return 'highspeed';
+  if (c === 30) return 'fishing';
+  if (c === 31 || c === 32 || c === 52 || c === 53) return 'tug';
+  if (c === 36 || c === 37) return 'recreational';
+  if (c === 33 || c === 34 || c === 35) return 'special';
+  if (c >= 50 && c <= 59) return 'special';
+  return 'other';
+}
+
+/* ============================================================ */
+/* lat/lon -> scene position                                              */
+/* ============================================================ */
+/* real-world scale means we can't use a global map projection (that's the
+ * whole "flat map distorts distance/scale" problem this feature exists to
+ * avoid) - instead this is a local tangent-plane approximation centered on
+ * wherever traffic currently is: east/north in meters from an origin point,
+ * good to well under 1% error out to a couple hundred km, which covers any
+ * strait/harbor/coastline you'd actually want to stand over in VR */
+const M_PER_DEG_LAT = 111320;
+let origin = null; // { lat, lon }
+
+function llToScene(lat, lon) {
+  const mPerDegLon = M_PER_DEG_LAT * Math.cos(origin.lat * Math.PI / 180);
+  return {
+    x: (lon - origin.lon) * mPerDegLon,
+    // scene convention used everywhere below: -Z is north, +X is east, so
+    // "further north" (larger lat) has to move toward -Z
+    z: -(lat - origin.lat) * M_PER_DEG_LAT
+  };
+}
+
+/* heading (COG, degrees clockwise from true north) -> a-frame Y rotation.
+ * hulls are built bow-first along -Z at rotation.y = 0 (see ship-hull.build
+ * above). a-frame/three.js Y-rotation is a standard right-handed rotation,
+ * which turns -Z *toward -X* as the angle increases - the opposite of a
+ * compass, which goes north -> EAST as heading increases. negating the
+ * heading is what fixes that mismatch; flip this sign if hulls ever end up
+ * pointing exactly backwards after a real-world test. */
+function headingToYRotation(cog) { return -cog; }
+
+/* ============================================================ */
+/* ship bookkeeping                                                        */
+/* ============================================================ */
+const ships = new Map();          // mmsi -> record
+const pendingStatics = new Map(); // static data that arrived before any position
+const shipsRoot = document.getElementById('ships');
+const STALE_MS = 10 * 60 * 1000;
+
+function fallbackDims(typeKey) {
+  const info = SHIP_TYPES[typeKey] || SHIP_TYPES.other;
+  return { lengthM: info.lengthM, beamM: info.lengthM * info.beamRatio };
+}
+
+function ensureShip(mmsi) {
+  let s = ships.get(mmsi);
+  if (s) return s;
+
+  const el = document.createElement('a-entity');
+  el.classList.add('clickable');
+  el.setAttribute('ship-hull', { length: 30, beam: 6, color: SHIP_TYPES.other.color, opacity: 0.55 });
+  el.setAttribute('course-cone', { length: 0 });
+
+  const label = document.createElement('a-entity');
+  label.setAttribute('text', { value: '', align: 'center', width: 10, color: '#e2e6f0', baseline: 'bottom' });
+  label.setAttribute('billboard', '');
+  el.appendChild(label);
+
+  shipsRoot.appendChild(el);
+  el.addEventListener('click', () => selectShip(mmsi));
+
+  s = { mmsi, el, label, typeKey: 'other', hasRealDims: false, lastUpdate: 0 };
+  ships.set(mmsi, s);
+  return s;
+}
+
+function applyStatic(s, info) {
+  if (info.shipType != null) s.typeKey = typeKeyFromAisCode(info.shipType);
+  if (info.lengthM) { s.lengthM = info.lengthM; s.hasRealDims = true; }
+  if (info.beamM) { s.beamM = info.beamM; s.hasRealDims = true; }
+  if (info.destination) s.destination = info.destination;
+  if (info.name && !s.name) s.name = info.name;
+}
+
+function refreshEntity(s) {
+  const dims = s.hasRealDims ? { lengthM: s.lengthM, beamM: s.beamM } : fallbackDims(s.typeKey);
+  const color = (SHIP_TYPES[s.typeKey] || SHIP_TYPES.other).color;
+
+  s.el.setAttribute('ship-hull', {
+    length: dims.lengthM, beam: dims.beamM, color, opacity: s.hasRealDims ? 1 : 0.55
+  });
+
+  const p = llToScene(s.lat, s.lon);
+  s.el.setAttribute('position', { x: p.x, y: 0, z: p.z });
+  s.el.setAttribute('rotation', { x: 0, y: headingToYRotation(s.cog || 0), z: 0 });
+  s.sceneX = p.x; s.sceneZ = p.z;
+
+  const hullComp = s.el.components['ship-hull'];
+  const labelY = hullComp ? hullComp.currentLabelHeight : dims.beamM;
+  s.label.setAttribute('position', { x: 0, y: labelY, z: 0 });
+  const speedTxt = s.sog != null ? s.sog.toFixed(1) + ' kn' : '';
+  s.label.setAttribute('text', 'value', (s.name || ('MMSI ' + s.mmsi)) + (speedTxt ? '\n' + speedTxt : ''));
+
+  updateCourseCone(s, dims);
+
+  if (selectedMmsi === s.mmsi) renderInfoPanel(s);
+}
+
+/* ============================================================ */
+/* course-projection cones + convergence spotting                          */
+/* ============================================================ */
+const KN_TO_MPS = 0.514444;
+let coursesEnabled = true;
+let lookaheadMin = 10;
+const CONVERGE_CHECK_MS = 1500;
+const MIN_SOG_FOR_CONE_KN = 0.5; // anchored/stopped ships don't get a cone - nothing to project
+
+// stores each ship's current velocity (scene m/s, x/z) for checkConvergence()
+// below to use without recomputing trig on every pair-check
+function updateCourseCone(s, dims) {
+  const cog = s.cog;
+  const sogKn = s.sog;
+  const hasCourse = coursesEnabled && cog != null && sogKn != null && sogKn >= MIN_SOG_FOR_CONE_KN;
+
+  if (hasCourse) {
+    const sogMps = sogKn * KN_TO_MPS;
+    const rad = cog * Math.PI / 180;
+    // same heading convention as headingToYRotation(): scene north = -Z, so a
+    // ship steering a compass bearing of `cog` moves (sin(cog), -cos(cog))
+    s.velX = sogMps * Math.sin(rad);
+    s.velZ = -sogMps * Math.cos(rad);
+  } else {
+    s.velX = 0; s.velZ = 0;
+  }
+
+  const lookaheadSec = Math.max(1, lookaheadMin) * 60;
+  const length = hasCourse ? sogKn * KN_TO_MPS * lookaheadSec : 0;
+  const radius = Math.max(2, dims.beamM * 0.5);
+  const bowOffset = dims.lengthM / 2;
+  s.coneConverging = s.coneConverging || false; // preserved across refreshes; checkConvergence() owns this flag
+  s.el.setAttribute('course-cone', {
+    length, radius, bowOffset,
+    color: s.coneConverging ? '#ff5e7a' : '#3ea8ff',
+    opacity: s.coneConverging ? 0.4 : 0.22
+  });
+}
+
+// runs on a timer (not every frame - O(n^2) pairs isn't free) rather than
+// per-message, since convergence between ship A and ship B can newly appear
+// or disappear purely because of ship C's update, not just A or B's. this is
+// the same closest-point-of-approach calculation real VTS collision-alert
+// software runs, just feeding a color change instead of a numeric alarm:
+// treat each ship as a point moving at constant velocity, find the time
+// within [0, lookahead] where the distance between the two is smallest, flag
+// it if that distance is inside both ships' combined "close enough to
+// matter" radius.
+function checkConvergence() {
+  const list = [];
+  for (const s of ships.values()) { if (s.velX || s.velZ) list.push(s); }
+  const stillConverging = new Set();
+  const lookaheadSec = Math.max(1, lookaheadMin) * 60;
+
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      const a = list[i], b = list[j];
+      const px = b.sceneX - a.sceneX, pz = b.sceneZ - a.sceneZ;
+      const vx = b.velX - a.velX, vz = b.velZ - a.velZ;
+      const vv = vx * vx + vz * vz;
+      let t = vv > 1e-6 ? -(px * vx + pz * vz) / vv : 0;
+      t = Math.max(0, Math.min(lookaheadSec, t));
+      const dx = px + vx * t, dz = pz + vz * t;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      const lenA = a.hasRealDims ? a.lengthM : fallbackDims(a.typeKey).lengthM;
+      const lenB = b.hasRealDims ? b.lengthM : fallbackDims(b.typeKey).lengthM;
+      const threshold = Math.max(120, (lenA + lenB) / 2 + 60);
+      if (dist < threshold) { stillConverging.add(a.mmsi); stillConverging.add(b.mmsi); }
+    }
+  }
+
+  for (const s of ships.values()) {
+    const was = s.coneConverging;
+    s.coneConverging = stillConverging.has(s.mmsi);
+    if (s.coneConverging !== was) {
+      const dims = s.hasRealDims ? { lengthM: s.lengthM, beamM: s.beamM } : fallbackDims(s.typeKey);
+      updateCourseCone(s, dims);
+    }
+  }
+}
+setInterval(checkConvergence, CONVERGE_CHECK_MS);
+
+/* ============================================================ */
+/* traffic-density columns - height, not color, encodes intensity          */
+/* ============================================================ */
+/* bins every position update into a fixed-size ground cell and grows a
+ * translucent column there - one AIS ping in a cell is one unit of weight,
+ * so a ship pinging repeatedly from the same cell (anchored, drifting,
+ * crawling through a channel) builds a taller column than one just passing
+ * through, which is what "dwell time" should look like without having to
+ * track a per-ship-per-cell clock. weight decays with a half-life so the
+ * shape always reflects recent traffic instead of growing forever over a
+ * long LIVE session - and because the decay clock advances on each
+ * message's own timestamp (wall-clock time live, the logged _ts during
+ * playback) rather than real elapsed time, scrubbing through history at
+ * 600x still decays sensibly instead of applying a whole session's worth of
+ * live-speed decay in one tick.
+ *
+ * columns live inside #world alongside the ships, so grab-zoom scales and
+ * pans them right along with everything else. */
+const DENSITY_CELL_M = 300;
+const DENSITY_DECAY_HALF_LIFE_MS = 10 * 60 * 1000;
+const DENSITY_MIN_WEIGHT = 0.02; // cells below this are pruned entirely
+const DENSITY_MAX_HEIGHT_M = 400;
+
+let densityEnabled = false;
+let lastDensityDecayTs = null;
+const densityCells = new Map(); // "gx,gz" -> { gx, gz, weight, el }
+const densityRoot = document.getElementById('density');
+
+function densityCellKey(x, z) {
+  const gx = Math.round(x / DENSITY_CELL_M), gz = Math.round(z / DENSITY_CELL_M);
+  return { gx, gz, key: gx + ',' + gz };
+}
+
+function heightForWeight(w) { return Math.min(DENSITY_MAX_HEIGHT_M, 6 + 40 * Math.log1p(w)); }
+
+// blue (quiet) through amber to red (busiest) - a secondary cue only, height
+// stays the primary one so this still reads on a colorblind-unsafe display
+// or a column half-lost in fog at distance
+function colorForWeight(w) {
+  const t = Math.min(1, Math.log1p(w) / Math.log1p(40));
+  return 'hsl(' + Math.round(210 - t * 210) + ', 85%, 55%)';
+}
+
+function updateDensityCellVisual(cell) {
+  if (!cell.el) return;
+  const h = heightForWeight(cell.weight);
+  const footprint = DENSITY_CELL_M * 0.8; // leaves a gap between neighbours so the grid still reads as columns
+  cell.el.setAttribute('width', footprint);
+  cell.el.setAttribute('depth', footprint);
+  cell.el.setAttribute('height', h);
+  cell.el.setAttribute('position', { x: cell.gx * DENSITY_CELL_M, y: h / 2, z: cell.gz * DENSITY_CELL_M });
+  cell.el.setAttribute('material', 'color: ' + colorForWeight(cell.weight) + '; opacity: 0.78; transparent: true; shader: flat');
+}
+
+function ensureDensityCellVisual(cell) {
+  if (!cell.el) {
+    cell.el = document.createElement('a-box');
+    densityRoot.appendChild(cell.el);
+  }
+  updateDensityCellVisual(cell);
+}
+
+function removeDensityCell(key) {
+  const cell = densityCells.get(key);
+  if (cell && cell.el && cell.el.parentNode) cell.el.parentNode.removeChild(cell.el);
+  densityCells.delete(key);
+}
+
+function decayDensity(nowTs) {
+  if (lastDensityDecayTs == null) { lastDensityDecayTs = nowTs; return; }
+  const dt = nowTs - lastDensityDecayTs;
+  if (dt <= 0) return;
+  lastDensityDecayTs = nowTs;
+  const factor = Math.pow(0.5, dt / DENSITY_DECAY_HALF_LIFE_MS);
+  for (const [key, cell] of densityCells) {
+    cell.weight *= factor;
+    if (cell.weight < DENSITY_MIN_WEIGHT) removeDensityCell(key);
+    else if (densityEnabled) updateDensityCellVisual(cell);
+  }
+}
+
+function bumpDensity(x, z, nowTs) {
+  if (x == null || z == null) return;
+  decayDensity(nowTs);
+  const { gx, gz, key } = densityCellKey(x, z);
+  let cell = densityCells.get(key);
+  if (!cell) { cell = { gx, gz, weight: 0, el: null }; densityCells.set(key, cell); }
+  cell.weight += 1;
+  if (densityEnabled) ensureDensityCellVisual(cell);
+}
+
+function clearDensity() {
+  for (const key of Array.from(densityCells.keys())) removeDensityCell(key);
+  lastDensityDecayTs = null;
+}
+
+function setDensityEnabled(on) {
+  densityEnabled = on;
+  densityRoot.setAttribute('visible', on);
+  if (on) { for (const cell of densityCells.values()) ensureDensityCellVisual(cell); }
+}
+document.getElementById('density-toggle').addEventListener('change', (e) => setDensityEnabled(e.target.checked));
+
+function ingestPosition(msg, ts) {
+  if (!origin) origin = { lat: msg.lat, lon: msg.lon };
+  const s = ensureShip(msg.mmsi);
+  if (msg.shipType != null || msg.lengthM || msg.beamM || msg.destination || msg.name) applyStatic(s, msg);
+  const pending = pendingStatics.get(msg.mmsi);
+  if (pending) { applyStatic(s, pending); pendingStatics.delete(msg.mmsi); }
+
+  s.lat = msg.lat; s.lon = msg.lon;
+  s.sog = msg.sog; s.cog = msg.cog;
+  if (msg.name) s.name = msg.name;
+  s.lastUpdate = Date.now();
+  refreshEntity(s);
+  bumpDensity(s.sceneX, s.sceneZ, ts || Date.now());
+}
+
+function ingestStatic(msg) {
+  const s = ships.get(msg.mmsi);
+  if (s) { applyStatic(s, msg); refreshEntity(s); }
+  else {
+    if (pendingStatics.size > 4000) pendingStatics.clear(); // keep it bounded, mirrors the globe tracker
+    pendingStatics.set(msg.mmsi, msg);
+  }
+}
+
+function pruneStale() {
+  const now = Date.now();
+  for (const [mmsi, s] of ships) {
+    if (now - s.lastUpdate > STALE_MS) {
+      s.el.parentNode && s.el.parentNode.removeChild(s.el);
+      ships.delete(mmsi);
+      if (selectedMmsi === mmsi) clearSelection();
+    }
+  }
+}
+
+// wipes every tracked ship entity and resets the projection origin - used
+// both when switching LIVE/PLAYBACK and when playback loads a new time
+// window, since replaying a chunk of history has to start from a clean scene
+// rather than mixing it with whatever was already there
+function clearAllShips() {
+  for (const s of ships.values()) { if (s.el.parentNode) s.el.parentNode.removeChild(s.el); }
+  ships.clear();
+  pendingStatics.clear();
+  origin = null;
+  clearSelection();
+  clearDensity();
+  document.getElementById('stat-total').textContent = '0';
+}
+
+/* recompute the projection origin from whatever's currently on screen and
+ * snap every ship straight to its new position - handy after you've flown
+ * a long way from where the page started (origin defaults to the very first
+ * position message, which could be anywhere in a wide bounding box) */
+function recenter() {
+  if (ships.size === 0) return;
+  let sumLat = 0, sumLon = 0;
+  for (const s of ships.values()) { sumLat += s.lat; sumLon += s.lon; }
+  origin = { lat: sumLat / ships.size, lon: sumLon / ships.size };
+  for (const s of ships.values()) refreshEntity(s);
+  document.getElementById('rig').setAttribute('position', { x: 0, y: 220, z: 260 });
+  resetZoom();
+}
+document.addEventListener('keydown', (e) => { if (e.key === 'r' || e.key === 'R') recenter(); });
+
+/* ============================================================ */
+/* selection / info panel                                                  */
+/* ============================================================ */
+let selectedMmsi = null;
+function selectShip(mmsi) {
+  selectedMmsi = mmsi;
+  const s = ships.get(mmsi);
+  if (s) renderInfoPanel(s);
+}
+function clearSelection() {
+  selectedMmsi = null;
+  document.getElementById('info-panel').classList.remove('show');
+}
+function renderInfoPanel(s) {
+  const panel = document.getElementById('info-panel');
+  panel.classList.add('show');
+  document.getElementById('info-name').textContent = s.name || ('MMSI ' + s.mmsi);
+  document.getElementById('info-type').textContent = (SHIP_TYPES[s.typeKey] || SHIP_TYPES.other).label;
+  const dims = s.hasRealDims ? { lengthM: s.lengthM, beamM: s.beamM } : fallbackDims(s.typeKey);
+  document.getElementById('info-length').textContent = Math.round(dims.lengthM) + ' m';
+  document.getElementById('info-beam').textContent = Math.round(dims.beamM) + ' m';
+  document.getElementById('info-speed').textContent = s.sog != null ? s.sog.toFixed(1) + ' kn' : '—';
+  document.getElementById('info-dest').textContent = s.destination || '—';
+  document.getElementById('info-estimate').style.display = s.hasRealDims ? 'none' : 'block';
+}
+document.getElementById('ocean').addEventListener('click', clearSelection);
+
+/* ============================================================ */
+/* AIS ingestion via BroadcastChannel from ais_data_stream.html            */
+/* ============================================================ */
+let streamActive = false;
+function setLiveBadge(active) {
+  const b = document.getElementById('live-badge');
+  b.classList.toggle('live', active);
+  b.textContent = active ? '● LIVE' : '● OFFLINE';
+}
+
+const aisChannel = new BroadcastChannel('ais-stream');
+aisChannel.addEventListener('message', (ev) => {
+  if (playbackMode) return; // playback owns the scene while active - see setPlaybackMode() below
+  const msg = ev.data || {};
+  if (msg.type === 'position') {
+    if (!streamActive) { streamActive = true; setLiveBadge(true); }
+    ingestPosition(msg);
+  } else if (msg.type === 'static') {
+    ingestStatic(msg);
+  } else if (msg.type === 'status') {
+    if (msg.state === 'online') { streamActive = true; setLiveBadge(true); }
+    if (msg.state === 'offline') { streamActive = false; setLiveBadge(false); }
+  }
+  document.getElementById('stat-total').textContent = String(ships.size);
+});
+setInterval(pruneStale, 60 * 1000);
+
+/* ============================================================ */
+/* course-projection HUD controls                                          */
+/* ============================================================ */
+document.getElementById('cones-toggle').addEventListener('change', (e) => {
+  coursesEnabled = e.target.checked;
+  for (const s of ships.values()) {
+    const dims = s.hasRealDims ? { lengthM: s.lengthM, beamM: s.beamM } : fallbackDims(s.typeKey);
+    updateCourseCone(s, dims);
+  }
+});
+document.getElementById('lookahead-min').addEventListener('change', (e) => {
+  const v = Number(e.target.value);
+  lookaheadMin = Number.isFinite(v) ? Math.min(30, Math.max(2, v)) : 10;
+  e.target.value = String(lookaheadMin);
+  for (const s of ships.values()) {
+    const dims = s.hasRealDims ? { lengthM: s.lengthM, beamM: s.beamM } : fallbackDims(s.typeKey);
+    updateCourseCone(s, dims);
+  }
+});
+
+/* ============================================================ */
+/* controls help modal                                                     */
+/* ============================================================ */
+function openControls() { document.getElementById('controls-modal').classList.add('show'); }
+function closeControls() { document.getElementById('controls-modal').classList.remove('show'); }
+document.getElementById('help-btn').addEventListener('click', openControls);
+document.getElementById('controls-close').addEventListener('click', closeControls);
+// clicking the dimmed backdrop closes it too, same as clicking the × - only
+// the backdrop itself should count, not a click that bubbled up from inside
+// the panel (picking a control's text shouldn't dismiss the modal)
+document.getElementById('controls-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'controls-modal') closeControls();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeControls(); });
+
+/* ============================================================ */
+/* history playback mode                                                   */
+/* ============================================================ */
+/* fetches logged AIS traffic from the relay's /api/history endpoint (raw
+ * aisstream.io message shape, see relay.js's logAisMessage()) and replays it
+ * through the exact same ingestPosition()/ingestStatic() pipeline LIVE
+ * traffic uses - the scene doesn't know or care whether a message came from
+ * the BroadcastChannel just now or from a file on disk five minutes ago.
+ *
+ * translateRawAisMessage() below is a client-side copy of the exact
+ * translation ais_data_stream.html does before it ever posts to
+ * BroadcastChannel (dimension summing, static-data ride-along cache, etc.) -
+ * necessary because playback fetches straight from the relay's raw log,
+ * bypassing ais_data_stream.html entirely. */
+const PLAYBACK_WINDOW_MS = 20 * 60 * 1000; // how much history one "jump" loads at a time
+
+let playbackMode = false;
+let historyRange = null;      // { firstTs, lastTs } from /api/history/range
+let windowMessages = [];      // sorted ascending by _ts, currently loaded window
+let windowStart = null, windowEnd = null;
+let playbackClock = 0;        // ms elapsed since windowStart
+let playing = false;
+let playbackSpeed = 30;
+let lastFrameTime = null;
+let appliedCount = 0;         // how many of windowMessages have been applied since the last seek
+
+const pbStaticsCache = new Map(); // mmsi -> static info, mirrors ais_data_stream.html's own `statics` cache
+
+function translateRawAisMessage(data) {
+  if (data.MessageType === 'ShipStaticData') {
+    const meta = data.MetaData || {};
+    const st = (data.Message && data.Message.ShipStaticData) || {};
+    const mmsi = meta.MMSI;
+    if (mmsi == null) return null;
+    const dim = st.Dimension || {};
+    const lengthM = (dim.A != null && dim.B != null) ? dim.A + dim.B : null;
+    const beamM = (dim.C != null && dim.D != null) ? dim.C + dim.D : null;
+    const info = {
+      shipType: st.Type != null ? st.Type : null,
+      lengthM: lengthM > 0 ? lengthM : null,
+      beamM: beamM > 0 ? beamM : null,
+      destination: (st.Destination || '').trim() || null
+    };
+    pbStaticsCache.set(mmsi, info);
+    return { type: 'static', mmsi, ...info, name: (st.Name || meta.ShipName || '').trim() || null };
+  }
+  if (data.MessageType === 'PositionReport') {
+    const meta = data.MetaData || {};
+    const rep = (data.Message && data.Message.PositionReport) || {};
+    const mmsi = meta.MMSI;
+    const lat = rep.Latitude != null ? rep.Latitude : meta.latitude;
+    const lon = rep.Longitude != null ? rep.Longitude : meta.longitude;
+    if (mmsi == null || lat == null || lon == null) return null;
+    if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+    const info = pbStaticsCache.get(mmsi) || {};
+    return {
+      type: 'position', mmsi, lat, lon,
+      cog: (rep.Cog != null && rep.Cog < 360) ? rep.Cog : undefined,
+      sog: (rep.Sog != null && rep.Sog < 100) ? rep.Sog : undefined,
+      name: (meta.ShipName || '').trim() || undefined,
+      shipType: info.shipType != null ? info.shipType : undefined,
+      lengthM: info.lengthM, beamM: info.beamM, destination: info.destination
+    };
+  }
+  return null;
+}
+
+function fmtClock(ms) {
+  if (ms == null) return '--:--:--';
+  const d = new Date(ms);
+  return d.toISOString().substr(11, 8) + ' UTC';
+}
+
+function setPbStatus(text) { document.getElementById('pb-status').textContent = text; }
+
+async function fetchHistoryRange() {
+  try {
+    const res = await fetch('/api/history/range');
+    const json = await res.json();
+    historyRange = json;
+    const jump = document.getElementById('pb-jump');
+    if (json.count > 0) {
+      jump.min = String(json.firstTs); jump.max = String(json.lastTs); jump.value = String(json.firstTs);
+      jump.disabled = false;
+      document.getElementById('pb-log-range').textContent =
+        json.count.toLocaleString() + ' msgs logged, ' + fmtClock(json.firstTs) + ' → ' + fmtClock(json.lastTs);
+      setPbStatus('drag "jump to" to load a ' + (PLAYBACK_WINDOW_MS / 60000) + '-minute window from anywhere in the log');
+    } else {
+      jump.disabled = true;
+      document.getElementById('pb-log-range').textContent = 'no history logged yet';
+      setPbStatus('nothing logged yet - connect a live feed first (relay.js logs every message as it arrives)');
+    }
+  } catch (err) {
+    setPbStatus('could not reach /api/history/range: ' + err.message);
+  }
+}
+
+async function loadWindow(startMs) {
+  if (!historyRange || historyRange.count === 0) return;
+  startMs = Math.max(historyRange.firstTs, Math.min(startMs, historyRange.lastTs));
+  const endMs = Math.min(historyRange.lastTs, startMs + PLAYBACK_WINDOW_MS);
+  setPbStatus('loading ' + fmtClock(startMs) + ' → ' + fmtClock(endMs) + '…');
+  setPlaying(false);
+  try {
+    const res = await fetch('/api/history?since=' + startMs + '&until=' + endMs + '&limit=200000');
+    const json = await res.json();
+    windowMessages = json.messages.sort((a, b) => a._ts - b._ts);
+    windowStart = startMs; windowEnd = endMs;
+    pbStaticsCache.clear();
+    clearAllShips();
+    seekTo(0);
+    document.getElementById('pb-scrub').max = String(endMs - startMs);
+    document.getElementById('pb-scrub').disabled = false;
+    document.getElementById('pb-playpause').disabled = false;
+    document.getElementById('pb-speed').disabled = false;
+    setPbStatus(windowMessages.length.toLocaleString() + ' message(s) loaded' + (json.truncated ? ' (window truncated at limit)' : ''));
+  } catch (err) {
+    setPbStatus('failed to load window: ' + err.message);
+  }
+}
+
+// jumps playback to `ms` elapsed since windowStart by clearing the scene and
+// re-applying every loaded message up to that point in order - can't just
+// "undo" position updates to go backwards, so a seek always replays from the
+// top of the window. cheap enough at this scale (a loaded window is capped
+// at 200k messages) to do synchronously on every scrub-slider move.
+function seekTo(ms) {
+  ms = Math.max(0, Math.min(ms, windowEnd - windowStart));
+  clearAllShips();
+  pbStaticsCache.clear();
+  appliedCount = 0;
+  const targetTs = windowStart + ms;
+  while (appliedCount < windowMessages.length && windowMessages[appliedCount]._ts <= targetTs) {
+    applyRawHistoryMessage(windowMessages[appliedCount]);
+    appliedCount++;
+  }
+  playbackClock = ms;
+  syncPlaybackUi();
+}
+
+function applyRawHistoryMessage(raw) {
+  const translated = translateRawAisMessage(raw);
+  if (!translated) return;
+  if (translated.type === 'position') ingestPosition(translated, raw._ts);
+  else if (translated.type === 'static') ingestStatic(translated);
+  document.getElementById('stat-total').textContent = String(ships.size);
+}
+
+// advances playback without a full reset - applies any newly-crossed
+// messages incrementally, used by the play/pause animation loop rather than
+// re-running seekTo() sixty times a second
+function advancePlayback(ms) {
+  ms = Math.min(ms, windowEnd - windowStart);
+  const targetTs = windowStart + ms;
+  let hit = false;
+  while (appliedCount < windowMessages.length && windowMessages[appliedCount]._ts <= targetTs) {
+    applyRawHistoryMessage(windowMessages[appliedCount]);
+    appliedCount++;
+    hit = true;
+  }
+  playbackClock = ms;
+  if (hit) checkConvergence();
+  syncPlaybackUi();
+  if (ms >= windowEnd - windowStart) setPlaying(false);
+}
+
+function syncPlaybackUi() {
+  document.getElementById('pb-scrub').value = String(Math.round(playbackClock));
+  document.getElementById('pb-clock').textContent = fmtClock(windowStart + playbackClock);
+  const frac = windowEnd > windowStart ? playbackClock / (windowEnd - windowStart) : 0;
+  document.getElementById('timeline-marker').setAttribute('position', { x: -0.5 + frac, y: 0, z: 0.01 });
+  document.getElementById('timeline-now-label').setAttribute('text', 'value', fmtClock(windowStart + playbackClock));
+  document.getElementById('timeline-start-label').setAttribute('text', 'value', windowStart != null ? fmtClock(windowStart) : '--:--');
+  document.getElementById('timeline-end-label').setAttribute('text', 'value', windowEnd != null ? fmtClock(windowEnd) : '--:--');
+}
+
+function setPlaying(v) {
+  playing = v;
+  document.getElementById('pb-playpause').innerHTML = playing ? '&#10074;&#10074;' : '&#9654;';
+  lastFrameTime = null;
+}
+
+function playbackTick(now) {
+  if (playbackMode && playing && windowMessages.length) {
+    if (lastFrameTime != null) {
+      const deltaMs = (now - lastFrameTime) * playbackSpeed;
+      advancePlayback(playbackClock + deltaMs);
+    }
+    lastFrameTime = now;
+  }
+  requestAnimationFrame(playbackTick);
+}
+requestAnimationFrame(playbackTick);
+
+function setPlaybackMode(on) {
+  playbackMode = on;
+  document.getElementById('mode-toggle').classList.toggle('active', on);
+  document.getElementById('mode-label').textContent = on ? 'LIVE' : 'PLAYBACK';
+  document.getElementById('playback-panel').classList.toggle('show', on);
+  document.getElementById('timeline-rig').setAttribute('visible', on);
+  clearAllShips();
+  windowMessages = []; windowStart = null; windowEnd = null; playbackClock = 0;
+  setPlaying(false);
+  if (on) {
+    setLiveBadge(false);
+    streamActive = false;
+    fetchHistoryRange();
+  } else {
+    setPbStatus('');
+  }
+}
+
+document.getElementById('mode-toggle').addEventListener('click', () => setPlaybackMode(!playbackMode));
+document.getElementById('pb-jump').addEventListener('change', (e) => loadWindow(Number(e.target.value)));
+document.getElementById('pb-scrub').addEventListener('input', (e) => { setPlaying(false); seekTo(Number(e.target.value)); });
+document.getElementById('pb-speed').addEventListener('change', (e) => { playbackSpeed = Number(e.target.value); });
+document.getElementById('pb-playpause').addEventListener('click', () => setPlaying(!playing));
+
+// the in-scene "physical timeline": click anywhere along the bar to seek
+// there, same click-to-act pattern as click-teleport on the ocean plane,
+// just measured in local-space X along the bar instead of world XZ
+AFRAME.registerComponent('timeline-seek', {
+  init: function () {
+    this.el.addEventListener('click', (evt) => {
+      if (!playbackMode || !windowMessages.length) return;
+      const point = evt.detail && evt.detail.intersection && evt.detail.intersection.point;
+      if (!point) return;
+      const local = this.el.object3D.worldToLocal(new THREE.Vector3(point.x, point.y, point.z));
+      const frac = Math.max(0, Math.min(1, local.x / this.el.getAttribute('width') + 0.5));
+      seekTo(frac * (windowEnd - windowStart));
+    });
+  }
+});
+</script>
+</body>
+</html>
