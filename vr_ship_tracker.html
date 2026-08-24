@@ -406,7 +406,7 @@ a-scene { position: fixed; inset: 0; }
            hidden entirely in LIVE mode - see setPlaybackMode() below. click
            anywhere along it to seek there, same click-to-act pattern as
            click-teleport on the ocean plane. -->
-      <a-entity id="timeline-rig" visible="false" position="0 -0.55 -1.3">
+      <a-entity id="timeline-rig" no-frustum-cull visible="false" position="0 -0.55 -1.3">
         <a-box id="timeline-bar" class="clickable" timeline-seek
                width="1" height="0.05" depth="0.01"
                material="color: #1b2230; opacity: 0.9; shader: flat"></a-box>
@@ -423,14 +423,14 @@ a-scene { position: fixed; inset: 0; }
            inside an actual headset - only what's inside <a-scene> does. this
            is what makes "which way am I facing" answerable at all over a
            featureless ocean - see updateNavHud() further down. -->
-      <a-entity id="nav-hud" position="0 0.46 -1.1" scale="0.45 0.45 0.45">
+      <a-entity id="nav-hud" no-frustum-cull position="0 0.46 -1.1" scale="0.45 0.45 0.45">
         <a-entity id="nav-hud-text" text="value: HDG 000° · ALT 0 m; align: center; width: 3; color: #7a8099; baseline: center"></a-entity>
       </a-entity>
 
       <!-- in-scene twin of #info-panel (see renderInfoPanel() below) - shown
            on pointing at a ship (hover) and pinned by clicking one, same
            reason as nav-hud above: the DOM version is invisible in-headset -->
-      <a-entity id="ship-info-hud" visible="false" position="0 0.1 -1.05" scale="0.55 0.55 0.55">
+      <a-entity id="ship-info-hud" no-frustum-cull visible="false" position="0 0.1 -1.05" scale="0.55 0.55 0.55">
         <a-entity id="ship-info-hud-text" text="value: -; align: center; width: 2.8; color: #e2e6f0; baseline: center; wrapCount: 34"></a-entity>
       </a-entity>
     </a-camera>
@@ -635,6 +635,26 @@ AFRAME.registerComponent('billboard', {
     this.el.object3D.getWorldPosition(this._myPos);
     this._camPos.y = this._myPos.y; // ignore camera pitch, keep the label upright
     this.el.object3D.lookAt(this._camPos);
+  }
+});
+
+/* nav-hud / ship-info-hud / timeline-rig (declared as children of <a-camera>
+ * above, so they ride along as camera-locked HUD panels) tested invisible on
+ * a real headset (Quest 3S) the moment an actual immersive WebXR session
+ * started, despite rendering fine in the flat desktop/magic-window preview -
+ * everything else in the scene (ships, ocean) kept rendering normally. That
+ * split is the signature of a known Three.js/WebXR interaction: once
+ * rendering switches to the stereo ArrayCamera a real session uses, objects
+ * parented to the camera can get their (correctly-sized) bounding sphere
+ * frustum-culled against a not-yet-updated camera matrix on the frame they'd
+ * first become visible, and then just silently stay culled. Disabling
+ * frustum culling on these specific objects - small, always-near-camera HUD
+ * panels, never a save from actually skipping real off-screen work - is the
+ * standard fix for that. */
+AFRAME.registerComponent('no-frustum-cull', {
+  init: function () {
+    const disable = () => this.el.object3D.traverse(o => { o.frustumCulled = false; });
+    if (this.el.hasLoaded) disable(); else this.el.addEventListener('loaded', disable);
   }
 });
 
