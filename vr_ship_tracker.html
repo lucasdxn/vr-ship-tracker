@@ -265,42 +265,39 @@ a-scene { position: fixed; inset: 0; }
 <div id="controls-sidebar">
   <h2>Controls</h2>
 
+  <div class="foot-note" style="margin:0 0 8px; padding:0; border:0;"><b>keyboard/mouse</b> next to <b>VR headset/controller</b> for the same action.</div>
+
   <section>
     <h3>Movement</h3>
-    <div class="ctrl-row"><b>mouse-look</b> look around</div>
-    <div class="ctrl-row"><b>WASD</b> fly</div>
-    <div class="ctrl-row"><b>click water</b> teleport there</div>
-    <div class="ctrl-row"><b>R</b> recenter, reset zoom</div>
+    <div class="ctrl-row"><b>mouse-look</b> / <i>head tracking</i> — look around</div>
+    <div class="ctrl-row"><b>WASD</b> / <b>R-stick</b> in FLY mode — fly</div>
+    <div class="ctrl-row"><b>click water</b> / <b>point+trigger</b>, or <b>R-stick</b> in TELEPORT mode — teleport there</div>
+    <div class="ctrl-row"><b>L-stick click</b> — toggle FLY / TELEPORT mode (VR only; see nav readout)</div>
+    <div class="ctrl-row"><b>R</b> — recenter, reset zoom (keyboard only)</div>
   </section>
 
   <section>
     <h3>Zoom</h3>
-    <div class="ctrl-row"><b>right-drag</b> grab world, drag down = in</div>
-    <div class="ctrl-row"><b>VR grip</b> pull hand in = in</div>
-  </section>
-
-  <section>
-    <h3>VR movement</h3>
-    <div class="ctrl-row"><b>L-stick click</b> toggle teleport / fly</div>
-    <div class="ctrl-row"><b>R-stick</b> aim + teleport, or fly</div>
+    <div class="ctrl-row"><b>right-drag</b> / <b>grip</b>, pull hand in — grab world, in = closer</div>
   </section>
 
   <section>
     <h3>Ships</h3>
-    <div class="ctrl-row"><b>point</b> ship info</div>
-    <div class="ctrl-row"><b>click</b> pin that info</div>
+    <div class="ctrl-row"><b>hover</b> / <b>point</b> — ship info</div>
+    <div class="ctrl-row"><b>click</b> / <b>trigger</b> — pin that info</div>
     <div class="ctrl-row"><b>COURSE CONES</b> collision-course warning</div>
     <div class="ctrl-row"><b>DENSITY</b> traffic columns</div>
-    <div class="ctrl-row"><b>SHIPS</b> filter, and click a listed ship to jump there</div>
+    <div class="ctrl-row"><b>SHIPS</b> filter, click a listed ship to jump (desktop only, see note below)</div>
   </section>
 
   <section>
     <h3>Playback</h3>
-    <div class="ctrl-row"><b>PLAYBACK</b> live vs. history</div>
-    <div class="ctrl-row"><b>timeline bar</b> click to seek</div>
+    <div class="ctrl-row"><b>PLAYBACK</b> live vs. history (desktop only, see note below)</div>
+    <div class="ctrl-row"><b>timeline bar</b> click / <b>point+trigger</b> — seek</div>
   </section>
 
   <div class="foot-note">best over a tight region - true scale spreads ships kilometers apart.</div>
+  <div class="foot-note">this panel, the top status bar, and SHIPS/FILTERS are flat 2D overlays and won't follow you into a real headset. once inside, point at the small "?" near the top-right of your view and pull the trigger for this same list in-scene.</div>
 </div>
 
 <!-- vessel filters - VR port of globe_ship_tracker.html's Filters tab. hidden
@@ -433,6 +430,25 @@ a-scene { position: fixed; inset: 0; }
       <a-entity id="ship-info-hud" no-frustum-cull visible="false" position="0 0.1 -1.05" scale="0.55 0.55 0.55">
         <a-entity id="ship-info-hud-text" text="value: -; align: center; width: 2.8; color: #e2e6f0; baseline: center; wrapCount: 34"></a-entity>
       </a-entity>
+
+      <!-- in-scene equivalent of #controls-sidebar (see the DOM version in
+           <body> for why one's needed at all) - unlike ship-info-hud above,
+           nothing else already drives this open/closed on its own, so it
+           gets its own always-on "?" button, tucked in a corner clear of
+           nav-hud/ship-info-hud/timeline-rig, that toggles #controls-hud.
+           same click-to-act pattern (.clickable + a 'click' listener) as
+           ship selection and click-teleport use. -->
+      <a-box id="controls-hud-toggle" class="clickable" no-frustum-cull
+             width="0.16" height="0.16" depth="0.02" position="0.82 0.52 -1"
+             material="color: #131720; opacity: 0.88; shader: flat">
+        <a-entity text="value: ?; align: center; baseline: center; width: 1.5; color: #3ea8ff"
+                   position="0 0 0.011"></a-entity>
+      </a-box>
+      <a-entity id="controls-hud" no-frustum-cull visible="false" position="0 0.05 -1.3" scale="0.55 0.55 0.55">
+        <a-plane width="3.6" height="3" material="color: #0d0f14; opacity: 0.92; shader: flat; side: double"></a-plane>
+        <a-entity id="controls-hud-text" position="-1.65 1.35 0.011"
+                   text="value: -; align: left; baseline: top; width: 3.3; wrapCount: 44; color: #e2e6f0; lineHeight: 50"></a-entity>
+      </a-entity>
     </a-camera>
     <a-entity id="hand-left" laser-controls="hand: left" raycaster="objects: .clickable; far: 20000" line="color: #3ea8ff; opacity: 0.6"></a-entity>
     <a-entity id="hand-right" laser-controls="hand: right" raycaster="objects: .clickable; far: 20000" line="color: #3ea8ff; opacity: 0.6"></a-entity>
@@ -542,9 +558,20 @@ AFRAME.registerComponent('ship-hull', {
     if (this.deckMesh) { this.deckMesh.geometry.dispose(); this.group.remove(this.deckMesh); }
 
     this.hullMesh = new THREE.Mesh(hullGeo, this.hullMat);
+    // every real headset this got tested on (Quest 3S) flickered ship hulls
+    // in and out while turning your head - the stereo ArrayCamera a real
+    // WebXR session renders with doesn't keep frustum-culling stable frame
+    // to frame near the edge of view, same class of bug as the no-frustum-
+    // cull component further up handles for the camera-locked HUD panels.
+    // build() recreates this mesh from scratch on every real-dims update
+    // (see the comment above it), so the fix has to be applied here at
+    // creation time rather than once via that component's 'loaded' listener,
+    // which would miss every mesh built after the ship's first sighting.
+    this.hullMesh.frustumCulled = false;
     this.group.add(this.hullMesh);
 
     this.deckMesh = new THREE.Mesh(deckGeo, this.deckMat);
+    this.deckMesh.frustumCulled = false;
     // deckhouse sits toward the stern (+Z in this local space, see rotation
     // note), on top of the hull deck - true for most cargo/tanker/passenger
     // vessels, close enough for fishing boats and everything else too
@@ -600,6 +627,7 @@ AFRAME.registerComponent('course-cone', {
     this.geo.rotateX(Math.PI / 2);
     this.mat = new THREE.MeshBasicMaterial({ color: this.data.color, transparent: true, opacity: this.data.opacity, side: THREE.DoubleSide, depthWrite: false });
     this.mesh = new THREE.Mesh(this.geo, this.mat);
+    this.mesh.frustumCulled = false; // same real-headset flicker fix as ship-hull.build() above - built once, so one line here covers it
     this.mesh.visible = false;
     this.el.setObject3D('course-cone', this.mesh);
   },
@@ -1316,6 +1344,7 @@ function ensureShip(mmsi) {
 
   const el = document.createElement('a-entity');
   el.classList.add('clickable');
+  el.setAttribute('no-frustum-cull', ''); // covers the label below; hull/course-cone set their own meshes' frustumCulled directly, since they get rebuilt after this fires once
   el.setAttribute('ship-hull', { length: 30, beam: 6, color: SHIP_TYPES.other.color, opacity: 0.55 });
   el.setAttribute('course-cone', { length: 0 });
 
@@ -1667,6 +1696,31 @@ function recenter() {
   resetZoom();
 }
 document.addEventListener('keydown', (e) => { if (e.key === 'r' || e.key === 'R') recenter(); });
+
+/* ============================================================ */
+/* in-scene controls reference (see #controls-hud-toggle/#controls-hud in    */
+/* the <a-camera> markup above)                                            */
+/* ============================================================ */
+/* condensed copy of #controls-sidebar's content - kept short and wrapped   */
+/* rather than laid out in columns, since this renders as one plain-text    */
+/* block in-scene with none of the DOM version's <b>/<section> styling.     */
+const CONTROLS_HUD_TEXT =
+  'CONTROLS\n\n' +
+  'Look: mouse-look / head-tracking\n' +
+  'Fly: WASD / R-stick (FLY mode)\n' +
+  'Teleport: click water / point+trigger, or R-stick (TELEPORT mode)\n' +
+  'Switch mode: L-stick click\n' +
+  'Zoom: right-drag / grip, pull hand in\n' +
+  'Ship info: hover+click / point+trigger\n' +
+  'Timeline seek: click bar / point+trigger\n' +
+  'Recenter: R (desktop only)\n\n' +
+  'Filters, ship list & top status bar: desktop only for now';
+document.getElementById('controls-hud-text').setAttribute('text', 'value', CONTROLS_HUD_TEXT);
+let controlsHudOpen = false;
+document.getElementById('controls-hud-toggle').addEventListener('click', () => {
+  controlsHudOpen = !controlsHudOpen;
+  document.getElementById('controls-hud').setAttribute('visible', controlsHudOpen);
+});
 
 /* ============================================================ */
 /* selection / info panel                                                  */
