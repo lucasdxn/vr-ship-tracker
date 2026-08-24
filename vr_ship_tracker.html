@@ -1,3 +1,11 @@
+<!-- suppressed here (file-wide, since none of these attach to one statement) rather
+     than per-occurrence: a-frame registers a-scene/a-entity/a-camera/a-box/a-plane/
+     a-ring/a-light/a-assets as custom elements at runtime, which no static HTML
+     inspector can see - and a-scene's `background` component happens to share a name
+     with the obsolete HTML `background` attribute, which HtmlUnknownTarget tries to
+     resolve as a URL. all real code, not typos; see individual usages below for the
+     component/attribute meaning of each. -->
+<!--suppress HtmlUnknownTag, HtmlUnknownTarget, CssUnknownTarget -->
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
@@ -22,6 +30,10 @@
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; background: #04070c; font-family: var(--font-body, sans-serif), sans-serif; color: var(--color-text); }
+/* a-scene is an A-Frame custom element, not a typo - the file-wide suppress
+   comment up top only covers the HTML PSI tree, not this embedded <style>
+   block, hence the separate one here */
+/* noinspection CssUnknownTarget */
 a-scene { position: fixed; inset: 0; }
 
 /* the actual UI overlay sits on top of the WebXR canvas as plain DOM - a-frame
@@ -207,8 +219,14 @@ a-scene { position: fixed; inset: 0; }
     </section>
 
     <section>
+      <h3>VR movement</h3>
+      <div class="ctrl-row"><kbd>left stick click</kbd><span>switch the right stick between teleport-arc and smooth-fly - the heading readout in view shows which one is active</span></div>
+      <div class="ctrl-row"><kbd>right stick</kbd><span>teleport mode: push to aim a landing ring, release to jump there · fly mode: push to fly in that direction</span></div>
+    </section>
+
+    <section>
       <h3>Ships</h3>
-      <div class="ctrl-row"><kbd>click a ship</kbd><span>see its real dimensions, speed and destination</span></div>
+      <div class="ctrl-row"><kbd>point / click</kbd><span>point at a ship to see its name, type, speed and destination in view; click to pin that info until you point elsewhere</span></div>
       <div class="ctrl-row"><kbd>COURSE CONES</kbd><span>forward projection cones from each ship's bow, colored red where two tracks are on a collision course</span></div>
       <div class="ctrl-row"><kbd>DENSITY</kbd><span>extrudes recent traffic density / dwell-time as columns above the ocean, instead of a flat heatmap</span></div>
     </section>
@@ -236,13 +254,13 @@ a-scene { position: fixed; inset: 0; }
   </div>
   <div class="pb-row">
     <span class="pb-caption">jump to</span>
-    <input type="range" id="pb-jump" min="0" max="1000" value="0" disabled>
+    <input type="range" id="pb-jump" aria-label="Jump to a point in the logged history" min="0" max="1000" value="0" disabled>
   </div>
   <div class="pb-row">
     <button class="pb-btn" id="pb-playpause" disabled>&#9654;</button>
     <span class="pb-time" id="pb-clock">--:--:--</span>
-    <input type="range" id="pb-scrub" min="0" max="1000" value="0" disabled>
-    <select id="pb-speed" disabled>
+    <input type="range" id="pb-scrub" aria-label="Scrub through the loaded playback window" min="0" max="1000" value="0" disabled>
+    <select id="pb-speed" aria-label="Playback speed" disabled>
       <option value="1">1&times;</option>
       <option value="5">5&times;</option>
       <option value="30" selected>30&times;</option>
@@ -263,7 +281,6 @@ a-scene { position: fixed; inset: 0; }
   <div class="estimate-note" id="info-estimate">dimensions estimated - no ShipStaticData for this vessel yet</div>
 </div>
 
-<!--suppress HtmlUnknownTarget, HtmlUnknownTag, CssUnknownTarget --><!-- A-Frame's `background` component shares a name with the obsolete HTML `background` attribute, which the IDE tries to resolve as a URL; a-* tags are custom elements A-Frame registers at runtime. -->
 <a-scene background="color: #04070c" fog="type: linear; color: #04070c; near: 1500; far: 20000">
   <a-assets></a-assets>
 
@@ -288,6 +305,23 @@ a-scene { position: fixed; inset: 0; }
         <a-entity id="timeline-end-label" text="value: --:--; align: right; width: 1.6; color: #7a8099" position="0.5 -0.08 0"></a-entity>
         <a-entity id="timeline-now-label" text="value: --; align: center; width: 1.6; color: #ffb83e" position="0 0.09 0"></a-entity>
       </a-entity>
+
+      <!-- always-on instrument readout: heading/altitude/locomotion-mode, the
+           one piece of DOM-HUD content (see #hud in the <body>) that also
+           needs to exist in-scene, because none of that 2D overlay renders
+           inside an actual headset - only what's inside <a-scene> does. this
+           is what makes "which way am I facing" answerable at all over a
+           featureless ocean - see updateNavHud() further down. -->
+      <a-entity id="nav-hud" position="0 0.46 -1.1" scale="0.45 0.45 0.45">
+        <a-entity id="nav-hud-text" text="value: HDG 000° · ALT 0 m; align: center; width: 3; color: #7a8099; baseline: center"></a-entity>
+      </a-entity>
+
+      <!-- in-scene twin of #info-panel (see renderInfoPanel() below) - shown
+           on pointing at a ship (hover) and pinned by clicking one, same
+           reason as nav-hud above: the DOM version is invisible in-headset -->
+      <a-entity id="ship-info-hud" visible="false" position="0 0.1 -1.05" scale="0.55 0.55 0.55">
+        <a-entity id="ship-info-hud-text" text="value: -; align: center; width: 2.8; color: #e2e6f0; baseline: center; wrapCount: 34"></a-entity>
+      </a-entity>
     </a-camera>
     <a-entity id="hand-left" laser-controls="hand: left" raycaster="objects: .clickable; far: 20000" line="color: #3ea8ff; opacity: 0.6"></a-entity>
     <a-entity id="hand-right" laser-controls="hand: right" raycaster="objects: .clickable; far: 20000" line="color: #3ea8ff; opacity: 0.6"></a-entity>
@@ -310,6 +344,13 @@ a-scene { position: fixed; inset: 0; }
 
     <a-entity id="density" visible="false"></a-entity>
   </a-entity>
+
+  <!-- teleport-arc landing preview (see "VR thumbstick locomotion" below) -
+       deliberately NOT inside #world: it marks a spot in the rig's own
+       unscaled frame, same as the rig itself, not a scaled/panned map point -->
+  <a-ring id="teleport-marker" visible="false" rotation="-90 0 0"
+          radius-inner="9" radius-outer="13"
+          material="color: #ffb83e; opacity: 0.85; transparent: true; shader: flat; side: double"></a-ring>
 
   <a-light type="ambient" color="#8fa0c0" intensity="0.6"></a-light>
   <a-light type="directional" color="#ffffff" intensity="0.8" position="400 600 200"></a-light>
@@ -500,9 +541,13 @@ AFRAME.registerComponent('click-teleport', {
       if (suppressNextOceanClick) { suppressNextOceanClick = false; return; }
       const point = evt.detail && evt.detail.intersection && evt.detail.intersection.point;
       if (!point) return;
-      const rig = document.getElementById('rig');
-      const pos = rig.getAttribute('position');
-      rig.setAttribute('position', { x: point.x, y: pos.y, z: point.z });
+      // written straight to object3D (leaving .y alone), not through
+      // setAttribute - the VR fly-locomotion code (see navTick further down)
+      // does the same, and mixing the two would let A-Frame's cached
+      // position-component data drift out of sync with where the rig
+      // actually is
+      const rigPos = document.getElementById('rig').object3D.position;
+      rigPos.x = point.x; rigPos.z = point.z;
     });
   }
 });
@@ -532,6 +577,10 @@ AFRAME.registerComponent('click-teleport', {
  * enough on its own. */
 const MIN_WORLD_SCALE = 0.05, MAX_WORLD_SCALE = 20;
 const MOUSE_ZOOM_SENSITIVITY = 0.006; // scale multiplies by exp(dy * this) per pixel of vertical drag
+// same false positive as the CSS a-scene rule above, for the same reason -
+// this <script> block is its own embedded PSI tree the file-wide HTML
+// suppress comment doesn't reach either
+// noinspection CssUnknownTarget
 const sceneEl = document.querySelector('a-scene');
 const worldEl = document.getElementById('world');
 let worldScale = 1;
@@ -598,9 +647,9 @@ function onWindowMouseUp() {
   window.removeEventListener('mousemove', onWindowMouseMove);
 }
 
-// hand-controller grab: driven continuously by hand-to-head distance (see
-// navTick below) rather than a one-shot delta, since a VR hand moves freely
-// in 3D rather than along a single mouse axis
+// hand-controller ray: driven continuously (see navTick below) rather than a
+// one-shot delta, since a VR hand moves freely in 3D rather than along a
+// single mouse axis
 function controllerRay(handEl) {
   const obj = handEl.object3D;
   const origin = new THREE.Vector3();
@@ -609,23 +658,60 @@ function controllerRay(handEl) {
   return { origin, dir };
 }
 
-function initHandGrab(handEl) {
-  handEl.addEventListener('gripdown', () => {
-    if (grab) return; // one grab at a time; whichever hand grips first wins until release
-    const camera = sceneEl.camera;
-    if (!camera) return;
-    const { origin, dir } = controllerRay(handEl);
-    const anchor = rayPlaneIntersect(origin, dir, worldEl.object3D.position.y) || { x: worldEl.object3D.position.x, z: worldEl.object3D.position.z };
-    const camPos = new THREE.Vector3();
-    camera.getWorldPosition(camPos);
-    grab = beginGrab(anchor, { kind: 'vr', handEl, dist0: Math.max(0.05, camPos.distanceTo(origin)) });
-  });
-  handEl.addEventListener('gripup', () => {
-    if (grab && grab.kind === 'vr' && grab.handEl === handEl) grab = null;
-  });
+/* raw WebXR gamepad polling instead of A-Frame's named button/axis events
+ * ('gripdown', 'thumbstickmoved', ...) - those depend on A-Frame recognizing
+ * the exact controller profile string and mapping it to the right button
+ * names, which on a real-headset test (Meta Quest 3S) turned out not to fire
+ * at all, silently, with no error - grab-zoom and any button-driven feature
+ * just did nothing. axes[2]/[3] for the thumbstick and buttons[1]/[3] for
+ * grip/thumbstick-click are what the WebXR "xr-standard" gamepad mapping
+ * guarantees for any conformant controller, independent of which A-Frame
+ * sub-component (oculus-touch-controls/meta-touch-controls/generic-...)
+ * ends up claiming it - so this keeps working even when A-Frame's own
+ * profile detection doesn't. */
+function handGamepad(handEl) {
+  const tc = handEl.components['tracked-controls'];
+  return (tc && tc.controller && tc.controller.gamepad) || null;
+}
+function thumbstickAxes(gamepad) {
+  if (!gamepad || !gamepad.axes) return { x: 0, y: 0 };
+  const a = gamepad.axes;
+  return a.length >= 4 ? { x: a[2] || 0, y: a[3] || 0 } : { x: a[0] || 0, y: a[1] || 0 };
+}
+function buttonPressed(gamepad, index) {
+  const b = gamepad && gamepad.buttons && gamepad.buttons[index];
+  return !!(b && b.pressed);
 }
 
-function navTick() {
+const handLeftEl = document.getElementById('hand-left');
+const handRightEl = document.getElementById('hand-right');
+
+// grip (xr-standard button 1) grabs the world, polled per-frame from
+// navTick rather than event-driven - see the gamepad-polling note above
+let vrGrabHand = null; // 'left' | 'right' | null
+const prevGrip = { left: false, right: false };
+
+function updateVrGrab() {
+  for (const side of ['left', 'right']) {
+    const handEl = side === 'left' ? handLeftEl : handRightEl;
+    const pressed = buttonPressed(handGamepad(handEl), 1);
+    if (pressed && !prevGrip[side] && !vrGrabHand) {
+      const camera = sceneEl.camera;
+      if (camera) {
+        const { origin, dir } = controllerRay(handEl);
+        const anchor = rayPlaneIntersect(origin, dir, worldEl.object3D.position.y) || { x: worldEl.object3D.position.x, z: worldEl.object3D.position.z };
+        const camPos = new THREE.Vector3();
+        camera.getWorldPosition(camPos);
+        grab = beginGrab(anchor, { kind: 'vr', handEl, dist0: Math.max(0.05, camPos.distanceTo(origin)) });
+        vrGrabHand = side;
+      }
+    } else if (!pressed && vrGrabHand === side) {
+      grab = null;
+      vrGrabHand = null;
+    }
+    prevGrip[side] = pressed;
+  }
+
   if (grab && grab.kind === 'vr') {
     const camera = sceneEl.camera;
     if (camera) {
@@ -637,10 +723,149 @@ function navTick() {
       applyGrabScale(grab.scale0 * (grab.dist0 / distNow)); // hand closer to head -> distNow shrinks -> zoom in
     }
   }
+}
+
+/* ============================================================ */
+/* VR thumbstick locomotion                                                */
+/* ============================================================ */
+/* WASD-fly only exists for a keyboard, which a headset doesn't have - click-
+ * teleport is the only thing that ever worked standalone in VR, and jumping
+ * point-to-point with nothing but a laser pointer over open, featureless
+ * water turned out to be genuinely hard to aim. this adds the right
+ * thumbstick as a second control, doing one of two things depending on
+ * mode - a teleport-arc landing-ring preview (comfortable, still a discrete
+ * jump like the existing click-teleport, just aimable without needing to
+ * land the laser exactly) or continuous smooth-fly matching desktop WASD -
+ * with the left thumbstick's click switching between them, since which one
+ * is comfortable is a personal preference, not something to force. the
+ * nav-hud readout (see updateNavHud below) is what shows which mode is
+ * currently live, since there's no DOM overlay to put a toggle in VR. */
+const FLY_SPEED_MPS = 70;
+const STICK_DEADZONE = 0.2;
+const TELEPORT_ENGAGE_DEADZONE = 0.35;
+let locomotionMode = 'teleport'; // 'teleport' | 'fly'
+let teleportAimPoint = null; // last computed landing point while the stick is held past the deadzone
+let prevLeftStickClick = false;
+const teleportMarkerEl = document.getElementById('teleport-marker');
+
+function showTeleportMarker(point) {
+  teleportMarkerEl.setAttribute('visible', true);
+  teleportMarkerEl.object3D.position.set(point.x, worldEl.object3D.position.y + 0.5, point.z);
+}
+function hideTeleportMarker() { teleportMarkerEl.setAttribute('visible', false); }
+
+function updateLocomotion(dt) {
+  const leftStickClick = buttonPressed(handGamepad(handLeftEl), 3) || buttonPressed(handGamepad(handLeftEl), 2);
+  if (leftStickClick && !prevLeftStickClick) {
+    locomotionMode = locomotionMode === 'teleport' ? 'fly' : 'teleport';
+    teleportAimPoint = null;
+    hideTeleportMarker();
+  }
+  prevLeftStickClick = leftStickClick;
+
+  const stick = thumbstickAxes(handGamepad(handRightEl));
+  const magnitude = Math.hypot(stick.x, stick.y);
+  const rig = document.getElementById('rig');
+
+  if (locomotionMode === 'fly') {
+    if (magnitude > STICK_DEADZONE && dt > 0) {
+      const camera = sceneEl.camera;
+      if (camera) {
+        const forward = new THREE.Vector3();
+        camera.getWorldDirection(forward);
+        forward.y = 0; forward.normalize(); // stay level - tilting your head shouldn't dive/climb
+        const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).negate();
+        const step = FLY_SPEED_MPS * dt;
+        rig.object3D.position.addScaledVector(forward, -stick.y * step);
+        rig.object3D.position.addScaledVector(right, stick.x * step);
+      }
+    }
+  } else { // 'teleport'
+    if (magnitude > TELEPORT_ENGAGE_DEADZONE) {
+      const { origin, dir } = controllerRay(handRightEl);
+      const point = rayPlaneIntersect(origin, dir, worldEl.object3D.position.y);
+      if (point) { teleportAimPoint = point; showTeleportMarker(point); }
+    } else {
+      if (teleportAimPoint) {
+        rig.object3D.position.x = teleportAimPoint.x;
+        rig.object3D.position.z = teleportAimPoint.z;
+      }
+      teleportAimPoint = null;
+      hideTeleportMarker();
+    }
+  }
+}
+
+/* ============================================================ */
+/* nav HUD - heading/altitude/locomotion-mode readout                      */
+/* ============================================================ */
+/* the ocean grid (see initOceanGrid below) gives some sense of motion, but
+ * nothing tells you which way you're actually facing once the shoreline is
+ * out of view - this is a permanent compass-plus-altimeter line, camera-
+ * attached so it's always readable regardless of where you've teleported */
+const navHudQuat = new THREE.Quaternion();
+const navHudEuler = new THREE.Euler();
+function updateNavHud() {
+  const camera = sceneEl.camera;
+  if (!camera) return;
+  // world quaternion, not camera.rotation.y - look-controls rotates the
+  // *entity's* object3D, not necessarily the THREE.PerspectiveCamera child
+  // sceneEl.camera actually points to, so reading local rotation off that
+  // child can silently read a value that never changes. 'YXZ' order isolates
+  // yaw first so head pitch/roll don't leak into it.
+  camera.getWorldQuaternion(navHudQuat);
+  navHudEuler.setFromQuaternion(navHudQuat, 'YXZ');
+  // scene convention (see llToScene above): -Z is north, and Y-rotation
+  // turns -Z toward -X as it increases, the opposite sense of a compass
+  // bearing - same sign flip as headingToYRotation, just inverted back
+  const bearing = ((-THREE.MathUtils.radToDeg(navHudEuler.y)) % 360 + 360) % 360;
+  const rig = document.getElementById('rig');
+  const alt = Math.round(rig.object3D.position.y);
+  let text = 'HDG ' + String(Math.round(bearing)).padStart(3, '0') + '° · ALT ' + alt + ' m';
+  if (sceneEl.is('vr-mode')) text += ' · ' + (locomotionMode === 'fly' ? 'FLY' : 'TELEPORT');
+  document.getElementById('nav-hud-text').setAttribute('text', 'value', text);
+}
+
+/* ============================================================ */
+/* ocean grid texture                                                      */
+/* ============================================================ */
+/* a flat color gives zero motion parallax - float above it and there is
+ * genuinely nothing to judge speed, distance or heading against, which is
+ * the other half of "orientation is impossible" alongside the missing
+ * compass above. a simple repeating tile fixes that with no extra geometry. */
+function initOceanGrid() {
+  const GRID_CELL_M = 250;
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#0c2436';
+  ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = 'rgba(90,150,190,0.4)';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(1.5, 1.5, size - 3, size - 3);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(100000 / GRID_CELL_M, 100000 / GRID_CELL_M);
+  const mesh = document.getElementById('ocean').getObject3D('mesh');
+  if (mesh) { mesh.material.map = texture; mesh.material.needsUpdate = true; }
+}
+
+let lastNavFrameTime = null;
+function navTick(now) {
+  const dt = lastNavFrameTime != null ? (now - lastNavFrameTime) / 1000 : 0;
+  lastNavFrameTime = now;
+
+  updateVrGrab();
+  updateLocomotion(dt);
+  updateShipSmoothing(dt);
+  updateNavHud();
+
   requestAnimationFrame(navTick);
 }
 
 sceneEl.addEventListener('loaded', () => {
+  initOceanGrid();
   const canvas = sceneEl.canvas;
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('mousedown', (e) => {
@@ -654,8 +879,6 @@ sceneEl.addEventListener('loaded', () => {
     window.addEventListener('mousemove', onWindowMouseMove);
     window.addEventListener('mouseup', onWindowMouseUp, { once: true });
   });
-  initHandGrab(document.getElementById('hand-left'));
-  initHandGrab(document.getElementById('hand-right'));
   requestAnimationFrame(navTick);
 });
 
@@ -752,8 +975,16 @@ function ensureShip(mmsi) {
 
   shipsRoot.appendChild(el);
   el.addEventListener('click', () => selectShip(mmsi));
+  // laser-controls bundles the same cursor component the desktop mouse
+  // cursor uses, so this fires from a VR controller just pointing at a ship
+  // too, not just a mouse hovering it - see "selection / info panel" below
+  el.addEventListener('mouseenter', () => hoverShip(mmsi));
+  el.addEventListener('mouseleave', () => unhoverShip(mmsi));
 
-  s = { mmsi, el, label, typeKey: 'other', hasRealDims: false, lastUpdate: 0 };
+  s = {
+    mmsi, el, label, typeKey: 'other', hasRealDims: false, lastUpdate: 0,
+    visualX: 0, visualZ: 0, visualRotY: 0, hasVisualInit: false
+  };
   ships.set(mmsi, s);
   return s;
 }
@@ -775,9 +1006,13 @@ function refreshEntity(s) {
   });
 
   const p = llToScene(s.lat, s.lon);
-  s.el.setAttribute('position', { x: p.x, y: 0, z: p.z });
-  s.el.setAttribute('rotation', { x: 0, y: headingToYRotation(s.cog || 0), z: 0 });
-  s.sceneX = p.x; s.sceneZ = p.z;
+  s.sceneX = p.x; s.sceneZ = p.z; // raw reported position - convergence/density math wants this, not the smoothed visual one below
+  s.targetX = p.x; s.targetZ = p.z; s.targetRotY = headingToYRotation(s.cog || 0);
+  if (!s.hasVisualInit) snapShipVisual(s); // first sighting: appear immediately, nothing to smooth from yet
+  // subsequent updates are left for updateShipSmoothing() (see below) to
+  // ease the hull toward the new target over time rather than snapping -
+  // AIS position noise that was invisible at flat-screen pixel scale reads
+  // as visible trembling once you're standing at true 1:1 scale next to it
 
   const hullComp = s.el.components['ship-hull'];
   const labelY = hullComp ? hullComp.currentLabelHeight : dims.beamM;
@@ -787,7 +1022,41 @@ function refreshEntity(s) {
 
   updateCourseCone(s, dims);
 
-  if (selectedMmsi === s.mmsi) renderInfoPanel(s);
+  if (s.mmsi === hoveredMmsi || s.mmsi === selectedMmsi) renderInfoPanel(s);
+}
+
+/* ============================================================ */
+/* ship position/rotation smoothing                                        */
+/* ============================================================ */
+/* every ship's rendered position/rotation is written straight to object3D
+ * (skipping A-Frame's setAttribute/string-diff path, which isn't built for
+ * a per-frame animation loop) - see the grab-zoom/rig code above for the
+ * same pattern applied elsewhere in this file. */
+const POSITION_SMOOTH_TAU = 0.4; // seconds to close ~63% of the remaining gap
+
+function lerpAngleDeg(a, b, t) {
+  const diff = ((b - a + 180) % 360 + 360) % 360 - 180; // shortest signed distance, so 350deg->10deg turns 20deg, not 340deg
+  return a + diff * t;
+}
+
+function snapShipVisual(s) {
+  s.visualX = s.targetX; s.visualZ = s.targetZ; s.visualRotY = s.targetRotY;
+  s.el.object3D.position.set(s.visualX, 0, s.visualZ);
+  s.el.object3D.rotation.y = THREE.MathUtils.degToRad(s.visualRotY);
+  s.hasVisualInit = true;
+}
+
+function updateShipSmoothing(dt) {
+  if (dt <= 0) return;
+  const t = 1 - Math.exp(-dt / POSITION_SMOOTH_TAU);
+  for (const s of ships.values()) {
+    if (!s.hasVisualInit) continue;
+    s.visualX += (s.targetX - s.visualX) * t;
+    s.visualZ += (s.targetZ - s.visualZ) * t;
+    s.visualRotY = lerpAngleDeg(s.visualRotY, s.targetRotY, t);
+    s.el.object3D.position.set(s.visualX, 0, s.visualZ);
+    s.el.object3D.rotation.y = THREE.MathUtils.degToRad(s.visualRotY);
+  }
 }
 
 /* ============================================================ */
@@ -1006,6 +1275,7 @@ function pruneStale() {
       s.el.parentNode && s.el.parentNode.removeChild(s.el);
       ships.delete(mmsi);
       if (selectedMmsi === mmsi) clearSelection();
+      if (hoveredMmsi === mmsi) unhoverShip(mmsi);
     }
   }
 }
@@ -1019,6 +1289,7 @@ function clearAllShips() {
   ships.clear();
   pendingStatics.clear();
   origin = null;
+  hoveredMmsi = null;
   clearSelection();
   clearDensity();
   document.getElementById('stat-total').textContent = '0';
@@ -1034,7 +1305,7 @@ function recenter() {
   for (const s of ships.values()) { sumLat += s.lat; sumLon += s.lon; }
   origin = { lat: sumLat / ships.size, lon: sumLon / ships.size };
   for (const s of ships.values()) refreshEntity(s);
-  document.getElementById('rig').setAttribute('position', { x: 0, y: 220, z: 260 });
+  document.getElementById('rig').object3D.position.set(0, 220, 260);
   resetZoom();
 }
 document.addEventListener('keydown', (e) => { if (e.key === 'r' || e.key === 'R') recenter(); });
@@ -1042,27 +1313,59 @@ document.addEventListener('keydown', (e) => { if (e.key === 'r' || e.key === 'R'
 /* ============================================================ */
 /* selection / info panel                                                  */
 /* ============================================================ */
+/* #info-panel is plain DOM, which A-Frame never projects into an actual
+ * headset's immersive view - only what's inside <a-scene> renders there. a
+ * real-headset test found that out the hard way (pointing at a ship showed
+ * nothing at all), so renderInfoPanel() below drives an in-scene camera-
+ * attached twin (#ship-info-hud, declared next to #timeline-rig) alongside
+ * the DOM panel - the DOM one is a bonus for the flat companion screen, the
+ * in-scene one is what's actually visible while immersed.
+ *
+ * "selected" (click, sticky) and "hovered" (point/mouseenter, live) are
+ * separate so that pointing away from a pinned ship doesn't blank the
+ * panel - hover always wins while it's live, falling back to whatever's
+ * selected once the pointer moves off every ship. */
 let selectedMmsi = null;
-function selectShip(mmsi) {
-  selectedMmsi = mmsi;
-  const s = ships.get(mmsi);
-  if (s) renderInfoPanel(s);
+let hoveredMmsi = null;
+
+function selectShip(mmsi) { selectedMmsi = mmsi; refreshInfoDisplay(); }
+function clearSelection() { selectedMmsi = null; refreshInfoDisplay(); }
+function hoverShip(mmsi) { hoveredMmsi = mmsi; refreshInfoDisplay(); }
+function unhoverShip(mmsi) { if (hoveredMmsi === mmsi) hoveredMmsi = null; refreshInfoDisplay(); }
+
+function refreshInfoDisplay() {
+  const mmsi = hoveredMmsi != null ? hoveredMmsi : selectedMmsi;
+  const s = mmsi != null ? ships.get(mmsi) : null;
+  if (s) renderInfoPanel(s); else hideInfoPanel();
 }
-function clearSelection() {
-  selectedMmsi = null;
+
+function hideInfoPanel() {
   document.getElementById('info-panel').classList.remove('show');
+  document.getElementById('ship-info-hud').setAttribute('visible', false);
 }
+
 function renderInfoPanel(s) {
+  const dims = s.hasRealDims ? { lengthM: s.lengthM, beamM: s.beamM } : fallbackDims(s.typeKey);
+  const typeLabel = (SHIP_TYPES[s.typeKey] || SHIP_TYPES.other).label;
+
   const panel = document.getElementById('info-panel');
   panel.classList.add('show');
   document.getElementById('info-name').textContent = s.name || ('MMSI ' + s.mmsi);
-  document.getElementById('info-type').textContent = (SHIP_TYPES[s.typeKey] || SHIP_TYPES.other).label;
-  const dims = s.hasRealDims ? { lengthM: s.lengthM, beamM: s.beamM } : fallbackDims(s.typeKey);
+  document.getElementById('info-type').textContent = typeLabel;
   document.getElementById('info-length').textContent = Math.round(dims.lengthM) + ' m';
   document.getElementById('info-beam').textContent = Math.round(dims.beamM) + ' m';
   document.getElementById('info-speed').textContent = s.sog != null ? s.sog.toFixed(1) + ' kn' : '—';
   document.getElementById('info-dest').textContent = s.destination || '—';
   document.getElementById('info-estimate').style.display = s.hasRealDims ? 'none' : 'block';
+
+  const speedTxt = s.sog != null ? s.sog.toFixed(1) + ' kn' : 'speed unknown';
+  const lines = [
+    s.name || ('MMSI ' + s.mmsi),
+    typeLabel + ' · ' + Math.round(dims.lengthM) + '×' + Math.round(dims.beamM) + ' m' + (s.hasRealDims ? '' : ' (est.)'),
+    speedTxt + (s.destination ? ' · to ' + s.destination : '')
+  ];
+  document.getElementById('ship-info-hud-text').setAttribute('text', 'value', lines.join('\n'));
+  document.getElementById('ship-info-hud').setAttribute('visible', true);
 }
 document.getElementById('ocean').addEventListener('click', clearSelection);
 

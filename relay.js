@@ -12,32 +12,33 @@
  *    WebSocket at all. The relay does the OAuth exchange (the client secret
  *    must never reach the browser) and translates each line into the same
  *    message shape aisstream.io uses.
- *  - Kpler (developers.kpler.com / rest.sml.kpler.com "Messages API"): a
- *    plain REST endpoint with a single bearer token, no push/streaming
- *    support at all - the relay polls it on an interval using its cursor
- *    ("since") parameter and forwards each new message the moment it shows
- *    up, so from the browser's side it still looks like a live feed.
+ *  - Digitraffic (digitraffic.fi, Fintraffic's open data service): no
+ *    account, no key, nothing to configure at all - it's genuinely open
+ *    REST data (CC BY 4.0), covering Finnish/Baltic waters. Polled and
+ *    translated the same way as the other two, just without any credentials
+ *    to pass through. It also has no bounding-box filter of its own, so the
+ *    relay filters the (small, ~800 vessel) result set by bbox itself.
  *
  * All three get translated into the exact same message shape aisstream.io
  * sends, so ais_data_stream.html and everything downstream of it
  * (BroadcastChannel, the globe tracker, the VR tracker) never has to know
  * which provider is actually feeding it.
  *
+ * A fourth provider, Kpler (via Spire Maritime's "Messages API"), was
+ * integrated and then removed: the integration was only ever verified
+ * against its failure path (a deliberately invalid bearer token correctly
+ * rejected), since no working credentials were available, and it was built
+ * against Spire's documented API on the unconfirmed assumption that it's
+ * equivalent to what Kpler's own developer portal exposes to a real account.
+ * Dropped rather than shipped as an unverified integration.
+ *
  * Usage:
  *   npm install
  *   node relay.js
  *
- *  - Digitraffic (digitraffic.fi, Fintraffic's open data service): no
- *    account, no key, nothing to configure at all - it's genuinely open
- *    REST data (CC BY 4.0), covering Finnish/Baltic waters. Same
- *    poll-and-translate treatment as Kpler, just without any credentials to
- *    pass through. It also has no bounding-box filter of its own, so the
- *    relay filters the (small, ~800 vessel) result set by bbox itself.
- *
  * Then open ais_data_stream.html and Connect; the HTML points at
  * ws://localhost:3333/v0/stream (aisstream.io), .../v0/stream/barentswatch,
- * .../v0/stream/kpler, or .../v0/stream/digitraffic depending on what's
- * picked in the modal.
+ * or .../v0/stream/digitraffic depending on what's picked in the modal.
  */
 
 const http = require('http');
@@ -51,9 +52,6 @@ const PORT = Number(process.env.PORT) || 3333;
 const UPSTREAM = 'wss://stream.aisstream.io/v0/stream';
 const BW_TOKEN_URL = 'https://id.barentswatch.no/connect/token';
 const BW_STREAM_URL = 'https://live.ais.barentswatch.no/live/v1/combined?modelType=Full';
-const KPLER_MESSAGES_URL = 'https://rest.sml.kpler.com/messages';
-// Kpler ask for well under 30 requests/minute; 3s keeps us at 20/min with room to spare
-const KPLER_POLL_MS = 3000;
 const DT_LOCATIONS_URL = 'https://meri.digitraffic.fi/api/ais/v1/locations';
 const DT_VESSELS_URL = 'https://meri.digitraffic.fi/api/ais/v1/vessels';
 const DT_LOCATIONS_POLL_MS = 5000;
@@ -88,7 +86,7 @@ fileLog('---- relay session started ----');
 // stream_log.txt above only ever recorded connection/error events - the
 // actual AIS traffic only went to console.log, so there was nothing to
 // replay. This is a second, separate append-only log, one JSON line per
-// message actually produced by any of the four providers: {ts, msg}, where
+// message actually produced by any of the three providers: {ts, msg}, where
 // msg is the exact aisstream.io-shaped object the browser would have
 // received. vr_ship_tracker.html's playback mode reads this back through the
 // /api/history endpoint below.
@@ -361,100 +359,6 @@ async function startBarentsWatchStream(token, bbox, client) {
 }
 
 /* ============================================================ */
-/* Kpler bridge                                                             */
-/* ============================================================ */
-
-// translates one Kpler "decoded" message into the aisstream.io shape.
-// Kpler sends position and static data as genuinely separate messages
-// (msg_description tells you which), same as aisstream.io already does -
-// no combining needed here, just a field-name relabel
-function kplerToAisstreamMessages(m) {
-  const isStatic = m.msg_description === 'static' || m.name != null || m.ship_and_cargo_type != null;
-  if (isStatic) {
-    const dim = m.dimensions || {};
-    return [{
-      MessageType: 'ShipStaticData',
-      MetaData: { MMSI: m.mmsi, ShipName: m.name },
-      Message: { ShipStaticData: {
-        Name: m.name, Type: m.ship_and_cargo_type, Destination: m.destination,
-        Dimension: { A: dim.a, B: dim.b, C: dim.c, D: dim.d }
-      } }
-    }];
-  }
-  if (m.latitude != null && m.longitude != null) {
-    return [{
-      MessageType: 'PositionReport',
-      MetaData: { MMSI: m.mmsi, ShipName: m.name, latitude: m.latitude, longitude: m.longitude },
-      Message: { PositionReport: {
-        Latitude: m.latitude, Longitude: m.longitude,
-        // 360.0/102.3 are Kpler's "unavailable" sentinels for course/speed,
-        // same idea as aisstream's own out-of-range checks elsewhere in this app
-        Cog: (m.course != null && m.course < 360) ? m.course : undefined,
-        Sog: (m.speed != null && m.speed < 102.3) ? m.speed : undefined
-      } }
-    }];
-  }
-  return [];
-}
-
-// Kpler's Messages API has no push/streaming option at all (see
-// servicedocs-sm.kpler.com/messages-api) - it's plain REST with a "since"
-// cursor for continuous polling, so that's what this does: poll on an
-// interval, forward whatever's new, remember the cursor for next time.
-// One bad poll doesn't end the session (could be a network blip); five in a
-// row does, on the assumption something's actually wrong (bad/expired token).
-async function startKplerStream(token, bbox, client) {
-  const polygon = JSON.stringify(bboxToPolygon(bbox));
-  let since = null;
-  let stopped = false;
-  client.on('close', () => { stopped = true; });
-
-  async function pollOnce() {
-    const params = new URLSearchParams({ fields: 'decoded', position: polygon, limit: '5000' });
-    if (since) params.set('since', since);
-    const res = await fetch(KPLER_MESSAGES_URL + '?' + params.toString(), {
-      headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }
-    });
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      throw new Error('HTTP ' + res.status + ' ' + detail.slice(0, 200));
-    }
-    const json = await res.json();
-    since = (json.paging && json.paging.since) || since;
-    const rows = Array.isArray(json.data) ? json.data : [];
-    for (const row of rows) {
-      for (const msg of kplerToAisstreamMessages(row)) {
-        if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(msg));
-        logAisMessage(msg);
-      }
-    }
-  }
-
-  await pollOnce(); // surfaces a bad token/bbox immediately instead of on the first retry
-  console.log('[' + ts() + '] kpler polling started');
-  fileLog('KPLER STREAM OPEN');
-
-  let failures = 0;
-  while (!stopped) {
-    await new Promise((resolve) => setTimeout(resolve, KPLER_POLL_MS));
-    if (stopped) break;
-    try {
-      await pollOnce();
-      failures = 0;
-    } catch (err) {
-      failures++;
-      console.error('[' + ts() + '] kpler poll error (' + failures + '/5): ' + err.message);
-      fileLog('KPLER POLL ERROR: ' + err.message);
-      if (failures >= 5) {
-        fileLog('KPLER STREAM GIVING UP after 5 consecutive poll failures');
-        try { client.close(1011, 'too many consecutive poll failures'); } catch (_) {}
-        return;
-      }
-    }
-  }
-}
-
-/* ============================================================ */
 /* Digitraffic bridge                                                       */
 /* ============================================================ */
 
@@ -560,7 +464,7 @@ async function startDigitrafficStream(bbox, client) {
   }
 }
 
-// shared plumbing for the three "bridged" providers (BarentsWatch, Kpler,
+// shared plumbing for the two "bridged" providers (BarentsWatch,
 // Digitraffic): wait for the browser's one subscribe message, hand it to
 // whichever bridge function actually knows how to talk to that provider,
 // and turn any failure (bad credentials, bad bbox, upstream down) into a
@@ -595,13 +499,6 @@ wss.on('connection', (client, req) => {
     handleBridgedProvider(client, 'barentswatch', async (sub) => {
       const token = await getBarentsWatchToken(sub.clientId, sub.clientSecret);
       await startBarentsWatchStream(token, sub.bbox, client);
-    });
-    return;
-  }
-
-  if (streamPath === '/v0/stream/kpler') {
-    handleBridgedProvider(client, 'kpler', async (sub) => {
-      await startKplerStream(sub.token, sub.bbox, client);
     });
     return;
   }

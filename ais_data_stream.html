@@ -211,7 +211,6 @@ main {
         <select class="form-input" id="provider">
           <option value="aisstream">aisstream.io &mdash; global coverage</option>
           <option value="barentswatch">BarentsWatch &mdash; free/open, Norway-focused</option>
-          <option value="kpler">Kpler &mdash; global, polled every few seconds</option>
           <option value="digitraffic">Digitraffic &mdash; free, no account needed, Finland/Baltic</option>
         </select>
       </div>
@@ -232,14 +231,6 @@ main {
         <div class="modal-sub" style="margin:0 0 var(--space-3); padding:0;">
           Register a client at <a href="https://developer.barentswatch.no/docs/appreg/" target="_blank" rel="noopener">developer.barentswatch.no</a> (scope <code>ais</code>).
           Free data only covers their &ldquo;open AIS area&rdquo;, mainly Norwegian waters &mdash; pick the Norway region below, or use aisstream.io for global coverage.
-        </div>
-      </div>
-      <div class="form-row" id="kpler-fields" style="display:none;">
-        <label class="form-label" for="kpler-token">Kpler API token</label>
-        <input class="form-input" id="kpler-token" type="password" placeholder="paste bearer token here" autocomplete="off"/>
-        <div class="modal-sub" style="margin:6px 0 0; padding:0;">
-          From <a href="https://developers.kpler.com/spec/ais" target="_blank" rel="noopener">developers.kpler.com</a>.
-          This is a REST API with no push/streaming option, so the relay polls it every few seconds on your behalf &mdash; expect a small delay versus the other two sources.
         </div>
       </div>
       <div class="form-row" id="digitraffic-fields" style="display:none;">
@@ -342,7 +333,7 @@ const modalError = document.getElementById('modal-error');
 // which field to focus + which fields-div to show, per provider - one place
 // to update instead of a growing pile of ternaries every time a provider gets
 // added. digitraffic has no credential field at all, hence the null.
-const PROVIDER_FOCUS_FIELD = { aisstream: 'apikey', barentswatch: 'bw-client-id', kpler: 'kpler-token', digitraffic: null };
+const PROVIDER_FOCUS_FIELD = { aisstream: 'apikey', barentswatch: 'bw-client-id', digitraffic: null };
 
 function showModal(err) {
   keyModal.classList.remove('hidden'); modalError.textContent = err || '';
@@ -357,10 +348,10 @@ function resetModalButton() {
 }
 
 // aisstream.io is one API key, BarentsWatch is an OAuth client id + secret
-// pair, Kpler is one bearer token, digitraffic needs nothing at all - four
-// different credential shapes, so the modal just shows/hides whichever
-// fields-div matches what's picked
-const PROVIDER_FIELDS_DIV = { aisstream: 'aisstream-fields', barentswatch: 'barentswatch-fields', kpler: 'kpler-fields', digitraffic: 'digitraffic-fields' };
+// pair, digitraffic needs nothing at all - three different credential
+// shapes, so the modal just shows/hides whichever fields-div matches what's
+// picked
+const PROVIDER_FIELDS_DIV = { aisstream: 'aisstream-fields', barentswatch: 'barentswatch-fields', digitraffic: 'digitraffic-fields' };
 function toggleProviderFields() {
   const provider = document.getElementById('provider').value;
   for (const [key, divId] of Object.entries(PROVIDER_FIELDS_DIV)) {
@@ -443,10 +434,6 @@ function tryConnectFromModal() {
     const clientSecret = document.getElementById('bw-client-secret').value.trim();
     if (!clientId || !clientSecret) { modalError.textContent = 'Client ID and client secret are required'; return; }
     creds = { clientId, clientSecret };
-  } else if (provider === 'kpler') {
-    const token = document.getElementById('kpler-token').value.trim();
-    if (!token) { modalError.textContent = 'API token is required'; return; }
-    creds = { token };
   } else if (provider === 'digitraffic') {
     creds = {}; // no credentials at all for this one
   } else {
@@ -506,20 +493,17 @@ function connect(provider, creds) {
 
   ws.onopen = () => {
     socketOpened = true;
-    // four different credential shapes going into the same subscribe
+    // three different credential shapes going into the same subscribe
     // message: aisstream.io wants an API key straight up; BarentsWatch
     // needs an OAuth client id/secret exchanged for a bearer token first
     // (that exchange happens relay-side, the secret can't be trusted to the
-    // browser); Kpler just wants its bearer token directly, same idea as
-    // aisstream but it's REST underneath so the relay polls it instead of
-    // holding a socket open; digitraffic doesn't need any credentials at
-    // all, it's just the bbox. bbox is the same south/west/north/east from
-    // the region dropdown in every case - the relay turns it into whatever
-    // shape each upstream API actually wants (or filters by it itself, for
-    // digitraffic, which has no bbox query param of its own).
+    // browser); digitraffic doesn't need any credentials at all, it's just
+    // the bbox. bbox is the same south/west/north/east from the region
+    // dropdown in every case - the relay turns it into whatever shape each
+    // upstream API actually wants (or filters by it itself, for digitraffic,
+    // which has no bbox query param of its own).
     let sub;
     if (provider === 'barentswatch') sub = { clientId: creds.clientId, clientSecret: creds.clientSecret, bbox: [s, w, n, e] };
-    else if (provider === 'kpler') sub = { token: creds.token, bbox: [s, w, n, e] };
     else if (provider === 'digitraffic') sub = { bbox: [s, w, n, e] };
     else sub = { APIKey: creds.apiKey, BoundingBoxes: [[[s, w], [n, e]]], FilterMessageTypes: ['PositionReport', 'ShipStaticData'] };
     ws.send(JSON.stringify(sub));
@@ -642,7 +626,6 @@ function connect(provider, creds) {
       if (ev.code === 1008 || ev.code === 4001 || ev.code === 4003) {
         const REJECTED_HINT = {
           barentswatch: 'BarentsWatch rejected the client ID/secret. Check the app registration at developer.barentswatch.no/docs/appreg.',
-          kpler: 'Kpler rejected the API token (or the bbox produced an invalid request). Check the token at developers.kpler.com/spec/ais.',
           digitraffic: 'Digitraffic\'s API didn\'t respond as expected - it needs no credentials, so this is more likely a service hiccup. Check status at digitraffic.fi.',
           aisstream: 'Server rejected the API key. Generate a fresh one at aisstream.io/account.'
         };
@@ -675,7 +658,7 @@ document.getElementById('btn-conn').addEventListener('click', disconnect);
 document.getElementById('btn-modal-conn').addEventListener('click', tryConnectFromModal);
 // so you can just hit Enter in a credentials field instead of clicking
 // Connect, small thing, but it annoyed me while testing, so I added it
-['apikey', 'bw-client-id', 'bw-client-secret', 'kpler-token'].forEach(id => {
+['apikey', 'bw-client-id', 'bw-client-secret'].forEach(id => {
   document.getElementById(id).addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); tryConnectFromModal(); }
   });
