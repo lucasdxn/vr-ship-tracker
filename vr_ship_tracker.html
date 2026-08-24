@@ -434,20 +434,27 @@ a-scene { position: fixed; inset: 0; }
       <!-- in-scene equivalent of #controls-sidebar (see the DOM version in
            <body> for why one's needed at all) - unlike ship-info-hud above,
            nothing else already drives this open/closed on its own, so it
-           gets its own always-on "?" button, tucked in a corner clear of
-           nav-hud/ship-info-hud/timeline-rig, that toggles #controls-hud.
-           same click-to-act pattern (.clickable + a 'click' listener) as
-           ship selection and click-teleport use. -->
+           gets its own always-on toggle button ("?" closed, "X" open, see
+           the click listener below), that opens/closes #controls-hud. same
+           click-to-act pattern (.clickable + a 'click' listener) as ship
+           selection and click-teleport use. sits on the vertical centerline
+           right above nav-hud - a corner placement (tried first) turned out
+           too far into peripheral vision to reliably aim a controller ray
+           at; dead ahead, just a look up, is much easier to reacquire. -->
       <a-box id="controls-hud-toggle" class="clickable" no-frustum-cull
-             width="0.16" height="0.16" depth="0.02" position="0.82 0.52 -1"
+             width="0.22" height="0.22" depth="0.02" position="0 0.72 -1"
              material="color: #131720; opacity: 0.88; shader: flat">
-        <a-entity text="value: ?; align: center; baseline: center; width: 1.5; color: #3ea8ff"
+        <a-entity id="controls-hud-toggle-text" text="value: ?; align: center; baseline: center; width: 2; color: #3ea8ff"
                    position="0 0 0.011"></a-entity>
       </a-box>
-      <a-entity id="controls-hud" no-frustum-cull visible="false" position="0 0.05 -1.3" scale="0.55 0.55 0.55">
-        <a-plane width="3.6" height="3" material="color: #0d0f14; opacity: 0.92; shader: flat; side: double"></a-plane>
-        <a-entity id="controls-hud-text" position="-1.65 1.35 0.011"
-                   text="value: -; align: left; baseline: top; width: 3.3; wrapCount: 44; color: #e2e6f0; lineHeight: 50"></a-entity>
+      <!-- kept small and close enough to read in one glance without turning
+           your head - the first version (wider, further out) didn't fit
+           inside a real headset's FOV all at once. centered text per line,
+           not the DOM sidebar's left-aligned columns, for the same reason. -->
+      <a-entity id="controls-hud" no-frustum-cull visible="false" position="0 0.38 -1.1" scale="0.32 0.32 0.32">
+        <a-plane width="2.6" height="2.5" material="color: #0d0f14; opacity: 0.92; shader: flat; side: double"></a-plane>
+        <a-entity id="controls-hud-text" position="0 0 0.011"
+                   text="value: -; align: center; baseline: center; width: 2.3; wrapCount: 30; color: #e2e6f0; lineHeight: 55"></a-entity>
       </a-entity>
     </a-camera>
     <a-entity id="hand-left" laser-controls="hand: left" raycaster="objects: .clickable; far: 20000" line="color: #3ea8ff; opacity: 0.6"></a-entity>
@@ -1701,25 +1708,25 @@ document.addEventListener('keydown', (e) => { if (e.key === 'r' || e.key === 'R'
 /* in-scene controls reference (see #controls-hud-toggle/#controls-hud in    */
 /* the <a-camera> markup above)                                            */
 /* ============================================================ */
-/* condensed copy of #controls-sidebar's content - kept short and wrapped   */
-/* rather than laid out in columns, since this renders as one plain-text    */
-/* block in-scene with none of the DOM version's <b>/<section> styling.     */
+/* condensed copy of #controls-sidebar's content - trimmed to fit inside a  */
+/* real headset's FOV in one glance (the first version, closer to the full  */
+/* DOM list, didn't). rendered as one centered plain-text block in-scene,   */
+/* with none of the DOM version's <b>/<section> styling.                   */
 const CONTROLS_HUD_TEXT =
   'CONTROLS\n\n' +
-  'Look: mouse-look / head-tracking\n' +
-  'Fly: WASD / R-stick (FLY mode)\n' +
-  'Teleport: click water / point+trigger, or R-stick (TELEPORT mode)\n' +
+  'Look: mouse-look / head-track\n' +
+  'Fly: WASD / R-stick\n' +
+  'Teleport: click water,\nor point+trigger\n' +
   'Switch mode: L-stick click\n' +
-  'Zoom: right-drag / grip, pull hand in\n' +
-  'Ship info: hover+click / point+trigger\n' +
-  'Timeline seek: click bar / point+trigger\n' +
-  'Recenter: R (desktop only)\n\n' +
-  'Filters, ship list & top status bar: desktop only for now';
+  'Zoom: right-drag / grip pull-in\n' +
+  'Ship info: click / trigger\n' +
+  'Timeline: click bar / trigger';
 document.getElementById('controls-hud-text').setAttribute('text', 'value', CONTROLS_HUD_TEXT);
 let controlsHudOpen = false;
 document.getElementById('controls-hud-toggle').addEventListener('click', () => {
   controlsHudOpen = !controlsHudOpen;
   document.getElementById('controls-hud').setAttribute('visible', controlsHudOpen);
+  document.getElementById('controls-hud-toggle-text').setAttribute('text', 'value', controlsHudOpen ? 'X' : '?');
 });
 
 /* ============================================================ */
