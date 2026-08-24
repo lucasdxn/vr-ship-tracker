@@ -31,9 +31,13 @@ html, body { height: 100%; overflow: hidden; background: var(--color-bg); font-f
   display: grid;
   grid-template-columns: 1fr 280px;
   grid-template-rows: 48px 1fr;
+  /* 100vh fallback for browsers without dvh support - both this declaration
+     and the 100dvh one below get flagged individually by IntelliJ's
+     overwritten-property check (not just the second/overwriting one, as a
+     single suppression comment before only that one turned out to miss),
+     hence a bare noinspection line in front of each */
+  /* noinspection CssOverwrittenProperties */
   height: 100vh;
-  /* 100dvh fallback pattern: this second declaration intentionally overwrites
-     the one above in browsers that support dvh - not a leftover duplicate */
   /* noinspection CssOverwrittenProperties */
   height: 100dvh;
   transition: grid-template-columns 0.22s ease;
@@ -89,6 +93,36 @@ header {
   backdrop-filter: blur(8px);
 }
 .ctrl-btn:hover { color: var(--color-primary); border-color: rgba(62,168,255,0.4); }
+
+/* permanent, non-dismissible controls reference, matching vr_ship_tracker.html's
+   #controls-sidebar - no close button, nothing toggles it. Docked to the left
+   edge of the globe area (not the right-hand filters #sidebar, a separate grid
+   column), positioned to clear .view-overlay above and .globe-overlay below. */
+#controls-sidebar {
+  position: absolute; left: 0; top: 190px; bottom: 60px; z-index: 14;
+  width: 168px; overflow-y: auto;
+  background: rgba(13,15,20,0.82); border-right: 1px solid var(--color-border);
+  padding: 10px 12px; font-size: 0.66rem; line-height: 1.4;
+  backdrop-filter: blur(6px);
+}
+#controls-sidebar h2 {
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--color-text-muted); margin-bottom: 8px;
+}
+#controls-sidebar h3 {
+  font-size: 0.6rem; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--color-primary); margin: 10px 0 3px;
+}
+#controls-sidebar section:first-of-type h3 { margin-top: 0; }
+#controls-sidebar .ctrl-row { padding: 2px 0; color: var(--color-text-muted); }
+#controls-sidebar .ctrl-row b { color: var(--color-text); font-weight: 600; }
+@media (max-width: 768px) {
+  /* the phone layout below already tightens .view-overlay/.globe-overlay
+     spacing and drops the filters sidebar to a slide-in drawer - a second
+     permanent strip has no room left to live in on a screen that small */
+  #controls-sidebar { display: none; }
+}
+
 .tooltip-box {
   position: absolute; display: none; background: rgba(13,15,20,0.92);
   border: 1px solid var(--color-border); border-radius: var(--radius-md);
@@ -406,6 +440,44 @@ header {
     <button class="ctrl-btn" id="btn-zoom-out" title="Zoom out">&minus;</button>
     <button class="ctrl-btn" id="btn-zoom-in" title="Zoom in">+</button>
     <button class="ctrl-btn" id="btn-legend" title="Toggle legend" style="color:var(--color-primary)">&#9636;</button>
+  </div>
+
+  <!-- permanent controls reference - always on screen, no close button and
+       nothing dismisses it, same pattern as vr_ship_tracker.html's
+       #controls-sidebar. -->
+  <div id="controls-sidebar">
+    <h2>Controls</h2>
+
+    <section>
+      <h3>View</h3>
+      <div class="ctrl-row"><b>drag</b> rotate globe</div>
+      <div class="ctrl-row"><b>wheel / pinch</b> zoom</div>
+      <div class="ctrl-row"><b>GLOBE&hellip;HARBOUR</b> jump to scale</div>
+      <div class="ctrl-row"><b>Jump to area</b> fly to a preset</div>
+      <div class="ctrl-row"><b>&#8635;</b> auto-rotate</div>
+      <div class="ctrl-row"><b>&#8962;</b> reset view</div>
+      <div class="ctrl-row"><b>&#12316;</b> toggle trails</div>
+    </section>
+
+    <section>
+      <h3>Ships</h3>
+      <div class="ctrl-row"><b>click ship</b> select, see details</div>
+      <div class="ctrl-row"><b>Ships tab</b> full vessel list</div>
+      <div class="ctrl-row"><b>Add tab</b> add real or random ships</div>
+    </section>
+
+    <section>
+      <h3>Filters &amp; map</h3>
+      <div class="ctrl-row"><b>Filters tab</b> name, flag, type, speed</div>
+      <div class="ctrl-row"><b>Map tab</b> toggle basemap layers</div>
+      <div class="ctrl-row"><b>&#9636;</b> toggle legend</div>
+    </section>
+
+    <section>
+      <h3>Session</h3>
+      <div class="ctrl-row"><b>&#9776;</b> toggle side panel</div>
+      <div class="ctrl-row"><b>Session tab</b> save view / clear all</div>
+    </section>
   </div>
 
   <div class="legend-panel" id="legend-panel">

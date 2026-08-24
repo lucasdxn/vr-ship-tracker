@@ -102,51 +102,34 @@ a-scene { position: fixed; inset: 0; }
 #pb-speed { background: rgba(19,23,32,0.7); border: 1px solid var(--color-border); border-radius: 4px; color: var(--color-text); font-size: 0.68rem; }
 .pb-status { color: var(--color-text-muted); font-size: 0.66rem; }
 
-/* bottom-left so it never collides with a-frame's own "Enter VR" button,
-   which it injects fixed to the bottom-right whenever a headset is present */
-#help-btn {
-  position: fixed; left: 14px; bottom: 14px; z-index: 6;
-  width: 30px; height: 30px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  background: rgba(19,23,32,0.85); border: 1px solid var(--color-border);
-  color: var(--color-text-muted); font-size: 0.85rem; font-weight: 700;
-  cursor: pointer; user-select: none;
+/* permanent, non-dismissible controls reference - deliberately not a
+   modal/overlay with a close button: it was one before (see git history),
+   but a control legend nobody can actually see mid-session because they
+   already closed it isn't very useful. docked to the left edge, below the
+   HUD and clear of the bottom-center playback panel, narrow enough to stay
+   out of the way of the 3D scene it's sitting in front of. */
+#controls-sidebar {
+  position: fixed; left: 0; top: 56px; bottom: 56px; z-index: 6;
+  width: 172px; overflow-y: auto;
+  background: rgba(13,15,20,0.82); border-right: 1px solid var(--color-border);
+  padding: 10px 12px; font-size: 0.66rem; line-height: 1.4;
+  backdrop-filter: blur(6px);
 }
-#help-btn:hover { color: var(--color-text); border-color: rgba(62,168,255,0.5); }
-
-#controls-modal {
-  position: fixed; inset: 0; z-index: 10;
-  background: rgba(4,7,12,0.72);
-  display: flex; align-items: center; justify-content: center;
-  padding: var(--space-4);
+#controls-sidebar h2 {
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--color-text-muted); margin-bottom: 8px;
 }
-/* toggled via classList in openControls()/closeControls() below */
-/* noinspection CssUnusedSymbol */
-#controls-modal:not(.show) { display: none; }
-#controls-panel {
-  width: min(560px, 100%); max-height: 84vh; overflow-y: auto;
-  background: rgba(19,23,32,0.97); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
-  padding: var(--space-4); font-size: 0.8rem;
+#controls-sidebar h3 {
+  font-size: 0.6rem; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--color-primary); margin: 10px 0 3px;
 }
-#controls-panel h2 { font-size: 0.95rem; display: flex; align-items: center; justify-content: space-between; }
-#controls-panel .close-btn {
-  cursor: pointer; color: var(--color-text-muted); border: 1px solid var(--color-border); border-radius: 50%;
-  width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
-  font-size: 0.85rem; background: rgba(122,128,153,0.1);
+#controls-sidebar section:first-of-type h3 { margin-top: 0; }
+#controls-sidebar .ctrl-row { padding: 2px 0; color: var(--color-text-muted); }
+#controls-sidebar .ctrl-row b { color: var(--color-text); font-weight: 600; }
+#controls-sidebar .foot-note {
+  margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--color-border);
+  font-size: 0.6rem; color: var(--color-text-muted);
 }
-#controls-panel .close-btn:hover { color: var(--color-text); border-color: rgba(62,168,255,0.4); }
-#controls-panel section { margin-top: var(--space-3); }
-#controls-panel h2 + section { margin-top: var(--space-3); }
-#controls-panel h3 {
-  font-size: 0.66rem; letter-spacing: 0.05em; text-transform: uppercase;
-  color: var(--color-primary); margin-bottom: 6px;
-}
-#controls-panel .ctrl-row { display: flex; gap: 10px; padding: 3px 0; color: var(--color-text-muted); line-height: 1.4; }
-#controls-panel kbd {
-  flex-shrink: 0; min-width: 96px; background: rgba(122,128,153,0.15); border: 1px solid var(--color-border);
-  border-radius: 4px; padding: 2px 6px; font-size: 0.68rem; font-family: inherit; color: var(--color-text); text-align: center;
-}
-#controls-panel .foot-note { margin-top: var(--space-3); font-size: 0.68rem; color: var(--color-text-muted); }
 
 #info-panel {
   position: fixed; top: 60px; right: var(--space-4); z-index: 5; width: 240px;
@@ -196,52 +179,49 @@ a-scene { position: fixed; inset: 0; }
   </div>
 </div>
 
-<!-- shown automatically on load (class="show" below) so a first-time visitor
-     sees the controls before doing anything; closeable and reopenable any
-     time from the small "?" button in the bottom-left corner - see
-     "controls help modal" further down in the script for the wiring. -->
-<div id="controls-modal" class="show">
-  <div id="controls-panel">
-    <h2>Controls <span class="close-btn" id="controls-close" title="Close">&times;</span></h2>
+<!-- permanent controls reference - always on screen, no close button and
+     nothing dismisses it (see the CSS comment on #controls-sidebar above
+     for why: it replaced an earlier closeable modal that people closed and
+     then had no way to consult again mid-session without reloading). -->
+<div id="controls-sidebar">
+  <h2>Controls</h2>
 
-    <section>
-      <h3>Movement</h3>
-      <div class="ctrl-row"><kbd>mouse-look</kbd><span>look around (head-turn in VR)</span></div>
-      <div class="ctrl-row"><kbd>WASD</kbd><span>fly around for fine positioning</span></div>
-      <div class="ctrl-row"><kbd>click water</kbd><span>teleport there instantly</span></div>
-      <div class="ctrl-row"><kbd>R</kbd><span>recenter on current traffic and reset zoom</span></div>
-    </section>
+  <section>
+    <h3>Movement</h3>
+    <div class="ctrl-row"><b>mouse-look</b> look around</div>
+    <div class="ctrl-row"><b>WASD</b> fly</div>
+    <div class="ctrl-row"><b>click water</b> teleport there</div>
+    <div class="ctrl-row"><b>R</b> recenter, reset zoom</div>
+  </section>
 
-    <section>
-      <h3>Grab-and-resize zoom</h3>
-      <div class="ctrl-row"><kbd>right-drag</kbd><span>grab the world - drag down to pull it close and zoom into a region, drag up to push it away for an ocean-wide view</span></div>
-      <div class="ctrl-row"><kbd>grip (VR)</kbd><span>same idea with a hand controller - pull your hand toward you to zoom in, push it away to zoom out</span></div>
-    </section>
+  <section>
+    <h3>Zoom</h3>
+    <div class="ctrl-row"><b>right-drag</b> grab world, drag down = in</div>
+    <div class="ctrl-row"><b>VR grip</b> pull hand in = in</div>
+  </section>
 
-    <section>
-      <h3>VR movement</h3>
-      <div class="ctrl-row"><kbd>left stick click</kbd><span>switch the right stick between teleport-arc and smooth-fly - the heading readout in view shows which one is active</span></div>
-      <div class="ctrl-row"><kbd>right stick</kbd><span>teleport mode: push to aim a landing ring, release to jump there · fly mode: push to fly in that direction</span></div>
-    </section>
+  <section>
+    <h3>VR movement</h3>
+    <div class="ctrl-row"><b>L-stick click</b> toggle teleport / fly</div>
+    <div class="ctrl-row"><b>R-stick</b> aim + teleport, or fly</div>
+  </section>
 
-    <section>
-      <h3>Ships</h3>
-      <div class="ctrl-row"><kbd>point / click</kbd><span>point at a ship to see its name, type, speed and destination in view; click to pin that info until you point elsewhere</span></div>
-      <div class="ctrl-row"><kbd>COURSE CONES</kbd><span>forward projection cones from each ship's bow, colored red where two tracks are on a collision course</span></div>
-      <div class="ctrl-row"><kbd>DENSITY</kbd><span>extrudes recent traffic density / dwell-time as columns above the ocean, instead of a flat heatmap</span></div>
-    </section>
+  <section>
+    <h3>Ships</h3>
+    <div class="ctrl-row"><b>point</b> ship info</div>
+    <div class="ctrl-row"><b>click</b> pin that info</div>
+    <div class="ctrl-row"><b>COURSE CONES</b> collision-course warning</div>
+    <div class="ctrl-row"><b>DENSITY</b> traffic columns</div>
+  </section>
 
-    <section>
-      <h3>Playback</h3>
-      <div class="ctrl-row"><kbd>PLAYBACK</kbd><span>switch from the live feed to scrubbing through logged history</span></div>
-      <div class="ctrl-row"><kbd>timeline bar</kbd><span>in playback mode, a 3D scrub bar rides in front of you - click along it to seek</span></div>
-    </section>
+  <section>
+    <h3>Playback</h3>
+    <div class="ctrl-row"><b>PLAYBACK</b> live vs. history</div>
+    <div class="ctrl-row"><b>timeline bar</b> click to seek</div>
+  </section>
 
-    <div class="foot-note">works best over a tight region (a strait, a harbor) - real-world scale means a continent-wide feed spreads ships kilometers apart.</div>
-  </div>
+  <div class="foot-note">best over a tight region - true scale spreads ships kilometers apart.</div>
 </div>
-
-<button id="help-btn" title="Show controls">?</button>
 
 <!-- playback mode control panel - hidden entirely while in LIVE mode. the
      "jump" slider picks roughly where in the whole logged history to load a
@@ -1416,20 +1396,6 @@ document.getElementById('lookahead-min').addEventListener('change', (e) => {
   }
 });
 
-/* ============================================================ */
-/* controls help modal                                                     */
-/* ============================================================ */
-function openControls() { document.getElementById('controls-modal').classList.add('show'); }
-function closeControls() { document.getElementById('controls-modal').classList.remove('show'); }
-document.getElementById('help-btn').addEventListener('click', openControls);
-document.getElementById('controls-close').addEventListener('click', closeControls);
-// clicking the dimmed backdrop closes it too, same as clicking the × - only
-// the backdrop itself should count, not a click that bubbled up from inside
-// the panel (picking a control's text shouldn't dismiss the modal)
-document.getElementById('controls-modal').addEventListener('click', (e) => {
-  if (e.target.id === 'controls-modal') closeControls();
-});
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeControls(); });
 
 /* ============================================================ */
 /* history playback mode                                                   */
