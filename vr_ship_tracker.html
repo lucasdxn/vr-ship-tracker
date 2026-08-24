@@ -273,7 +273,7 @@ a-scene { position: fixed; inset: 0; }
     <div class="ctrl-row"><b>WASD</b> / <b>R-stick</b> in FLY mode — fly</div>
     <div class="ctrl-row"><b>click water</b> / <b>point+trigger</b>, or <b>R-stick</b> in TELEPORT mode — teleport there</div>
     <div class="ctrl-row"><b>L-stick click</b> — toggle FLY / TELEPORT mode (VR only; see nav readout)</div>
-    <div class="ctrl-row"><b>R</b> — recenter, reset zoom (keyboard only)</div>
+    <div class="ctrl-row"><b>R</b> / <b>point+trigger</b> the in-scene "R" button — recenter, reset zoom</div>
   </section>
 
   <section>
@@ -288,6 +288,7 @@ a-scene { position: fixed; inset: 0; }
     <div class="ctrl-row"><b>COURSE CONES</b> collision-course warning</div>
     <div class="ctrl-row"><b>DENSITY</b> traffic columns</div>
     <div class="ctrl-row"><b>SHIPS</b> filter, click a listed ship to jump (desktop only, see note below)</div>
+    <div class="ctrl-row"><b>orange beacon</b> tall marker over a busy traffic spot — click / point+trigger to jump there</div>
   </section>
 
   <section>
@@ -442,16 +443,29 @@ a-scene { position: fixed; inset: 0; }
            too far into peripheral vision to reliably aim a controller ray
            at; dead ahead, just a look up, is much easier to reacquire. -->
       <a-box id="controls-hud-toggle" class="clickable" no-frustum-cull
-             width="0.22" height="0.22" depth="0.02" position="0 0.72 -1"
+             width="0.22" height="0.22" depth="0.02" position="0 0.5 -1"
              material="color: #131720; opacity: 0.88; shader: flat">
         <a-entity id="controls-hud-toggle-text" text="value: ?; align: center; baseline: center; width: 2; color: #3ea8ff"
+                   position="0 0 0.011"></a-entity>
+      </a-box>
+      <!-- R (recenter/reset-zoom, see recenter() below) was keyboard-only,
+           so there was no way to get your bearings back at all once inside
+           a real headset - this is the same action, reachable the same way
+           as the "?" button next to it. -->
+      <a-box id="recenter-toggle" class="clickable" no-frustum-cull
+             width="0.22" height="0.22" depth="0.02" position="0.3 0.5 -1"
+             material="color: #131720; opacity: 0.88; shader: flat">
+        <a-entity text="value: R; align: center; baseline: center; width: 2; color: #3ea8ff"
                    position="0 0 0.011"></a-entity>
       </a-box>
       <!-- kept small and close enough to read in one glance without turning
            your head - the first version (wider, further out) didn't fit
            inside a real headset's FOV all at once. centered text per line,
-           not the DOM sidebar's left-aligned columns, for the same reason. -->
-      <a-entity id="controls-hud" no-frustum-cull visible="false" position="0 0.38 -1.1" scale="0.32 0.32 0.32">
+           not the DOM sidebar's left-aligned columns, for the same reason.
+           y=0 (local camera space) is dead center of view - the camera's
+           own -26deg base tilt (see the <a-camera> rotation above) doesn't
+           change that, since this position is local to the camera itself. -->
+      <a-entity id="controls-hud" no-frustum-cull visible="false" position="0 0 -1.1" scale="0.32 0.32 0.32">
         <a-plane width="2.6" height="2.5" material="color: #0d0f14; opacity: 0.92; shader: flat; side: double"></a-plane>
         <a-entity id="controls-hud-text" position="0 0 0.011"
                    text="value: -; align: center; baseline: center; width: 2.3; wrapCount: 30; color: #e2e6f0; lineHeight: 55"></a-entity>
@@ -477,6 +491,14 @@ a-scene { position: fixed; inset: 0; }
     <a-entity id="ships"></a-entity>
 
     <a-entity id="density" visible="false"></a-entity>
+
+    <!-- tall beacons over the busiest current traffic spots (see
+         updateBeacons() below) - real 1:1 scale over open ocean with
+         nothing else in view otherwise gives you no way to tell where you
+         are or where anything interesting is; these are visible from far
+         off (tall, over a mostly flat scene) and, like the ship list,
+         double as a teleport target when clicked. -->
+    <a-entity id="beacons"></a-entity>
   </a-entity>
 
   <!-- teleport-arc landing preview (see "VR thumbstick locomotion" below) -
@@ -504,6 +526,16 @@ a-scene { position: fixed; inset: 0; }
  * deckhouse. not trying to model actual ship types here, just enough of a
  * silhouette that "big boxy thing = cargo ship" reads instantly next to a
  * tiny one. */
+
+// widens a mesh's frustum-culling bounding sphere instead of disabling
+// culling outright - see the comment on its call sites in ship-hull.build()
+// below for why plain frustumCulled=false turned out too expensive once
+// there's a real number of ships on screen
+function inflateBoundingSphere(mesh, factor = 1.6) {
+  mesh.geometry.computeBoundingSphere();
+  if (mesh.geometry.boundingSphere) mesh.geometry.boundingSphere.radius *= factor;
+}
+
 AFRAME.registerComponent('ship-hull', {
   schema: {
     length: { type: 'number', default: 30 },
@@ -566,19 +598,23 @@ AFRAME.registerComponent('ship-hull', {
 
     this.hullMesh = new THREE.Mesh(hullGeo, this.hullMat);
     // every real headset this got tested on (Quest 3S) flickered ship hulls
-    // in and out while turning your head - the stereo ArrayCamera a real
-    // WebXR session renders with doesn't keep frustum-culling stable frame
-    // to frame near the edge of view, same class of bug as the no-frustum-
-    // cull component further up handles for the camera-locked HUD panels.
+    // in and out while turning your head - a stereo ArrayCamera WebXR
+    // session's frustum test isn't perfectly stable frame to frame right at
+    // the edge of view. the first fix (frustumCulled = false, unconditional)
+    // stopped the flicker but made VR "incredibly laggy" with any real
+    // number of ships on screen, since it forces every hull/deck to submit a
+    // draw call every frame in both eyes even when genuinely far off-screen.
+    // padding the bounding sphere instead keeps real culling working (most
+    // ships, most of the time, are nowhere near the frustum edge) while
+    // giving the unstable boundary case enough slack to stop flickering -
     // build() recreates this mesh from scratch on every real-dims update
-    // (see the comment above it), so the fix has to be applied here at
-    // creation time rather than once via that component's 'loaded' listener,
-    // which would miss every mesh built after the ship's first sighting.
-    this.hullMesh.frustumCulled = false;
+    // (see the comment above it), so this has to be (re)applied here at
+    // creation time, not once from outside after the first sighting.
+    inflateBoundingSphere(this.hullMesh);
     this.group.add(this.hullMesh);
 
     this.deckMesh = new THREE.Mesh(deckGeo, this.deckMat);
-    this.deckMesh.frustumCulled = false;
+    inflateBoundingSphere(this.deckMesh);
     // deckhouse sits toward the stern (+Z in this local space, see rotation
     // note), on top of the hull deck - true for most cargo/tanker/passenger
     // vessels, close enough for fishing boats and everything else too
@@ -634,7 +670,7 @@ AFRAME.registerComponent('course-cone', {
     this.geo.rotateX(Math.PI / 2);
     this.mat = new THREE.MeshBasicMaterial({ color: this.data.color, transparent: true, opacity: this.data.opacity, side: THREE.DoubleSide, depthWrite: false });
     this.mesh = new THREE.Mesh(this.geo, this.mat);
-    this.mesh.frustumCulled = false; // same real-headset flicker fix as ship-hull.build() above - built once, so one line here covers it
+    inflateBoundingSphere(this.mesh); // same fix as ship-hull.build() above - built once, so one call here covers it
     this.mesh.visible = false;
     this.el.setObject3D('course-cone', this.mesh);
   },
@@ -1254,7 +1290,11 @@ function applyFiltersToAll() {
   const visibleList = [];
   for (const s of ships.values()) {
     const pass = passesFilters(s);
-    s.el.setAttribute('visible', pass); // hides hull + course-cone + label together, they're all on/under this entity
+    // a busy live feed marks filters dirty on nearly every incoming
+    // message (see ingestPosition()), so this can run most navTick frames -
+    // only touch the DOM/component when a ship's pass/fail actually flipped,
+    // instead of writing the same 'visible' value to every ship every time
+    if (s._filterVisible !== pass) { s.el.setAttribute('visible', pass); s._filterVisible = pass; } // hides hull + course-cone + label together, they're all on/under this entity
     if (pass) visibleList.push(s);
   }
   document.getElementById('stat-total').textContent = String(visibleList.length);
@@ -1351,7 +1391,12 @@ function ensureShip(mmsi) {
 
   const el = document.createElement('a-entity');
   el.classList.add('clickable');
-  el.setAttribute('no-frustum-cull', ''); // covers the label below; hull/course-cone set their own meshes' frustumCulled directly, since they get rebuilt after this fires once
+  // ship-hull/course-cone pad their own meshes' bounding spheres directly
+  // (see inflateBoundingSphere()) rather than using the no-frustum-cull
+  // component other camera-locked HUD panels use - with a real ship count
+  // on screen, disabling culling outright on every hull/deck/cone/label,
+  // in both stereo eyes, every frame, was the actual cause of "incredibly
+  // laggy" VR after the first attempt at this fix.
   el.setAttribute('ship-hull', { length: 30, beam: 6, color: SHIP_TYPES.other.color, opacity: 0.55 });
   el.setAttribute('course-cone', { length: 0 });
 
@@ -1632,6 +1677,69 @@ function setDensityEnabled(on) {
 }
 document.getElementById('density-toggle').addEventListener('change', (e) => setDensityEnabled(e.target.checked));
 
+/* ============================================================ */
+/* traffic beacons - orientation aid                                       */
+/* ============================================================ */
+/* reuses the density grid above (real per-cell ping counts, already being
+ * tracked regardless of whether the DENSITY column view is even switched
+ * on) rather than any invented ports/landmarks list - the busiest few cells
+ * are real traffic clusters, which over most coastal water is a reasonable
+ * stand-in for "somewhere worth knowing about". a tall beacon is visible
+ * from a real distance over the otherwise-featureless ocean even when
+ * DENSITY's columns are off, and doubles as a teleport target the same way
+ * a ship-list entry does (see jumpToShip()) - recomputed on a slow interval
+ * (BEACON_REFRESH_MS), not every frame, since traffic patterns don't shift
+ * fast enough to need it and this keeps the cost off the render loop. */
+const BEACON_COUNT = 3;
+const BEACON_MIN_WEIGHT = 4; // skip near-empty cells - not a real cluster yet
+const BEACON_REFRESH_MS = 8000;
+const beaconsRoot = document.getElementById('beacons');
+let beaconEls = []; // [{ el, gx, gz }]
+
+function teleportToBeacon(cell) {
+  resetZoom(); // #world's local frame only equals true scene coordinates while untransformed - same reason jumpToShip() does this first
+  document.getElementById('rig').object3D.position.set(cell.gx * DENSITY_CELL_M, 220, cell.gz * DENSITY_CELL_M + 150);
+}
+
+function updateBeacons() {
+  const top = Array.from(densityCells.values())
+    .filter(c => c.weight >= BEACON_MIN_WEIGHT)
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, BEACON_COUNT);
+
+  beaconEls = beaconEls.filter(b => {
+    if (top.some(c => c.gx === b.gx && c.gz === b.gz)) return true;
+    if (b.el.parentNode) b.el.parentNode.removeChild(b.el);
+    return false;
+  });
+
+  for (const cell of top) {
+    if (beaconEls.some(b => b.gx === cell.gx && b.gz === cell.gz)) continue;
+    const el = document.createElement('a-cylinder');
+    el.classList.add('clickable');
+    el.setAttribute('radius', 6);
+    el.setAttribute('height', 400);
+    el.setAttribute('position', { x: cell.gx * DENSITY_CELL_M, y: 200, z: cell.gz * DENSITY_CELL_M });
+    el.setAttribute('material', 'color: #ffb83e; opacity: 0.5; transparent: true; shader: flat; side: double');
+
+    const label = document.createElement('a-entity');
+    label.setAttribute('billboard', '');
+    label.setAttribute('position', { x: 0, y: 230, z: 0 });
+    label.setAttribute('text', { value: 'TRAFFIC\nclick to jump', align: 'center', width: 60, color: '#ffb83e', baseline: 'bottom' });
+    el.appendChild(label);
+
+    el.addEventListener('click', () => teleportToBeacon(cell));
+    beaconsRoot.appendChild(el);
+    beaconEls.push({ el, gx: cell.gx, gz: cell.gz });
+  }
+}
+setInterval(updateBeacons, BEACON_REFRESH_MS);
+
+function clearBeacons() {
+  for (const b of beaconEls) { if (b.el.parentNode) b.el.parentNode.removeChild(b.el); }
+  beaconEls = [];
+}
+
 function ingestPosition(msg, ts) {
   if (!origin) origin = { lat: msg.lat, lon: msg.lon };
   const s = ensureShip(msg.mmsi);
@@ -1682,6 +1790,7 @@ function clearAllShips() {
   hoveredMmsi = null;
   clearSelection();
   clearDensity();
+  clearBeacons();
   document.getElementById('stat-total').textContent = '0';
   document.getElementById('filter-count').textContent = '0';
   document.getElementById('filter-total').textContent = '0';
@@ -1703,6 +1812,7 @@ function recenter() {
   resetZoom();
 }
 document.addEventListener('keydown', (e) => { if (e.key === 'r' || e.key === 'R') recenter(); });
+document.getElementById('recenter-toggle').addEventListener('click', recenter);
 
 /* ============================================================ */
 /* in-scene controls reference (see #controls-hud-toggle/#controls-hud in    */
@@ -1717,10 +1827,10 @@ const CONTROLS_HUD_TEXT =
   'Look: mouse-look / head-track\n' +
   'Fly: WASD / R-stick\n' +
   'Teleport: click water,\nor point+trigger\n' +
-  'Switch mode: L-stick click\n' +
+  'Recenter: R / R-button\n' +
   'Zoom: right-drag / grip pull-in\n' +
   'Ship info: click / trigger\n' +
-  'Timeline: click bar / trigger';
+  'Orange beacon: click to jump';
 document.getElementById('controls-hud-text').setAttribute('text', 'value', CONTROLS_HUD_TEXT);
 let controlsHudOpen = false;
 document.getElementById('controls-hud-toggle').addEventListener('click', () => {
