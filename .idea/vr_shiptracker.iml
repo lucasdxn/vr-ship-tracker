@@ -6,5 +6,6 @@
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="library" name="Node.js Core" level="application" />
+    <orderEntry type="library" name="aframe" level="application" />
   </component>
 </module>
