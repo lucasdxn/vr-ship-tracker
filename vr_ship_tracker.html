@@ -13,6 +13,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AIS VR Tracker</title>
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+<!-- same real-coastline data source globe_ship_tracker.html uses (world-atlas's
+     coarse 110m country topology) - see buildGlobeTexture() below, which draws it
+     onto a canvas and wraps that around a sphere instead of d3's 2D orthographic
+     projection -->
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
 <style>
 :root {
   --color-bg: #0d0f14;
@@ -252,6 +258,9 @@ a-scene { position: fixed; inset: 0; }
     </button>
     <button class="toggle-btn filters-btn" id="filters-toggle" title="Browse and filter vessels, and click one in the list to jump straight to it">
       <span>SHIPS</span>
+    </button>
+    <button class="toggle-btn mode-btn active" id="globe-toggle" title="Back out to the whole-world globe view - click anywhere on it (or a ship in the list) to drop back into real-scale view there">
+      <span>GLOBE</span>
     </button>
     <a class="link-btn" href="ais_data_stream.html" target="_blank" rel="noopener">&larr; connection manager</a>
     <a class="link-btn" href="globe_ship_tracker.html" target="_blank" rel="noopener">2D globe</a>
@@ -493,11 +502,21 @@ a-scene { position: fixed; inset: 0; }
        an actual XR session, this is what makes clicking work in a normal tab -->
   <a-entity cursor="rayOrigin: mouse" raycaster="objects: .clickable; far: 20000"></a-entity>
 
+  <!-- whole-world overview - the starting view now, and where GLOBE (see
+       #globe-toggle) takes you back to. true 1:1 scale (below, #world) has
+       no way to show "where in the world is this" on its own once traffic
+       spans any real distance - see enterGlobeMode()/enterSurfaceMode()
+       further down for how the two trade off visibility. the sphere mesh
+       and ship-dot points are built in JS (buildGlobeTexture()/initGlobe())
+       once the real coastline data has loaded, same reasoning as ship-hull
+       building its own THREE.Mesh instead of using a-frame primitives. -->
+  <a-entity id="globe" class="clickable" globe-click></a-entity>
+
   <!-- everything grab-zoom scales/pans is grouped here so the navigation code
        (see "grab-and-resize world navigation" below) only ever has to touch
        one entity's transform - the rig/camera stays outside it and never
        moves on its own account when the world is being scaled -->
-  <a-entity id="world">
+  <a-entity id="world" visible="false">
     <a-plane id="ocean" class="clickable" click-teleport
              rotation="-90 0 0" width="100000" height="100000"
              material="color: #0c2436; metalness: 0.15; roughness: 0.85; shader: standard"></a-plane>
@@ -849,7 +868,6 @@ function resetZoom() {
 // whatever's actually been received fits in view, instead of leaving that
 // entirely to the user to discover via right-drag/grip.
 const FIT_VIEW_RADIUS_M = 280; // roughly what the default rig position can comfortably frame
-const AUTO_FIT_DELAY_MS = 4000; // give a multi-source connection time to deliver a representative sample first - see ingestPosition()
 function fitViewToShips() {
   if (ships.size === 0) return;
   let maxDist = 0;
@@ -1108,6 +1126,13 @@ function navTick(now) {
 
 sceneEl.addEventListener('loaded', () => {
   initOceanGrid();
+  // deferred to here, not called inline where enterGlobeMode() is defined -
+  // #rig's own "position" component hasn't necessarily finished applying its
+  // static position="0 220 260" attribute to object3D by the time this
+  // script's top-level code runs, and was overwriting the direct
+  // object3D.position.set() call below it with that stale value once it did.
+  // scene 'loaded' guarantees every entity, #rig included, is past that.
+  enterGlobeMode();
   const canvas = sceneEl.canvas;
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('mousedown', (e) => {
@@ -1318,6 +1343,7 @@ function renderShipList(visibleList) {
 function jumpToShip(mmsi) {
   const s = ships.get(mmsi);
   if (!s) return;
+  if (vrMode === 'globe') { enterSurfaceMode(s.lat, s.lon); selectShip(mmsi); return; }
   resetZoom();
   const dims = s.hasRealDims ? { lengthM: s.lengthM } : fallbackDims(s.typeKey);
   const backOff = Math.max(80, dims.lengthM * 2.2); // stand back far enough that even a big tanker fits in view
@@ -1341,6 +1367,7 @@ function applyFiltersToAll() {
   document.getElementById('filter-total').textContent = String(ships.size);
   updateTypeFilterCounts();
   renderShipList(visibleList);
+  updateGlobeDots(); // no-ops until initGlobe()'s fetch resolves (see globeSphereReady)
 }
 
 document.getElementById('filter-name').addEventListener('input', e => { filters.name = e.target.value.trim().toLowerCase(); markFiltersDirty(); });
@@ -1418,7 +1445,6 @@ const ships = new Map();          // mmsi -> record
 const pendingStatics = new Map(); // static data that arrived before any position
 const shipsRoot = document.getElementById('ships');
 const STALE_MS = 10 * 60 * 1000;
-let autoFitScheduled = false; // see fitViewToShips()/ingestPosition() further down - reset in clearAllShips()
 
 function fallbackDims(typeKey) {
   const info = SHIP_TYPES[typeKey] || SHIP_TYPES.other;
@@ -1780,6 +1806,162 @@ function clearBeacons() {
   beaconEls = [];
 }
 
+/* ============================================================ */
+/* whole-world globe overview                                              */
+/* ============================================================ */
+/* #world (below) is real 1:1 scale, which is the whole point of this page
+ * for actually standing next to a ship - but it has no way to show "where
+ * in the world is this" once traffic spans any real distance, which is
+ * every real multi-source feed. this is the fix: start on a small globe
+ * (real coastlines, same world-atlas data globe_ship_tracker.html uses,
+ * drawn onto a canvas and wrapped around a sphere instead of d3's 2D
+ * projection) with every tracked ship as a colored dot, and click anywhere
+ * on it - or a ship in the SHIPS list - to drop into the real-scale #world
+ * view centered there. GLOBE (see #globe-toggle) brings you back out.
+ *
+ * the sphere mesh and the dot cloud are both built by hand via THREE
+ * directly (setObject3D), same reasoning as ship-hull above: neither is a
+ * static shape a-frame's primitives can express on their own. */
+const GLOBE_RADIUS = 300;
+// positioned so the existing fixed -26deg camera tilt (see #camera-tilt)
+// looks straight at the globe's center, same trig as ship-hull's rotation
+// comments use elsewhere: rigPos.z / rigPos.y has to equal cos(26)/sin(26)
+// for the tilted look direction to actually pass through (0,0,0)
+const GLOBE_RIG_POS = { x: 0, y: 400, z: 821 };
+const SURFACE_RIG_POS = { x: 0, y: 220, z: 260 }; // matches the rig's original static position="0 220 260"
+const globeEl = document.getElementById('globe');
+let globeSphereReady = false;
+let globePointsObj = null;
+let vrMode = 'globe'; // 'globe' | 'surface' - see enterGlobeMode()/enterSurfaceMode()
+
+function latLonToGlobeVec(lat, lon, r) {
+  // matches THREE.SphereGeometry's own vertex formula exactly (v: 0 at the
+  // north pole, 1 at the south pole; u: 0..1 around) - see the inverse of
+  // this in the globe-click component below for why that match matters
+  const v = (90 - lat) / 180, u = (lon + 180) / 360;
+  const phi = 2 * Math.PI * u, theta = Math.PI * v;
+  return new THREE.Vector3(-r * Math.cos(phi) * Math.sin(theta), r * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta));
+}
+
+async function buildGlobeTexture() {
+  const W = 2048, H = 1024; // 2:1 - the aspect ratio d3.geoEquirectangular's fitSize expects for a full sphere
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#0c2436'; // ocean - matches #ocean's own color below
+  ctx.fillRect(0, 0, W, H);
+  try {
+    const res = await fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json');
+    const topo = await res.json();
+    const land = topojson.feature(topo, topo.objects.land);
+    const borders = topojson.mesh(topo, topo.objects.countries, (a, b) => a !== b);
+    const projection = d3.geoEquirectangular().fitSize([W, H], { type: 'Sphere' });
+    const path = d3.geoPath(projection, ctx);
+    ctx.fillStyle = '#1b2a1f';
+    ctx.beginPath(); path(land); ctx.fill();
+    ctx.strokeStyle = 'rgba(90,150,190,0.5)'; ctx.lineWidth = 1;
+    ctx.beginPath(); path(borders); ctx.stroke();
+  } catch (e) {
+    // offline, or the CDN's blocked - a plain ocean-colored sphere still
+    // works fine as a click-to-enter target, just without the coastlines
+    console.warn('globe basemap unavailable, falling back to a plain sphere:', e);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  return texture;
+}
+
+async function initGlobe() {
+  const texture = await buildGlobeTexture();
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(GLOBE_RADIUS, 64, 64), new THREE.MeshBasicMaterial({ map: texture }));
+  globeEl.setObject3D('globe-sphere', mesh);
+  globeSphereReady = true;
+  updateGlobeDots();
+}
+initGlobe();
+
+const globeDotGeo = new THREE.SphereGeometry(2.6, 6, 6); // small/low-poly on purpose - there can be thousands of these
+function updateGlobeDots() {
+  if (!globeSphereReady) return;
+  const list = [];
+  for (const s of ships.values()) { if (passesFilters(s)) list.push(s); }
+
+  // globeDotGeo is shared/reused across rebuilds (not disposed here) - only
+  // the per-rebuild material and instance itself are this call's to clean up
+  if (globePointsObj) { globeEl.object3D.remove(globePointsObj); globePointsObj.material.dispose(); }
+  if (list.length === 0) { globePointsObj = null; return; }
+
+  // THREE.Points (gl.POINTS + gl_PointSize) turned out not to render at all
+  // under at least one real WebGL implementation tested against - every
+  // other check (scene graph membership, geometry/color data, visibility)
+  // came back correct, so this isn't a data bug, it's that specific
+  // rendering path. InstancedMesh (real triangle geometry, one draw call
+  // for the whole cloud either way) is the safe, universally-supported
+  // replacement.
+  const mesh = new THREE.InstancedMesh(globeDotGeo, new THREE.MeshBasicMaterial({ vertexColors: true }), list.length);
+  const dummy = new THREE.Object3D();
+  const c = new THREE.Color();
+  list.forEach((s, i) => {
+    dummy.position.copy(latLonToGlobeVec(s.lat, s.lon, GLOBE_RADIUS + 4)); // flat offset, not a percentage - needs to clear the basemap's depth regardless of GLOBE_RADIUS
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+    c.set((SHIP_TYPES[s.typeKey] || SHIP_TYPES.other).color);
+    mesh.setColorAt(i, c);
+  });
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  mesh.frustumCulled = false; // one draw call for the whole cloud either way - culling the whole thing over one off-screen dot would be wrong, not just slow
+  globeEl.object3D.add(mesh);
+  globePointsObj = mesh;
+}
+
+// click anywhere on the globe to drop into real-scale #world view there -
+// same click-to-act pattern (.clickable + a 'click' listener) as
+// click-teleport and ship selection, just inverting latLonToGlobeVec()
+// instead of a flat x/z read
+AFRAME.registerComponent('globe-click', {
+  init: function () {
+    this.el.addEventListener('click', (evt) => {
+      const point = evt.detail && evt.detail.intersection && evt.detail.intersection.point;
+      if (!point) return;
+      const local = this.el.object3D.worldToLocal(point.clone());
+      const theta = Math.acos(THREE.MathUtils.clamp(local.y / GLOBE_RADIUS, -1, 1));
+      const lat = 90 - (theta / Math.PI) * 180;
+      const u = (Math.atan2(local.z, -local.x) / (2 * Math.PI) + 1) % 1;
+      const lon = u * 360 - 180;
+      enterSurfaceMode(lat, lon);
+    });
+  }
+});
+
+function setGlobeToggleActive(active) { document.getElementById('globe-toggle').classList.toggle('active', active); }
+
+function enterGlobeMode() {
+  vrMode = 'globe';
+  globeEl.setAttribute('visible', true);
+  document.getElementById('world').setAttribute('visible', false);
+  document.getElementById('rig').object3D.position.set(GLOBE_RIG_POS.x, GLOBE_RIG_POS.y, GLOBE_RIG_POS.z);
+  resetZoom();
+  setGlobeToggleActive(true);
+  updateGlobeDots();
+}
+
+function enterSurfaceMode(lat, lon) {
+  vrMode = 'surface';
+  origin = { lat, lon };
+  for (const s of ships.values()) { refreshEntity(s); snapShipVisual(s); } // force-snap, not ease - see the same comment on recenter() below
+  globeEl.setAttribute('visible', false);
+  document.getElementById('world').setAttribute('visible', true);
+  document.getElementById('rig').object3D.position.set(SURFACE_RIG_POS.x, SURFACE_RIG_POS.y, SURFACE_RIG_POS.z);
+  fitViewToShips();
+  setGlobeToggleActive(false);
+}
+document.getElementById('globe-toggle').addEventListener('click', enterGlobeMode);
+// starting state is also called once from the scene's 'loaded' handler
+// further up (see the comment there for why it can't run inline here) -
+// #world/#globe visibility and the "active" class already match this in
+// the static HTML too, that call is what actually places the rig
+
 function ingestPosition(msg, ts) {
   if (!origin) origin = { lat: msg.lat, lon: msg.lon };
   const s = ensureShip(msg.mmsi);
@@ -1795,20 +1977,12 @@ function ingestPosition(msg, ts) {
   refreshEntity(s);
   bumpDensity(s.sceneX, s.sceneZ, ts || Date.now());
   markFiltersDirty();
-  // fit the view once automatically, a few seconds into a session/reconnect,
-  // rather than leaving a new viewer to stumble onto R/grab-zoom themselves
-  // to discover the ocean they spawned into isn't actually empty - see
-  // fitViewToShips()/computeBusiestOrigin() above. this has to be a delay,
-  // not just "wait for N ships": with several sources feeding in at once
-  // (see ais_data_stream.html), whichever source happens to connect first
-  // populates those first few ships, and with a global source that can well
-  // be scattered noise nowhere near any real traffic cluster - locking onto
-  // that immediately, before a representative sample has actually arrived,
-  // was worse than not auto-fitting at all.
-  if (!autoFitScheduled) {
-    autoFitScheduled = true;
-    setTimeout(recenter, AUTO_FIT_DELAY_MS);
-  }
+  // no auto-recenter-into-surface-mode here (there used to be one) - the
+  // globe overview above is what solves "where in the world is this" on
+  // its own now, without needing to guess when a representative sample of
+  // a multi-source feed has arrived. surface mode's origin/zoom only ever
+  // gets set by an explicit click (see enterSurfaceMode() above) or R once
+  // you're already there (see recenter() below).
 }
 
 function ingestStatic(msg) {
@@ -1842,10 +2016,10 @@ function clearAllShips() {
   pendingStatics.clear();
   origin = null;
   hoveredMmsi = null;
-  autoFitScheduled = false;
   resetZoom();
   clearSelection();
   clearDensity();
+  updateGlobeDots();
   clearBeacons();
   document.getElementById('stat-total').textContent = '0';
   document.getElementById('filter-count').textContent = '0';
@@ -1883,6 +2057,11 @@ function computeBusiestOrigin() {
 }
 
 function recenter() {
+  if (vrMode === 'globe') {
+    document.getElementById('rig').object3D.position.set(GLOBE_RIG_POS.x, GLOBE_RIG_POS.y, GLOBE_RIG_POS.z);
+    resetZoom();
+    return;
+  }
   if (ships.size === 0) return;
   origin = computeBusiestOrigin();
   // force an immediate snap for every ship, not just refreshEntity()'s usual
