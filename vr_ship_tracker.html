@@ -839,6 +839,30 @@ function resetZoom() {
   document.getElementById('stat-scale').textContent = '1.0×';
 }
 
+// true 1:1 scale is the whole point of this page, but it means a live feed
+// covering any real geographic spread (a whole strait/coastline, never mind
+// a global feed) puts almost every ship far outside what's actually framed
+// from the default ~340m-away overview spot - at 1:1 that's not "a bit far",
+// it's an ocean of open water with nothing recognizable in it, which reads
+// as a blank/broken page rather than "zoom in more". this zooms #world out
+// (same worldScale/worldEl mechanism grab-zoom uses) just enough that
+// whatever's actually been received fits in view, instead of leaving that
+// entirely to the user to discover via right-drag/grip.
+const FIT_VIEW_RADIUS_M = 280; // roughly what the default rig position can comfortably frame
+function fitViewToShips() {
+  if (ships.size === 0) return;
+  let maxDist = 0;
+  for (const s of ships.values()) {
+    const d = Math.hypot(s.targetX, s.targetZ);
+    if (d > maxDist) maxDist = d;
+  }
+  const scale = maxDist > 0 ? Math.max(MIN_WORLD_SCALE, Math.min(1, FIT_VIEW_RADIUS_M / maxDist)) : 1;
+  worldScale = scale;
+  worldEl.object3D.scale.set(scale, scale, scale);
+  worldEl.object3D.position.set(0, 0, 0); // scaling about local (0,0,0) - origin, same point recenter() just recomputed
+  document.getElementById('stat-scale').textContent = scale.toFixed(scale < 1 ? 2 : 1) + '×';
+}
+
 function mouseAnchorAt(clientX, clientY, camera, canvas) {
   const rect = canvas.getBoundingClientRect();
   const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
@@ -1393,6 +1417,7 @@ const ships = new Map();          // mmsi -> record
 const pendingStatics = new Map(); // static data that arrived before any position
 const shipsRoot = document.getElementById('ships');
 const STALE_MS = 10 * 60 * 1000;
+let autoFitDone = false; // see fitViewToShips()/ingestPosition() further down - reset in clearAllShips()
 
 function fallbackDims(typeKey) {
   const info = SHIP_TYPES[typeKey] || SHIP_TYPES.other;
@@ -1769,6 +1794,12 @@ function ingestPosition(msg, ts) {
   refreshEntity(s);
   bumpDensity(s.sceneX, s.sceneZ, ts || Date.now());
   markFiltersDirty();
+  // first few ships of a session/reconnect: fit the view once automatically
+  // rather than leaving a new viewer to stumble onto R/grab-zoom themselves
+  // to discover the ocean they spawned into isn't actually empty - see
+  // fitViewToShips() above. waits for a handful of ships (not just 1) so the
+  // very first message doesn't lock in a view sized around a single point.
+  if (!autoFitDone && ships.size >= 3) { autoFitDone = true; recenter(); }
 }
 
 function ingestStatic(msg) {
@@ -1802,6 +1833,8 @@ function clearAllShips() {
   pendingStatics.clear();
   origin = null;
   hoveredMmsi = null;
+  autoFitDone = false;
+  resetZoom();
   clearSelection();
   clearDensity();
   clearBeacons();
@@ -1823,7 +1856,7 @@ function recenter() {
   origin = { lat: sumLat / ships.size, lon: sumLon / ships.size };
   for (const s of ships.values()) refreshEntity(s);
   document.getElementById('rig').object3D.position.set(0, 220, 260);
-  resetZoom();
+  fitViewToShips(); // was resetZoom() - see the comment on fitViewToShips() above for why a flat 1:1 reset isn't enough on its own
 }
 document.addEventListener('keydown', (e) => { if (e.key === 'r' || e.key === 'R') recenter(); });
 document.getElementById('recenter-toggle').addEventListener('click', recenter);
