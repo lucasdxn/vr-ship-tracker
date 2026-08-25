@@ -156,6 +156,7 @@ const STATIC_FILES = {
   '/ais_data_stream.html':     { file: 'ais_data_stream.html',    type: 'text/html; charset=utf-8' },
   '/globe_ship_tracker.html':  { file: 'globe_ship_tracker.html', type: 'text/html; charset=utf-8' },
   '/vr_ship_tracker.html':     { file: 'vr_ship_tracker.html',    type: 'text/html; charset=utf-8' },
+  '/ship_tracker.html':        { file: 'ship_tracker.html',       type: 'text/html; charset=utf-8' },
 };
 
 const server = http.createServer((req, res) => {
@@ -224,6 +225,7 @@ const server = http.createServer((req, res) => {
     'Not found: ' + url + '\n\n' +
     'AIS relay is running.\n' +
     'UI:        http://localhost:' + PORT + '/\n' +
+    'Combined:  http://localhost:' + PORT + '/ship_tracker.html\n' +
     'Globe:     http://localhost:' + PORT + '/globe_ship_tracker.html\n' +
     'VR:        http://localhost:' + PORT + '/vr_ship_tracker.html\n' +
     'WebSocket: ws://localhost:' + PORT + '/v0/stream\n' +
@@ -581,6 +583,7 @@ wss.on('connection', (client, req) => {
 server.listen(PORT, async () => {
   console.log('AIS relay listening on http://localhost:' + PORT + '/');
   console.log('  UI:        http://localhost:' + PORT + '/');
+  console.log('  Combined:  http://localhost:' + PORT + '/ship_tracker.html');
   console.log('  Globe:     http://localhost:' + PORT + '/globe_ship_tracker.html');
   console.log('  VR:        http://localhost:' + PORT + '/vr_ship_tracker.html');
   console.log('  WebSocket: ws://localhost:' + PORT + '/v0/stream');
