@@ -265,36 +265,36 @@ a-scene { position: fixed; inset: 0; }
 <div id="controls-sidebar">
   <h2>Controls</h2>
 
-  <div class="foot-note" style="margin:0 0 8px; padding:0; border:0;"><b>keyboard/mouse</b> next to <b>VR headset/controller</b> for the same action.</div>
+  <div class="foot-note" style="margin:0 0 8px; padding:0; border:0;"><b>keyboard/mouse</b> next to <b>VR headset/controller</b> for the same action. "side trigger" = the index-finger trigger, "back trigger" = the grip/squeeze button, joystick = the stick you click too (L-stick/R-stick).</div>
 
   <section>
     <h3>Movement</h3>
     <div class="ctrl-row"><b>mouse-look</b> / <i>head tracking</i> — look around</div>
-    <div class="ctrl-row"><b>WASD</b> / <b>R-stick</b> in FLY mode — fly</div>
-    <div class="ctrl-row"><b>click water</b> / <b>point+trigger</b>, or <b>R-stick</b> in TELEPORT mode — teleport there</div>
-    <div class="ctrl-row"><b>L-stick click</b> — toggle FLY / TELEPORT mode (VR only; see nav readout)</div>
-    <div class="ctrl-row"><b>R</b> / <b>point+trigger</b> the in-scene "R" button — recenter, reset zoom</div>
+    <div class="ctrl-row"><b>WASD</b> / <b>R-joystick</b> in FLY mode — fly</div>
+    <div class="ctrl-row"><b>click water</b> / <b>point + side trigger</b>, or <b>R-joystick</b> in TELEPORT mode — teleport there</div>
+    <div class="ctrl-row"><b>L-joystick click</b> — toggle FLY / TELEPORT mode (VR only; see nav readout)</div>
+    <div class="ctrl-row"><b>R</b> / <b>point + side trigger</b> the in-scene "R" button — recenter, reset zoom</div>
   </section>
 
   <section>
     <h3>Zoom</h3>
-    <div class="ctrl-row"><b>right-drag</b> / <b>grip</b>, pull hand in — grab world, in = closer</div>
+    <div class="ctrl-row"><b>right-drag</b> / <b>back trigger</b>, pull hand in — grab world, in = closer</div>
   </section>
 
   <section>
     <h3>Ships</h3>
     <div class="ctrl-row"><b>hover</b> / <b>point</b> — ship info</div>
-    <div class="ctrl-row"><b>click</b> / <b>trigger</b> — pin that info</div>
+    <div class="ctrl-row"><b>click</b> / <b>side trigger</b> — pin that info</div>
     <div class="ctrl-row"><b>COURSE CONES</b> collision-course warning</div>
     <div class="ctrl-row"><b>DENSITY</b> traffic columns</div>
     <div class="ctrl-row"><b>SHIPS</b> filter, click a listed ship to jump (desktop only, see note below)</div>
-    <div class="ctrl-row"><b>orange beacon</b> tall marker over a busy traffic spot — click / point+trigger to jump there</div>
+    <div class="ctrl-row"><b>orange beacon</b> tall marker over a busy traffic spot — click / point + side trigger to jump there</div>
   </section>
 
   <section>
     <h3>Playback</h3>
     <div class="ctrl-row"><b>PLAYBACK</b> live vs. history (desktop only, see note below)</div>
-    <div class="ctrl-row"><b>timeline bar</b> click / <b>point+trigger</b> — seek</div>
+    <div class="ctrl-row"><b>timeline bar</b> click / <b>point + side trigger</b> — seek</div>
   </section>
 
   <div class="foot-note">best over a tight region - true scale spreads ships kilometers apart.</div>
@@ -849,6 +849,7 @@ function resetZoom() {
 // whatever's actually been received fits in view, instead of leaving that
 // entirely to the user to discover via right-drag/grip.
 const FIT_VIEW_RADIUS_M = 280; // roughly what the default rig position can comfortably frame
+const AUTO_FIT_DELAY_MS = 4000; // give a multi-source connection time to deliver a representative sample first - see ingestPosition()
 function fitViewToShips() {
   if (ships.size === 0) return;
   let maxDist = 0;
@@ -1417,7 +1418,7 @@ const ships = new Map();          // mmsi -> record
 const pendingStatics = new Map(); // static data that arrived before any position
 const shipsRoot = document.getElementById('ships');
 const STALE_MS = 10 * 60 * 1000;
-let autoFitDone = false; // see fitViewToShips()/ingestPosition() further down - reset in clearAllShips()
+let autoFitScheduled = false; // see fitViewToShips()/ingestPosition() further down - reset in clearAllShips()
 
 function fallbackDims(typeKey) {
   const info = SHIP_TYPES[typeKey] || SHIP_TYPES.other;
@@ -1794,12 +1795,20 @@ function ingestPosition(msg, ts) {
   refreshEntity(s);
   bumpDensity(s.sceneX, s.sceneZ, ts || Date.now());
   markFiltersDirty();
-  // first few ships of a session/reconnect: fit the view once automatically
+  // fit the view once automatically, a few seconds into a session/reconnect,
   // rather than leaving a new viewer to stumble onto R/grab-zoom themselves
   // to discover the ocean they spawned into isn't actually empty - see
-  // fitViewToShips() above. waits for a handful of ships (not just 1) so the
-  // very first message doesn't lock in a view sized around a single point.
-  if (!autoFitDone && ships.size >= 3) { autoFitDone = true; recenter(); }
+  // fitViewToShips()/computeBusiestOrigin() above. this has to be a delay,
+  // not just "wait for N ships": with several sources feeding in at once
+  // (see ais_data_stream.html), whichever source happens to connect first
+  // populates those first few ships, and with a global source that can well
+  // be scattered noise nowhere near any real traffic cluster - locking onto
+  // that immediately, before a representative sample has actually arrived,
+  // was worse than not auto-fitting at all.
+  if (!autoFitScheduled) {
+    autoFitScheduled = true;
+    setTimeout(recenter, AUTO_FIT_DELAY_MS);
+  }
 }
 
 function ingestStatic(msg) {
@@ -1833,7 +1842,7 @@ function clearAllShips() {
   pendingStatics.clear();
   origin = null;
   hoveredMmsi = null;
-  autoFitDone = false;
+  autoFitScheduled = false;
   resetZoom();
   clearSelection();
   clearDensity();
@@ -1849,12 +1858,42 @@ function clearAllShips() {
  * snap every ship straight to its new position - handy after you've flown
  * a long way from where the page started (origin defaults to the very first
  * position message, which could be anywhere in a wide bounding box) */
+// with a regional feed the plain average of every tracked ship's lat/lon is
+// a fine "center of everything" origin. with a global/multi-source feed
+// (thousands of ships worldwide) that average can land in open ocean with
+// nothing real anywhere near it - averaging Singapore Strait traffic with
+// North Sea traffic with US Gulf Coast traffic gives you a point in the
+// middle of an ocean, not a place with ships. this buckets ships into a
+// coarse lat/lon grid and centers on the busiest bucket instead - wherever
+// the most real traffic actually is - which fitViewToShips() below can then
+// actually zoom in on, instead of trying and failing to fit an entire
+// planet's spread into one view.
+const ORIGIN_CLUSTER_DEG = 0.05; // ~5.5km at the equator - small enough that fitViewToShips()'s zoom range can still cover it
+function computeBusiestOrigin() {
+  const buckets = new Map(); // "gx,gy" -> { count, sumLat, sumLon }
+  for (const s of ships.values()) {
+    const key = Math.round(s.lat / ORIGIN_CLUSTER_DEG) + ',' + Math.round(s.lon / ORIGIN_CLUSTER_DEG);
+    let b = buckets.get(key);
+    if (!b) { b = { count: 0, sumLat: 0, sumLon: 0 }; buckets.set(key, b); }
+    b.count++; b.sumLat += s.lat; b.sumLon += s.lon;
+  }
+  let best = null;
+  for (const b of buckets.values()) { if (!best || b.count > best.count) best = b; }
+  return { lat: best.sumLat / best.count, lon: best.sumLon / best.count };
+}
+
 function recenter() {
   if (ships.size === 0) return;
-  let sumLat = 0, sumLon = 0;
-  for (const s of ships.values()) { sumLat += s.lat; sumLon += s.lon; }
-  origin = { lat: sumLat / ships.size, lon: sumLon / ships.size };
-  for (const s of ships.values()) refreshEntity(s);
+  origin = computeBusiestOrigin();
+  // force an immediate snap for every ship, not just refreshEntity()'s usual
+  // "only on first sighting" one - a changed origin can move a ship's local
+  // target position by a huge amount in one shot (the whole point of
+  // computeBusiestOrigin() is that it CAN jump from wherever the first few
+  // messages happened to be to a completely different real cluster), and
+  // easing that over updateShipSmoothing()'s usual ~0.4s time constant would
+  // take far longer than that to visibly catch up on a jump that size -
+  // it's built for smoothing out AIS position noise, not for this.
+  for (const s of ships.values()) { refreshEntity(s); snapShipVisual(s); }
   document.getElementById('rig').object3D.position.set(0, 220, 260);
   fitViewToShips(); // was resetZoom() - see the comment on fitViewToShips() above for why a flat 1:1 reset isn't enough on its own
 }
@@ -1872,11 +1911,11 @@ document.getElementById('recenter-toggle').addEventListener('click', recenter);
 const CONTROLS_HUD_TEXT =
   'CONTROLS\n\n' +
   'Look: mouse-look / head-track\n' +
-  'Fly: WASD / R-stick\n' +
-  'Teleport: click water,\nor point+trigger\n' +
+  'Fly: WASD / R-joystick\n' +
+  'Teleport: click water,\nor point+side trigger\n' +
   'Recenter: R / R-button\n' +
-  'Zoom: right-drag / grip pull-in\n' +
-  'Ship info: click / trigger\n' +
+  'Zoom: right-drag / back trigger\n' +
+  'Ship info: click / side trigger\n' +
   'Orange beacon: click to jump';
 document.getElementById('controls-hud-text').setAttribute('text', 'value', CONTROLS_HUD_TEXT);
 let controlsHudOpen = false;
