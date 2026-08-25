@@ -396,7 +396,20 @@ a-scene { position: fixed; inset: 0; }
   <!-- rig is a plain, unrotated container - click-teleport only ever has to
        set its x/z, and the camera + hand controllers ride along with it -->
   <a-entity id="rig" position="0 220 260">
-    <a-camera wasd-controls="fly: true; acceleration: 240" look-controls camera="far: 40000" rotation="-26 0 0">
+    <!-- look-controls drives its OWN entity's rotation from a (0,0,0)
+         baseline and overwrites whatever static "rotation" was on that same
+         entity - it does not read/preserve one (confirmed: this is not new,
+         the same reset happened before any of today's changes too). putting
+         the constant -26deg downward tilt on this wrapper instead, one level
+         up, is the standard workaround - look-controls still owns the
+         camera's own rotation entirely (so mouse-look/head-tracking still
+         works exactly as before), it just now composes on top of a tilted
+         parent instead of a level one. without this, the flat/desktop view
+         starts pointed at the empty horizon - ocean and every ship sit
+         below that, so first impression is a black screen with nothing in
+         it until you drag-look down to find them. -->
+    <a-entity id="camera-tilt" rotation="-26 0 0">
+    <a-camera wasd-controls="fly: true; acceleration: 240" look-controls camera="far: 40000">
       <!-- the "physical timeline" for playback mode: a bar fixed in front of
            whatever the viewer is looking at (a child of the camera, so it
            rides along regardless of where click-teleport or WASD-fly has
@@ -462,15 +475,16 @@ a-scene { position: fixed; inset: 0; }
            your head - the first version (wider, further out) didn't fit
            inside a real headset's FOV all at once. centered text per line,
            not the DOM sidebar's left-aligned columns, for the same reason.
-           y=0 (local camera space) is dead center of view - the camera's
-           own -26deg base tilt (see the <a-camera> rotation above) doesn't
-           change that, since this position is local to the camera itself. -->
+           y=0 (local camera space) is dead center of view - the -26deg base
+           tilt (see #camera-tilt above) doesn't change that, since this
+           position is local to the camera itself, one level inside it. -->
       <a-entity id="controls-hud" no-frustum-cull visible="false" position="0 0 -1.1" scale="0.32 0.32 0.32">
         <a-plane width="2.6" height="2.5" material="color: #0d0f14; opacity: 0.92; shader: flat; side: double"></a-plane>
         <a-entity id="controls-hud-text" position="0 0 0.011"
                    text="value: -; align: center; baseline: center; width: 2.3; wrapCount: 30; color: #e2e6f0; lineHeight: 55"></a-entity>
       </a-entity>
     </a-camera>
+    </a-entity>
     <a-entity id="hand-left" laser-controls="hand: left" raycaster="objects: .clickable; far: 20000" line="color: #3ea8ff; opacity: 0.6"></a-entity>
     <a-entity id="hand-right" laser-controls="hand: right" raycaster="objects: .clickable; far: 20000" line="color: #3ea8ff; opacity: 0.6"></a-entity>
   </a-entity>
