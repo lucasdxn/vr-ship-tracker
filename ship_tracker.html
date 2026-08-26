@@ -548,8 +548,8 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
 
     <section>
       <h3>3D &amp; VR</h3>
-      <div class="ctrl-row"><b>2D / 3D</b> switch renderer</div>
-      <div class="ctrl-row"><b>ENTER VR</b> immersive headset</div>
+      <div class="ctrl-row"><b>ENTER VR</b> this view, in a headset</div>
+      <div class="ctrl-row"><b>click</b> a vessel or the sea to descend</div>
       <div class="ctrl-row"><b>3D tab</b> cones, density, zoom</div>
       <div class="ctrl-row"><b>Time tab</b> replay logged history</div>
     </section>
@@ -586,8 +586,26 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
      stops those buttons being built at all, which is tidier than hiding them
      with CSS - a rule for markup that only exists at runtime is invisible to
      every static check, and reads as dead code forever after. It does not
-     affect sceneEl.enterVR(), which is what the header button calls. -->
-<a-scene embedded xr-mode-ui="enabled: false" background="color: #04070c" fog="type: linear; color: #16324a; near: 17000; far: 40000">
+     affect sceneEl.enterVR(), which is what the header button calls.
+
+     renderer: highRefreshRate asks for 90Hz on a Quest (a-frame already
+     defaults it on in the Oculus browser; stating it means the same thing
+     happens in any other WebXR browser that supports it). foveationLevel 1 is
+     maximum fixed foveated rendering - the periphery of each eye buffer is
+     drawn at lower resolution, which Meta's own guidance calls out as one of
+     the cheapest large GPU savings available and which is genuinely hard to
+     notice. anisotropy 8 becomes the default for every texture, and this
+     scene's sea is looked at from a very low angle almost all the time, which
+     is exactly where unfiltered textures turn to mush.
+
+     multiviewStereo is deliberately NOT enabled. It is the single biggest
+     draw-call saving on this hardware, but it requires every shader in the
+     scene to be multiview-aware, and a-frame's SDF text is a custom
+     ShaderMaterial - every HUD panel, ship label and wrist-menu row in here is
+     text. Worth revisiting only with a headset to hand to confirm it. -->
+<a-scene embedded xr-mode-ui="enabled: false"
+         renderer="highRefreshRate: true; foveationLevel: 1; anisotropy: 8"
+         background="color: #04070c" fog="type: linear; color: #16324a; near: 17000; far: 40000">
   <a-assets></a-assets>
 
   <!-- rig is a plain, unrotated container - click-teleport only ever has to
@@ -602,7 +620,10 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
          flat/desktop view starts pointed at the empty horizon with the whole
          scene below it. -->
     <a-entity id="camera-tilt" rotation="-26 0 0">
-    <a-camera wasd-controls="fly: true; acceleration: 240" look-controls camera="far: 90000">
+    <!-- near is raised well off a-frame's 0.005 default: nothing in this scene is
+         ever closer than a controller, and with a far plane of 90000 the depth
+         buffer has an enormous range to spread over. -->
+    <a-camera wasd-controls="fly: true; acceleration: 240" look-controls camera="near: 0.05; far: 90000">
       <!-- the "physical timeline" for playback mode: a bar fixed in front of
            whatever the viewer is looking at, with a marker showing the current
            scrub position. Hidden entirely in LIVE mode. Click anywhere along
@@ -686,6 +707,19 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
                    text="value: -; align: center; baseline: center; width: 2.3; wrapCount: 30; color: #e2e6f0; lineHeight: 55"></a-entity>
       </a-entity>
 
+      <!-- Comfort tunnelling. Smooth stick movement is the standard trigger for
+           simulator sickness, and the standard mitigation is to close a soft
+           black aperture around the periphery while it is happening: the eye
+           keeps a stable frame of reference at the edge of vision, where the
+           conflict between what you see and what your inner ear reports is
+           strongest. Fades in only while actually flying, so it costs nothing
+           the rest of the time. Drawn last and with depth testing off so it
+           sits over everything including the HUD. -->
+      <a-entity id="vignette" no-frustum-cull visible="false" position="0 0 -0.12">
+        <a-plane id="vignette-plane" width="0.62" height="0.62"
+                 material="shader: flat; transparent: true; opacity: 0; depthTest: false; side: double"></a-plane>
+      </a-entity>
+
       <!-- the wrist menu: the in-scene replacement for every sidebar control
            that has a VR equivalent (vessel-type filters + legend, course
            cones, density, live/playback, save/restore view). Its rows are
@@ -707,7 +741,7 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
 
   <!-- desktop/mobile mouse "controller" - laser-controls above only fires in
        an actual XR session, this is what makes clicking work in a normal tab -->
-  <a-entity cursor="rayOrigin: mouse" raycaster="objects: .clickable; far: 20000"></a-entity>
+  <a-entity id="mouse-cursor" cursor="rayOrigin: mouse" raycaster="objects: .clickable; far: 20000"></a-entity>
 
   <!-- everything world zoom scales/pans is grouped here so the navigation code
        only ever has to touch one entity's transform - the rig/camera stays
@@ -722,8 +756,18 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
     <a-entity id="globe" class="clickable" globe-click>
       <!-- child of #globe on purpose: the dots are then placed with the plain
            sphere formula in globe-local space and inherit the same position +
-           rotation that puts the current tangent point at world-local (0,0,0) -->
-      <a-entity id="globe-dots"></a-entity>
+           rotation that puts the current tangent point at world-local (0,0,0).
+
+           It carries its own `clickable` class, and needs to: a-frame's
+           raycaster builds its target list by walking the object3DMap of every
+           element matching the selector, which yields the meshes registered
+           with setObject3D and not the entity groups they hang off. Being a
+           child of a clickable element is therefore not enough - the recursive
+           intersect starts from #globe's sphere mesh, and the dot cloud is a
+           sibling of that mesh rather than a descendant of it, so it would
+           never be tested. Toggled with the level of detail in
+           applyLodVisibility(), same as the sphere and the sea. -->
+      <a-entity id="globe-dots" class="clickable"></a-entity>
     </a-entity>
 
     <!-- deliberately NOT a huge plane. It is a modest tile re-centred under
@@ -738,6 +782,10 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
 
     <a-entity id="ships"></a-entity>
 
+    <!-- closest-point-of-approach markers, one per pair of vessels whose tracks
+         are about to come too close. See renderCpaMarkers(). -->
+    <a-entity id="cpa"></a-entity>
+
     <a-entity id="density" visible="false"></a-entity>
 
     <!-- tall beacons over the busiest current traffic spots - at true scale
@@ -745,6 +793,23 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
          interesting is. Visible from far off and, like the ship list, they
          double as a teleport target when clicked. -->
     <a-entity id="beacons"></a-entity>
+  </a-entity>
+
+  <!-- Eight-point compass, world-locked at the viewer's own height and carried
+       along with them. Over open water at true scale there is nothing else to
+       tell you which way you are facing, and a number in a HUD is not the same
+       as being able to turn your head and see north. -->
+  <a-entity id="compass"></a-entity>
+
+  <!-- Ring around whichever vessel the pointer is on. Without it, at globe zoom
+       you get a card for a ship you cannot pick out of a few hundred identical
+       dots - the card tells you what you hit, this tells you where it is. Like
+       the teleport marker it lives at the scene root and is positioned in scene
+       coordinates each frame, so it works the same whether the vessel is a dot
+       on the sphere or a hull on the water. -->
+  <a-entity id="ship-marker" visible="false">
+    <a-ring radius-inner="8.4" radius-outer="9.5" segments-theta="48"
+            material="color: #ffffff; opacity: 0.8; transparent: true; shader: flat; side: double"></a-ring>
   </a-entity>
 
   <!-- teleport-arc landing preview - deliberately NOT inside #world: it marks
@@ -928,7 +993,19 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
        (see buildWristMenu()), and these are the flat-screen twins. -->
   <div class="panel tab-panel" id="tab-vr">
     <div class="panel-title">3D view</div>
-    <div class="filter-row"><label><input type="checkbox" id="cones-toggle" checked> Course cones</label></div>
+    <div class="form-row">
+      <label class="form-label" for="cones-toggle">Course cones</label>
+      <select class="form-input" id="cones-toggle">
+        <option value="off">Off</option>
+        <option value="alerts" selected>Converging and selected only</option>
+        <option value="all">Every moving vessel</option>
+      </select>
+      <div style="font-size:0.66rem; color: var(--color-text-muted); margin-top: 4px; line-height:1.4;">
+        Every cone is a translucent mesh of its own, so a busy strait draws
+        hundreds of them &mdash; expensive in a headset and hard to read a
+        conflict out of. The default keeps the ones that matter.
+      </div>
+    </div>
     <div class="form-row">
       <label class="form-label" for="lookahead-min">Cone lookahead</label>
       <div class="range-row">
@@ -4087,36 +4164,39 @@ AFRAME.registerComponent('ship-hull', {
   },
 
   init: function () {
-    this.group = new THREE.Group();
-    this.el.setObject3D('ship-hull', this.group);
-    this.hullMat = new THREE.MeshStandardMaterial({ roughness: 0.65, metalness: 0.1 });
-    this.deckMat = new THREE.MeshStandardMaterial({ color: '#dfe4ee', roughness: 0.8 });
+    // one mesh, one material, one draw call. It was two - a hull and a
+    // separate white deckhouse - which on a busy feed at sea level is two
+    // draw calls per vessel and the single largest CPU cost in the scene on
+    // standalone headset hardware, where draw calls are the thing Meta's own
+    // guidance says to count first. The deckhouse survives as a lighter shade
+    // baked into the vertex colours rather than as a second material.
+    this.mat = new THREE.MeshStandardMaterial({ roughness: 0.65, metalness: 0.1, vertexColors: true });
+    this.mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.mat);
+    this.el.setObject3D('ship-hull', this.mesh);
     this.build();
   },
 
   update: function (oldData) {
     const dimsChanged = !oldData || oldData.length !== this.data.length || oldData.beam !== this.data.beam;
     if (dimsChanged) this.build();
-    this.hullMat.color.set(this.data.color);
-    this.hullMat.transparent = this.data.opacity < 1;
-    this.hullMat.opacity = this.data.opacity;
-    this.deckMat.transparent = this.data.opacity < 1;
-    this.deckMat.opacity = this.data.opacity;
+    this.mat.color.set(this.data.color);
+    this.mat.transparent = this.data.opacity < 1;
+    this.mat.opacity = this.data.opacity;
   },
 
-  // (re)builds the hull geometry for the current length/beam. only called
-  // when the dimensions actually change (real ShipStaticData replacing a
-  // guessed fallback, mostly) - not on every position update, that would be
-  // a lot of wasted geometry churn for a ship that isn't growing every second
+  /* (Re)builds the silhouette for the current length and beam. Only called
+   * when the dimensions actually change - real ShipStaticData replacing a
+   * guessed fallback, mostly - and never on a position update, which for a
+   * live feed is every second or so per vessel. */
   build: function () {
     const L = Math.max(3, this.data.length);
     const B = Math.max(1.5, this.data.beam);
     const hl = L / 2, hw = B / 2;
     const draft = Math.max(1.2, B * 0.35);
 
-    // hull outline in (beam, length) space, centered on the AIS-reported
-    // position: flat stern, straight sides for ~70% of the length, then a
-    // taper to a point at the bow
+    // hull outline in (beam, length) space, centred on the reported position:
+    // flat stern, straight sides for ~70% of the length, then a taper to a
+    // point at the bow
     const shape = new THREE.Shape();
     shape.moveTo(-hw, -hl);
     shape.lineTo(hw, -hl);
@@ -4125,54 +4205,74 @@ AFRAME.registerComponent('ship-hull', {
     shape.lineTo(-hw, hl * 0.42);
     shape.closePath();
 
-    const hullGeo = new THREE.ExtrudeGeometry(shape, { depth: draft, bevelEnabled: false });
-    // ExtrudeGeometry lies flat in XY, extruded along +Z. rotating -90 about X
-    // turns "length" (shape Y) into world Z and "extrude depth" into world Y
-    // (up) - see the rotation-sign note above refreshEntity() for why
-    // bow ends up pointing toward -Z once this is done.
+    const hullGeo = new THREE.ExtrudeGeometry(shape, { depth: draft, bevelEnabled: false }).toNonIndexed();
+    // ExtrudeGeometry lies flat in XY, extruded along +Z. Rotating -90 about X
+    // turns "length" (shape Y) into world Z and "extrude depth" into world Y,
+    // which is what leaves the bow pointing along -Z at rotation.y = 0.
     hullGeo.rotateX(-Math.PI / 2);
 
     const deckW = B * 0.5, deckL = L * 0.2, deckH = Math.max(2, B * 0.55);
-    const deckGeo = new THREE.BoxGeometry(deckW, deckH, deckL);
+    const deckGeo = new THREE.BoxGeometry(deckW, deckH, deckL).toNonIndexed();
+    // toward the stern (+Z in this local space), sitting on the hull deck -
+    // true for most cargo, tanker and passenger vessels, and close enough for
+    // everything else
+    deckGeo.translate(0, draft + deckH / 2, hl * 0.35);
 
-    if (this.hullMesh) { this.hullMesh.geometry.dispose(); this.group.remove(this.hullMesh); }
-    if (this.deckMesh) { this.deckMesh.geometry.dispose(); this.group.remove(this.deckMesh); }
+    const merged = mergeShipGeometry(hullGeo, deckGeo, DECK_SHADE);
+    hullGeo.dispose();
+    deckGeo.dispose();
 
-    this.hullMesh = new THREE.Mesh(hullGeo, this.hullMat);
-    // every real headset this got tested on (Quest 3S) flickered ship hulls
-    // in and out while turning your head - a stereo ArrayCamera WebXR
-    // session's frustum test isn't perfectly stable frame to frame right at
-    // the edge of view. the first fix (frustumCulled = false, unconditional)
-    // stopped the flicker but made VR "incredibly laggy" with any real
-    // number of ships on screen, since it forces every hull/deck to submit a
-    // draw call every frame in both eyes even when genuinely far off-screen.
-    // padding the bounding sphere instead keeps real culling working (most
-    // ships, most of the time, are nowhere near the frustum edge) while
-    // giving the unstable boundary case enough slack to stop flickering -
-    // build() recreates this mesh from scratch on every real-dims update
-    // (see the comment above it), so this has to be (re)applied here at
-    // creation time, not once from outside after the first sighting.
-    inflateBoundingSphere(this.hullMesh);
-    this.group.add(this.hullMesh);
-
-    this.deckMesh = new THREE.Mesh(deckGeo, this.deckMat);
-    inflateBoundingSphere(this.deckMesh);
-    // deckhouse sits toward the stern (+Z in this local space, see rotation
-    // note), on top of the hull deck - true for most cargo/tanker/passenger
-    // vessels, close enough for fishing boats and everything else too
-    this.deckMesh.position.set(0, draft + deckH / 2, hl * 0.35);
-    this.group.add(this.deckMesh);
+    this.mesh.geometry.dispose();
+    this.mesh.geometry = merged;
+    // Every real headset this was tested on flickered hulls in and out while
+    // turning your head: a stereo ArrayCamera session's frustum test is not
+    // perfectly stable frame to frame right at the edge of view. Disabling
+    // culling outright fixed the flicker and made VR unusable with any real
+    // ship count, since it forces every vessel to submit a draw call in both
+    // eyes even when genuinely off screen. Padding the bounding sphere keeps
+    // real culling working while giving the unstable boundary case enough
+    // slack to settle.
+    inflateBoundingSphere(this.mesh);
 
     this.currentLabelHeight = draft + deckH + 4;
   },
 
   remove: function () {
     this.el.removeObject3D('ship-hull');
-    if (this.hullMesh) this.hullMesh.geometry.dispose();
-    if (this.deckMesh) this.deckMesh.geometry.dispose();
-    this.hullMat.dispose(); this.deckMat.dispose();
+    this.mesh.geometry.dispose();
+    this.mat.dispose();
   }
 });
+
+/* Concatenates the two silhouette pieces into a single non-indexed geometry,
+ * tagging each with a vertex colour. The material's own colour is the vessel's
+ * class colour and the vertex colours multiply into it, so the deckhouse comes
+ * out as a lighter version of the hull rather than needing a material of its
+ * own. (A `color` attribute is not optional once vertexColors is on: the
+ * shader declares the attribute either way, and without one supplied WebGL
+ * feeds it (0,0,0) and the whole mesh renders black.) */
+const DECK_SHADE = 1.75;   // the deckhouse, relative to the hull colour
+function mergeShipGeometry(hullGeo, deckGeo, deckShade) {
+  const hp = hullGeo.attributes.position, dp = deckGeo.attributes.position;
+  const hn = hullGeo.attributes.normal, dn = deckGeo.attributes.normal;
+  const total = hp.count + dp.count;
+
+  const pos = new Float32Array(total * 3);
+  const nrm = new Float32Array(total * 3);
+  const col = new Float32Array(total * 3);
+  pos.set(hp.array.subarray(0, hp.count * 3), 0);
+  pos.set(dp.array.subarray(0, dp.count * 3), hp.count * 3);
+  nrm.set(hn.array.subarray(0, hn.count * 3), 0);
+  nrm.set(dn.array.subarray(0, dn.count * 3), hp.count * 3);
+  col.fill(1, 0, hp.count * 3);
+  col.fill(deckShade, hp.count * 3, total * 3);
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return geo;
+}
 
 /* ============================================================ */
 /* course-projection cone - the "why VR" collision-spotting feature       */
@@ -4365,6 +4465,40 @@ const DEFAULT_ALT_M = MAX_ALT_M;                          // the 3D view opens a
 const HARBOUR_SCALE = 1400, HARBOUR_ALT_M = 600;
 const VIEW_SYNC_EXP = Math.log(MAX_ALT_M / HARBOUR_ALT_M) / Math.log(HARBOUR_SCALE);
 
+/* Where the tangent point sits relative to the viewer.
+ *
+ * Keeping it directly beneath them is what makes the sphere-to-sea handover
+ * seamless, and at sea level it is also simply correct - the water is under
+ * your feet. At globe zoom it is a trap. Your traffic is clustered around the
+ * tangent point, so "directly beneath" puts the entire fleet at 87-90 degrees
+ * down: on a flat screen the camera's pitch hides that, but in a headset you
+ * are looking level at empty space with everything you came to see under your
+ * chin, and no amount of pointing at it will help because it is not on screen.
+ *
+ * So at globe zoom the tangent point is pushed forward, to sit a comfortable
+ * glance below the horizon rather than underfoot, and the offset is blended
+ * back to zero as the zoom approaches sea level - by which point "beneath you"
+ * is the right answer again and the handover needs it to be exact. The blend
+ * is logarithmic in scale, matching how the zoom itself moves. */
+const GLOBE_FRAMING_ELEV_DEG = 28;   // how far below the horizon the tangent point sits, fully zoomed out
+
+function globeFramingOffsetZ() {
+  if (vrLod !== 'globe') return 0;
+  const span = Math.log(LOD_FLAT_ADOPT / MIN_WORLD_SCALE);
+  const t = span > 0
+    ? Math.max(0, Math.min(1, Math.log(worldScale / MIN_WORLD_SCALE) / span))
+    : 1;
+  return -(RIG_SCENE_Y / Math.tan(GLOBE_FRAMING_ELEV_DEG * DEG2RAD)) * (1 - t);
+}
+
+// puts the world where the framing says it should be, relative to wherever the
+// viewer currently is. This is the canonical arrangement at globe zoom, and
+// every travel, zoom and absorbed movement re-establishes it.
+function applyGlobeFraming() {
+  const rp = rigEl.object3D.position;
+  worldEl.object3D.position.set(rp.x, 0, rp.z + globeFramingOffsetZ());
+}
+
 /* The sphere/plane swap, with the same adopt/drop hysteresis pair the 2D
  * renderer uses on its coastline tiers: a single threshold makes the surface
  * flicker between representations whenever the zoom hovers right at it, which
@@ -4416,7 +4550,7 @@ function setViewAlt(altNew, anchor, base) {
   viewAltM = clampAlt(altNew);
   const scaleNew = altToWorldScale(viewAltM);
   const b = base || { scale: worldScale, posX: worldEl.object3D.position.x, posZ: worldEl.object3D.position.z };
-  if (anchor && b.scale > 0) {
+  if (anchor && b.scale > 0 && vrLod === 'flat') {
     const ratio = scaleNew / b.scale;
     worldEl.object3D.position.set(
       anchor.x - (anchor.x - b.posX) * ratio, 0,
@@ -4428,6 +4562,10 @@ function setViewAlt(altNew, anchor, base) {
   // past true scale the world stops growing and the viewer comes down instead
   rigEl.object3D.position.y = worldScale >= MAX_WORLD_SCALE ? viewAltM : RIG_SCENE_Y;
   updateLod();
+  // at globe zoom the framing owns the world's position outright, so zooming
+  // walks the tangent point smoothly from "ahead and below" to "underfoot"
+  // rather than pivoting about a point that is not where you are looking
+  if (vrLod === 'globe') applyGlobeFraming();
   updateZoomReadouts();
 }
 
@@ -4442,7 +4580,9 @@ function setViewAlt(altNew, anchor, base) {
  * compounds, and a few zoom steps put the tangent point a quarter of a million
  * units off to one side with the planet nowhere in frame. */
 function viewAnchor() {
-  if (vrLod === 'globe') return { x: rigEl.object3D.position.x, z: rigEl.object3D.position.z };
+  // at globe zoom the pivot is unused (see setViewAlt), but callers still ask
+  // for a surface point - the tangent point is the one being looked at
+  if (vrLod === 'globe') return { x: worldEl.object3D.position.x, z: worldEl.object3D.position.z };
   const camera = sceneEl.camera;
   if (camera) {
     const o = new THREE.Vector3(); camera.getWorldPosition(o);
@@ -4539,6 +4679,7 @@ function applyLodVisibility() {
   // take it out of the .clickable set as well, and the raycasters have to be
   // told, since a className change is not something they watch for.
   let changed = setRaycastable(globeEl, !flat);
+  changed = setRaycastable(globeDotsEl, !flat) || changed;
   changed = setRaycastable(oceanEl, flat) || changed;
   if (changed) refreshRaycasters();
   vrVisibilityDirty = true;   // hulls vs. dots is decided in applyVrVisibility()
@@ -4556,11 +4697,15 @@ function applyLodVisibility() {
  * offset applied to a head-tracked camera tilts the whole world relative to
  * the viewer's inner ear, which is the classic recipe for making people ill;
  * in VR, looking down is something you do with your neck. */
-const TILT_FLAT_DEG = -26;
-const TILT_GLOBE_DEG = -45;   // the planet's limb sits ~26 deg below the horizon at full zoom-out; this centres the band between there and straight down
+/* One pitch for the whole range. It used to need two - a steep one for globe
+ * zoom, where the planet was underfoot, and a shallow one for sea level - and
+ * switching between them jumped the view at the level-of-detail boundary. Now
+ * that the framing offset puts the tangent point a glance below the horizon at
+ * both ends, a single angle close to the framing angle frames both. */
+const TILT_DEG = -27;
 function updateCameraTilt() {
-  const deg = sceneEl.is('vr-mode') ? 0 : (vrLod === 'globe' ? TILT_GLOBE_DEG : TILT_FLAT_DEG);
-  document.getElementById('camera-tilt').setAttribute('rotation', { x: deg, y: 0, z: 0 });
+  document.getElementById('camera-tilt').setAttribute(
+    'rotation', { x: sceneEl.is('vr-mode') ? 0 : TILT_DEG, y: 0, z: 0 });
 }
 
 function setRaycastable(el, on) {
@@ -4677,10 +4822,77 @@ const handRightEl = document.getElementById('hand-right');
 let vrGrabHand = null; // 'left' | 'right' | null
 const prevGrip = { left: false, right: false };
 
+/* Both grips at once: the gesture everyone already knows.
+ *
+ * One hand pulling toward your head is a fine way to zoom and it is what this
+ * had, but it cannot pan - so getting somewhere meant zooming out, flying, and
+ * zooming back in. Taking hold with both hands is how every map in VR works:
+ * pull them apart to zoom in, push together to zoom out, and move them
+ * together to drag the world past you. Both happen at once, which is how
+ * hands actually behave.
+ *
+ * The pan is applied to the rig rather than to the world, so it needs no
+ * special case for globe zoom - up there the motion absorber turns rig
+ * movement into latitude and longitude, and the gesture becomes spinning the
+ * planet, which is exactly what dragging a globe should do.
+ *
+ * PAN_GAIN is the one number here that wants a headset to settle. Arms reach
+ * about half a metre; a strait is kilometres. Amplifying the drag is the only
+ * way to make it useful, and how much is a matter of feel. */
+const TWO_HAND_PAN_GAIN = 60;
+let twoHandGrab = null;
+
+function twoHandState(pl, pr) {
+  return {
+    dist: Math.max(0.05, pl.distanceTo(pr)),
+    midX: (pl.x + pr.x) / 2,
+    midZ: (pl.z + pr.z) / 2
+  };
+}
+
+function beginTwoHandGrab(pl, pr) {
+  const now = twoHandState(pl, pr);
+  twoHandGrab = {
+    dist0: now.dist, midX0: now.midX, midZ0: now.midZ,
+    alt0: viewAltM,
+    rigX0: rigEl.object3D.position.x, rigZ0: rigEl.object3D.position.z,
+    scale: worldScale,
+    posX: worldEl.object3D.position.x, posZ: worldEl.object3D.position.z,
+    anchor: viewAnchor()
+  };
+}
+
+function updateTwoHandGrab(pl, pr) {
+  if (!twoHandGrab) return;
+  const g = twoHandGrab;
+  const now = twoHandState(pl, pr);
+  // hands apart -> the world grows -> altitude falls. Measured against the
+  // state captured once at grab start, never chained frame to frame, which is
+  // what stops a long gesture drifting.
+  setViewAlt(g.alt0 * (g.dist0 / now.dist), g.anchor, g);
+  rigEl.object3D.position.x = g.rigX0 - (now.midX - g.midX0) * TWO_HAND_PAN_GAIN;
+  rigEl.object3D.position.z = g.rigZ0 - (now.midZ - g.midZ0) * TWO_HAND_PAN_GAIN;
+}
+
+const _handL = new THREE.Vector3(), _handR = new THREE.Vector3();
 function updateVrGrab() {
+  const gripL = buttonPressed(handGamepad(handLeftEl), 1);
+  const gripR = buttonPressed(handGamepad(handRightEl), 1);
+
+  // both hands takes precedence, and cancels any single-hand grab in progress
+  if (gripL && gripR) {
+    handLeftEl.object3D.getWorldPosition(_handL);
+    handRightEl.object3D.getWorldPosition(_handR);
+    if (!twoHandGrab) { grab = null; vrGrabHand = null; beginTwoHandGrab(_handL, _handR); }
+    else updateTwoHandGrab(_handL, _handR);
+    prevGrip.left = gripL; prevGrip.right = gripR;
+    return;
+  }
+  twoHandGrab = null;
+
   for (const side of ['left', 'right']) {
     const handEl = side === 'left' ? handLeftEl : handRightEl;
-    const pressed = buttonPressed(handGamepad(handEl), 1);
+    const pressed = side === 'left' ? gripL : gripR;
     if (pressed && !prevGrip[side] && !vrGrabHand) {
       const camera = sceneEl.camera;
       if (camera) {
@@ -4755,12 +4967,95 @@ let teleportAimLatLon = null;    // globe-zoom equivalent: where on the planet t
 let prevLeftStickClick = false;
 const teleportMarkerEl = document.getElementById('teleport-marker');
 
+/* Turning.
+ *
+ * Snapping in fixed steps rather than sweeping smoothly is the one comfort
+ * decision that matters most on this hardware: a continuous yaw that the neck
+ * did not ask for is the fastest way to make someone ill, and it is why every
+ * Quest title defaults to snap. It also solves a plainer problem - a seated
+ * user with the headset's cable or their chair behind them cannot physically
+ * turn round to look north.
+ *
+ * The turn is about the rig's own origin rather than the head. In room scale,
+ * standing well away from that origin makes the world swing slightly rather
+ * than pivot under you; the alternative (rotating about the head) moves the
+ * rig in x/z, which at globe zoom the motion-absorber reads as travel and
+ * converts into kilometres of unintended longitude. R recentres if it drifts. */
+const SNAP_TURN_DEG = 30;
+const SNAP_TURN_ENGAGE = 0.6;    // push this far to turn...
+const SNAP_TURN_RELEASE = 0.3;   // ...and back inside this before it will turn again
+let snapTurnArmed = true;
+
+function updateSnapTurn(stickX) {
+  if (Math.abs(stickX) < SNAP_TURN_RELEASE) { snapTurnArmed = true; return; }
+  if (!snapTurnArmed || Math.abs(stickX) < SNAP_TURN_ENGAGE) return;
+  snapTurnArmed = false;
+  rigEl.object3D.rotation.y -= Math.sign(stickX) * THREE.MathUtils.degToRad(SNAP_TURN_DEG);
+}
+
+/* Comfort tunnelling, driven by whether the viewer is actually being moved by
+ * the stick rather than by their own neck. Eased rather than switched so the
+ * aperture itself is not a jolt. */
+const VIGNETTE_MAX_OPACITY = 0.85;
+const VIGNETTE_TAU = 0.12;       // seconds to close ~63% of the way
+let vignetteOpacity = 0;
+let smoothMotionActive = false;
+let vignettePlaneEl = null;
+
+function initVignette() {
+  vignettePlaneEl = document.getElementById('vignette-plane');
+  // radial alpha ramp: clear in the middle, opaque at the rim
+  const ctx = makeCanvas(256, 256);
+  const g = ctx.createRadialGradient(128, 128, 40, 128, 128, 128);
+  g.addColorStop(0.00, 'rgba(0,0,0,0)');
+  g.addColorStop(0.55, 'rgba(0,0,0,0)');
+  g.addColorStop(0.80, 'rgba(0,0,0,0.75)');
+  g.addColorStop(1.00, 'rgba(0,0,0,1)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 256, 256);
+  const tex = new THREE.CanvasTexture(ctx.canvas);
+  tex.needsUpdate = true;
+  const mesh = vignettePlaneEl.getObject3D('mesh');
+  if (!mesh) return;
+  mesh.material.map = tex;
+  mesh.material.color.set('#000000');
+  mesh.material.needsUpdate = true;
+  mesh.renderOrder = 9999;   // over everything, HUD included
+}
+
+function updateVignette(dt) {
+  if (!vignettePlaneEl || dt <= 0) return;
+  const target = smoothMotionActive ? VIGNETTE_MAX_OPACITY : 0;
+  vignetteOpacity += (target - vignetteOpacity) * (1 - Math.exp(-dt / VIGNETTE_TAU));
+  const on = vignetteOpacity > 0.01;
+  document.getElementById('vignette').object3D.visible = on;
+  if (!on) return;
+  const mesh = vignettePlaneEl.getObject3D('mesh');
+  if (mesh) mesh.material.opacity = vignetteOpacity;
+}
+
 function showTeleportMarker(point) {
   teleportMarkerEl.object3D.visible = true;
   teleportMarkerEl.object3D.position.set(point.x, point.y != null ? point.y : worldEl.object3D.position.y + 0.5, point.z);
 }
 function hideTeleportMarker() { teleportMarkerEl.object3D.visible = false; }
 
+/* The control layout, which is the Quest-conventional one rather than
+ * something invented here:
+ *
+ *   right stick  Y  move (fly) or arm the teleport ray
+ *   right stick  X  snap turn
+ *   left  stick  Y  zoom, planet to 1:1
+ *   left  stick  X  strafe
+ *   left  stick  click   fly / teleport
+ *   grip            grab the world and pull to zoom
+ *   trigger         select
+ *   X or A          the wrist menu
+ *
+ * Turning used to live on the right stick's X alongside strafing, which meant
+ * there was no snap turn at all - the one control a seated headset user cannot
+ * do without. Strafe moved to the left stick's unused horizontal axis rather
+ * than being dropped. */
 function updateLocomotion(dt) {
   const leftStickClick = buttonPressed(handGamepad(handLeftEl), 3) || buttonPressed(handGamepad(handLeftEl), 2);
   if (leftStickClick && !prevLeftStickClick) {
@@ -4770,11 +5065,16 @@ function updateLocomotion(dt) {
   }
   prevLeftStickClick = leftStickClick;
 
-  const stick = thumbstickAxes(handGamepad(handRightEl));
-  const magnitude = Math.hypot(stick.x, stick.y);
+  const rStick = thumbstickAxes(handGamepad(handRightEl));
+  const lStick = thumbstickAxes(handGamepad(handLeftEl));
+  updateSnapTurn(rStick.x);
+
+  const forwardAxis = Math.abs(rStick.y) > STICK_DEADZONE ? rStick.y : 0;
+  const strafeAxis = Math.abs(lStick.x) > STICK_DEADZONE ? lStick.x : 0;
+  smoothMotionActive = false;
 
   if (locomotionMode === 'fly') {
-    if (magnitude > STICK_DEADZONE && dt > 0) {
+    if ((forwardAxis || strafeAxis) && dt > 0) {
       const camera = sceneEl.camera;
       if (camera) {
         const forward = new THREE.Vector3();
@@ -4782,12 +5082,13 @@ function updateLocomotion(dt) {
         forward.y = 0; forward.normalize(); // stay level - tilting your head shouldn't dive/climb
         const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).negate();
         const step = FLY_SPEED_MPS * dt;
-        rigEl.object3D.position.addScaledVector(forward, -stick.y * step);
-        rigEl.object3D.position.addScaledVector(right, stick.x * step);
+        rigEl.object3D.position.addScaledVector(forward, -forwardAxis * step);
+        rigEl.object3D.position.addScaledVector(right, strafeAxis * step);
+        smoothMotionActive = true;
       }
     }
   } else { // 'teleport'
-    if (magnitude > TELEPORT_ENGAGE_DEADZONE) {
+    if (Math.abs(rStick.y) > TELEPORT_ENGAGE_DEADZONE) {
       const { origin: o, dir } = controllerRay(handRightEl);
       if (vrLod === 'globe') {
         const hit = globeRayHit(o, dir);
@@ -4806,6 +5107,56 @@ function updateLocomotion(dt) {
       hideTeleportMarker();
     }
   }
+}
+
+/* ============================================================ */
+/* the compass                                                   */
+/* ============================================================ */
+/* Eight bearing marks standing in a ring around the viewer, world-locked and
+ * carried along as they move. The nav readout already prints a heading, but a
+ * number you have to read is not the same as being able to turn your head and
+ * see where north is - and over open water at true scale there is nothing else
+ * to orient against at all. Placed at a fixed distance in scene units so they
+ * stay the same apparent size at every zoom, and at the viewer's own height so
+ * they sit on the horizon rather than above or below it. */
+const COMPASS_POINTS = [
+  ['N', 0], ['NE', 45], ['E', 90], ['SE', 135],
+  ['S', 180], ['SW', 225], ['W', 270], ['NW', 315]
+];
+const COMPASS_RADIUS = 420;
+const compassEl = document.getElementById('compass');
+let compassEnabled = true;
+
+function initCompass() {
+  for (const [label, bearing] of COMPASS_POINTS) {
+    const el = document.createElement('a-entity');
+    // scene convention: -Z is north, +X is east, so a compass bearing turns
+    // from -Z toward +X as it increases
+    const rad = bearing * DEG2RAD;
+    el.setAttribute('position', {
+      x: Math.sin(rad) * COMPASS_RADIUS, y: 0, z: -Math.cos(rad) * COMPASS_RADIUS
+    });
+    // a-frame derives the glyph size from width/wrapCount, so this is the
+    // knob that matters: 66/3 puts a letter at about 22 scene units, which at
+    // the compass radius is roughly three degrees - readable at a glance and
+    // nothing like the billboards that width alone produced
+    el.setAttribute('text', {
+      value: label, align: 'center', baseline: 'center',
+      width: 66, wrapCount: 3,
+      color: label === 'N' ? '#ff8f5e' : '#8593a8'
+    });
+    el.setAttribute('billboard', '');
+    compassEl.appendChild(el);
+  }
+}
+
+function updateCompass() {
+  const on = compassEnabled;
+  compassEl.object3D.visible = on;
+  if (!on) return;
+  const rig = rigEl.object3D.position;
+  // follows the viewer without turning with them - that is the whole point
+  compassEl.object3D.position.set(rig.x, rig.y, rig.z);
 }
 
 /* ============================================================ */
@@ -4834,6 +5185,10 @@ function updateNavHud() {
   const bearing = ((-THREE.MathUtils.radToDeg(navHudEuler.y)) % 360 + 360) % 360;
   let text = 'HDG ' + String(Math.round(bearing)).padStart(3, '0') + '° · ' + fmtAltitude(viewAltM);
   text += vrLod === 'globe' ? ' · GLOBE' : ' · ' + (worldScale >= 1 ? '1:1' : worldScale.toFixed(2) + '×');
+  // the sea's grid is the only thing out there to judge a distance against,
+  // and a square of unknown size is no help at all
+  if (vrLod === 'flat' && oceanCellM > 0) text += ' · GRID ' + fmtAltitude(oceanCellM);
+  if (cpaEvents.length && conesMode !== 'off' && vrLod === 'flat') text += ' · ' + cpaEvents.length + ' CPA';
   if (sceneEl.is('vr-mode')) text += ' · ' + (locomotionMode === 'fly' ? 'FLY' : 'TELEPORT');
   document.getElementById('nav-hud-text').setAttribute('text', 'value', text);
 }
@@ -5152,6 +5507,7 @@ const GRID_MIN_CELL_PX = 4;
 let seaTexture = null, seaCtx = null;
 let seaPainted = null;           // { cx, cz, extent, lat, lon, tier }
 let oceanExtentM = 0;
+let oceanCellM = 0;              // the grid's current spacing, in metres - reported in the nav readout
 
 function niceCellSize(x) {
   const pow = Math.pow(10, Math.floor(Math.log10(Math.max(1e-3, x))));
@@ -5241,6 +5597,7 @@ function updateOceanTiling() {
   const cell = niceCellSize(Math.max(viewAltM * GRID_CELL_PER_ALT,
                                      wantExtent * GRID_MIN_CELL_PX / SEA_TEX));
   const extent = cell * Math.max(4, Math.round(wantExtent / cell));
+  oceanCellM = cell;
 
   // re-centre under the viewer, snapped to the grid
   oceanLocalPos.set(rigEl.object3D.position.x, 0, rigEl.object3D.position.z);
@@ -5264,6 +5621,7 @@ function updateOceanTiling() {
 }
 
 let lastNavFrameTime = null;
+let lastCullAt = 0;
 function navTick(now) {
   const dt = lastNavFrameTime != null ? Math.min(0.1, (now - lastNavFrameTime) / 1000) : 0;
   lastNavFrameTime = now;
@@ -5277,6 +5635,11 @@ function navTick(now) {
   updateLocomotion(dt);
   absorbRigMotionIntoGlobe();
   updateShipSmoothing(dt);
+  updateVignette(dt);
+  updateCompass();
+  // the distance cull is only as current as the last pass, and the viewer is
+  // free to fly away from what it decided; re-run it on a slow tick
+  if (now - lastCullAt > CULL_REFRESH_MS) { lastCullAt = now; vrVisibilityDirty = true; }
   if (activeView === 'vr') {
     syncCanvasFromScene();
     // the basemap tier loader and the sticky coastline tier both key off the
@@ -5290,6 +5653,10 @@ function navTick(now) {
     updateGlobeTexture();
     updateGlobeDotScale();
     maybeRebuildGlobeDots(now);
+    updateGlobeDotHover();
+    updateShipMarker();
+    updateShipLabels(now);
+    updateSelectedTrail();
   }
   if (vrVisibilityDirty) { applyVrVisibility(); vrVisibilityDirty = false; }
 
@@ -5387,6 +5754,7 @@ function latLonScenePos(lat, lon) {
 
 function refreshAllShipPositions() {
   originDirty = false;
+  trailForId = null;   // its points are in the old local frame
   for (const s of Fleet.list) {
     if (!s.el) continue;
     refreshEntity(s);
@@ -5517,12 +5885,17 @@ function wrapLon(lon) { return ((lon + 540) % 360 + 360) % 360 - 180; }
 function absorbRigMotionIntoGlobe() {
   if (vrLod !== 'globe' || !originInitialised) return;
   const rp = rigEl.object3D.position;
-  if (rp.x === 0 && rp.z === 0) return;
-  // scene units back to metres on the ground, then to a lat/lon step
-  const ll = sceneToLatLon(rp.x / worldScale, rp.z / worldScale);
-  rp.x = 0; rp.z = 0;
-  worldEl.object3D.position.set(0, 0, 0);
+  const w = worldEl.object3D.position;
+  // how far the viewer has strayed from the framed arrangement - which is not
+  // "rig at the origin" any more, but "rig one framing offset behind the
+  // tangent point", so the offset has to be taken back out before the
+  // remainder can be read as travel
+  const dx = rp.x - w.x;
+  const dz = rp.z - w.z + globeFramingOffsetZ();
+  if (Math.abs(dx) < 1e-6 && Math.abs(dz) < 1e-6) return;
+  const ll = sceneToLatLon(dx / worldScale, dz / worldScale);
   setOrigin(clampLat(ll.lat), wrapLon(ll.lon), 'none');
+  applyGlobeFraming();
 }
 
 // flat sea -> planet: hand the viewer's own position over to the globe's frame.
@@ -5534,8 +5907,8 @@ function enterGlobeFrame() {
   const w = worldEl.object3D.position;
   const ll = sceneToLatLon((rp.x - w.x) / worldScale, (rp.z - w.z) / worldScale);
   rp.x = 0; rp.z = 0;
-  w.set(0, 0, 0);
   setOrigin(clampLat(ll.lat), wrapLon(ll.lon), 'none');
+  applyGlobeFraming();
 }
 
 /* Travel to a place: at globe zoom the planet turns to put it beneath you, on
@@ -5543,10 +5916,8 @@ function enterGlobeFrame() {
 function travelToLatLon(lat, lon) {
   lat = clampLat(lat); lon = wrapLon(lon);
   if (vrLod === 'globe') {
-    rigEl.object3D.position.x = 0;
-    rigEl.object3D.position.z = 0;
-    worldEl.object3D.position.set(0, 0, 0);
     setOrigin(lat, lon, 'none');
+    applyGlobeFraming();
   } else {
     setOrigin(lat, lon, 'rig');
   }
@@ -5568,8 +5939,19 @@ const globeDotGeo = new THREE.SphereGeometry(1, 6, 6); // unit sphere, scaled pe
  * multiply a no-op and the instance colours come through. */
 globeDotGeo.setAttribute('color', new THREE.BufferAttribute(
   new Float32Array(globeDotGeo.attributes.position.count * 3).fill(1), 3));
-const DOT_SCENE_RADIUS = 2.4;   // how big a dot should look, in scene units, at any zoom
-let globeDotsObj = null;
+const DOT_SCENE_RADIUS = 3.2;   // how big a dot should look, in scene units, at any zoom
+/* ...and how much bigger the thing you actually have to hit is. A dot three
+ * scene units across, seen from a few hundred away, is about a quarter of a
+ * degree wide - which is fine to look at and hopeless to hit with a laser
+ * pointer held at arm's length, where a degree of hand tremor is normal. The
+ * pick target is a second instanced mesh at the same positions and several
+ * times the radius, marked invisible so it never renders. Three's raycaster
+ * tests layers rather than visibility, so an invisible mesh is still a
+ * perfectly good hit target - the same quirk that forced hidden hulls out of
+ * the clickable set, used deliberately this time. */
+const DOT_PICK_FACTOR = 4;
+let globeDotsObj = null, globeDotPicks = null;
+let globeDotList = [];          // instanceId -> ship, for turning a hit back into a vessel
 let globeDotsBuiltAtScale = 0;
 
 // A busy feed marks the fleet dirty many times a second; rebuilding a few
@@ -5594,9 +5976,11 @@ function rebuildGlobeDots() {
   for (const s of Fleet.list) { if (passesFilters(s) && s.lat != null) list.push(s); }
 
   // globeDotGeo is shared across rebuilds (not disposed here) - only the
-  // per-rebuild material and the instance itself are this call's to clean up
-  if (globeDotsObj) { globeDotsEl.object3D.remove(globeDotsObj); globeDotsObj.material.dispose(); }
-  globeDotsObj = null;
+  // per-rebuild materials and the instances themselves are this call's to clean up
+  if (globeDotsObj) { globeDotsEl.removeObject3D('dots'); globeDotsObj.material.dispose(); }
+  if (globeDotPicks) { globeDotsEl.removeObject3D('dot-picks'); globeDotPicks.material.dispose(); }
+  globeDotsObj = globeDotPicks = null;
+  globeDotList = list;
   globeDotsBuiltAtScale = worldScale;
   if (list.length === 0) return;
 
@@ -5628,9 +6012,109 @@ function rebuildGlobeDots() {
   // one draw call for the whole cloud either way - culling all of it because
   // one dot went off screen would be wrong, not merely slow
   mesh.frustumCulled = false;
-  globeDotsEl.object3D.add(mesh);
+
+  // the fat, invisible twin that the pointer actually hits
+  const picks = new THREE.InstancedMesh(globeDotGeo, new THREE.MeshBasicMaterial(), list.length);
+  for (let i = 0; i < list.length; i++) {
+    const s = list[i];
+    dummy.position.copy(latLonToGlobeVec(s.lat, s.lon, EARTH_R_M + rM));
+    dummy.scale.setScalar(rM * DOT_PICK_FACTOR);
+    dummy.updateMatrix();
+    picks.setMatrixAt(i, dummy.matrix);
+  }
+  picks.instanceMatrix.needsUpdate = true;
+  picks.frustumCulled = false;
+  picks.visible = false;
+  // setObject3D, not object3D.add: a-frame's raycaster discards any hit whose
+  // object has no .el back-reference, and setObject3D is what installs one
+  globeDotsEl.setObject3D('dot-picks', picks);
+  globeDotPicks = picks;
+  globeDotsEl.setObject3D('dots', mesh);
   globeDotsObj = mesh;
+  // setObject3D fires object3dset, which marks every raycaster dirty, so the
+  // new meshes are picked up on the next tick without an explicit refresh
 }
+
+/* Turning a hit on the dot cloud back into a vessel. An InstancedMesh reports
+ * which instance was hit rather than which object, so the intersection carries
+ * an instanceId that indexes the same list the matrices were built from. */
+function shipFromDotIntersection(it) {
+  if (!it || it.instanceId == null) return null;
+  if (it.object !== globeDotPicks && it.object !== globeDotsObj) return null;
+  return globeDotList[it.instanceId] || null;
+}
+
+/* Pointing at a dot shows its card, the same as pointing at a hull does at sea
+ * level. Polled from the raycasters rather than driven by mouseenter/mouseleave
+ * because those fire once per *element*, and the whole cloud is one element -
+ * the entity never changes as the pointer moves from ship to ship, so the
+ * events that would tell us never arrive. */
+let dotHoverId = null;
+const _dotCentre = new THREE.Vector3();
+function updateGlobeDotHover() {
+  let found = null;
+  if (vrLod === 'globe' && globeDotPicks) {
+    /* Which vessel, when several pick targets overlap.
+     *
+     * The targets are deliberately much fatter than the dots they stand for,
+     * so in any real cluster the ray passes through several at once. Three
+     * hands them back sorted by distance along the ray, which picks whichever
+     * sphere's *surface* is nearest - and that is frequently a neighbour off to
+     * one side rather than the one under the pointer. Sorting by how far each
+     * vessel's centre is from the ray axis instead picks the one actually being
+     * aimed at, which is what someone pointing at a dot means. */
+    let bestPerp = Infinity;
+    const rcs = document.querySelectorAll('[raycaster]');
+    for (let i = 0; i < rcs.length; i++) {
+      const comp = rcs[i].components && rcs[i].components.raycaster;
+      const hits = comp && comp.intersections;
+      if (!hits || !hits.length) continue;
+      const ray = comp.raycaster && comp.raycaster.ray;
+      for (let k = 0; k < hits.length; k++) {
+        const s = shipFromDotIntersection(hits[k]);
+        if (!s) continue;
+        if (!ray) { found = found || s; continue; }
+        _dotCentre.copy(latLonToGlobeVec(s.lat, s.lon, EARTH_R_M + DOT_SCENE_RADIUS / Math.max(1e-9, worldScale)));
+        globeDotsEl.object3D.localToWorld(_dotCentre);
+        const perp = ray.distanceToPoint(_dotCentre);
+        if (perp < bestPerp) { bestPerp = perp; found = s; }
+      }
+    }
+  }
+  const id = found ? found.id : null;
+  if (id === dotHoverId) return;
+  if (dotHoverId != null) unhoverShip(dotHoverId);
+  dotHoverId = id;
+  if (id != null) hoverShip(id);
+}
+
+/* Picking a vessel out of the dot cloud.
+ *
+ * Not driven by which element a-frame's cursor decides the click belongs to.
+ * The cursor keeps a single "intersected element" and switches it using its own
+ * distance heuristics over *newly* intersected elements, and with an
+ * earth-sized sphere and a cloud of pick targets sitting a few units in front
+ * of it, it settles on the sphere often enough to make clicking a ship look
+ * broken - the raycaster has the dot first in its list, the cursor emits on the
+ * globe, and the ship is never selected.
+ *
+ * So the hover state is the authority. It is polled straight from every
+ * raycaster's own intersection list (see updateGlobeDotHover), it is what
+ * already draws the card and the ring, and it is therefore exactly what the
+ * viewer believes they are pointing at. A click just acts on it. */
+function clickHoveredDot() {
+  if (dotHoverId == null) return false;
+  const s = Fleet.get(dotHoverId);
+  if (!s || s.lat == null) return false;
+  selectShip(s.id);
+  stepZoomInAt(s.lat, s.lon);
+  return true;
+}
+
+globeDotsEl.addEventListener('click', (evt) => {
+  // stop the globe underneath treating it as a click on open water as well
+  if (clickHoveredDot()) evt.stopPropagation();
+});
 
 // the dots' world-local size is baked into their instance matrices, so a big
 // change of zoom needs them rebuilt. A factor of 1.25 either way is under the
@@ -5649,6 +6133,9 @@ AFRAME.registerComponent('globe-click', {
   init: function () {
     this.el.addEventListener('click', (evt) => {
       if (suppressNextOceanClick) { suppressNextOceanClick = false; return; }
+      // a vessel under the pointer wins over the water behind it, whichever
+      // element the cursor decided to send the click to
+      if (clickHoveredDot()) return;
       const point = evt.detail && evt.detail.intersection && evt.detail.intersection.point;
       if (!point) return;
       const ll = globePointToLatLon(point.clone ? point.clone() : new THREE.Vector3(point.x, point.y, point.z));
@@ -5672,9 +6159,18 @@ AFRAME.registerComponent('globe-click', {
  * teardown, so coming back down onto the water shows the fleet instantly
  * instead of rebuilding a few thousand meshes at the worst possible moment. */
 const STALE_MS = 10 * 60 * 1000;
-// past this the tangent plane is lying anyway, and drawing a few thousand
-// hulls nobody can resolve at that distance is pure cost
-const MAX_HULL_RANGE_M = 400000;
+/* How far a hull is drawn - measured from the viewer, in scene units, not from
+ * the tangent origin in metres.
+ *
+ * The distinction matters. A fixed range in metres is a fixed range on the
+ * ground, so at true scale it drew every vessel within 400 km when only about
+ * forty of those kilometres are inside the fog, and on a global feed that is
+ * thousands of hulls costing two draw calls each to render something nobody
+ * can see. Measured from the camera in scene units it prunes to what is
+ * actually in view at every zoom, because the scene always spans about the
+ * same number of units whatever those units are worth. */
+const HULL_MAX_DIST_SCENE = 46000;   // just past the sea plane's own extent
+const CULL_REFRESH_MS = 500;         // the viewer moves; the cull has to keep up
 
 // name, else MMSI, else whatever the registry keys it by - restored snapshots
 // and manually added vessels do not all have all three
@@ -5812,19 +6308,33 @@ for (const s of Fleet.list) vrAddShip(s);
  * Runs at most once a frame off a dirty flag rather than on every incoming
  * message, so a burst of AIS traffic costs one pass rather than one per
  * message; and it only writes to an entity whose answer actually changed. */
+const _cullCam = new THREE.Vector3();
 function applyVrVisibility() {
   const flat = vrLod === 'flat';
   let anyClickableChanged = false;
+  // the viewer's own position in world-local metres, so every vessel can be
+  // measured against where the eye actually is
+  const camera = sceneEl.camera;
+  if (camera) {
+    camera.getWorldPosition(_cullCam);
+    worldEl.object3D.worldToLocal(_cullCam);
+  } else {
+    _cullCam.set(0, 0, 0);
+  }
+  const maxLocal = HULL_MAX_DIST_SCENE / Math.max(1e-9, worldScale);
   for (const s of Fleet.list) {
     if (!s.el) continue;
     const vis = flat && passesFilters(s) &&
-      (s.sceneX == null || Math.hypot(s.sceneX, s.sceneZ) < MAX_HULL_RANGE_M);
+      (s.sceneX == null || Math.hypot(s.sceneX - _cullCam.x, s.sceneZ - _cullCam.z) < maxLocal);
     if (s._vrVisible !== vis) {
       // straight to object3D, not setAttribute: this can touch thousands of
       // entities and a-frame's attribute path re-parses and diffs a string
       // every time. Hides hull, course cone and label together - they are all
       // on or under this one entity.
       s.el.object3D.visible = vis;
+      // it has not been eased while it was hidden (see updateShipSmoothing),
+      // so bring it to where it actually is before anyone can see it
+      if (vis && s.hasVisualInit) snapShipVisual(s);
       // ...and out of the pointer's way as well. A hull that is merely
       // invisible still answers the laser, so at globe zoom every dot on the
       // planet would sit behind a full-size ship hull nobody can see, and
@@ -5860,11 +6370,66 @@ function snapShipVisual(s) {
   s.hasVisualInit = true;
 }
 
+/* Which vessels get a name over them.
+ *
+ * Every label is a separate SDF text mesh, and Meta's guidance on this
+ * hardware is blunt about work that scales with the world rather than with
+ * what can actually be seen: a busy feed at sea level would hang a few
+ * thousand of them in the air, almost all too far away to read a character of,
+ * and pay for every one in draw calls and transparency. So the nearest few are
+ * labelled and the rest are not - which is also simply easier to read.
+ *
+ * Recomputed a few times a second rather than per frame. Names do not move
+ * fast enough to need more, and the sort is over the whole visible fleet. */
+const LABEL_MAX_COUNT = 40;
+const LABEL_MAX_DIST_SCENE = 3200;   // scene units, so the cutoff is a constant apparent distance at any zoom
+const LABEL_REFRESH_MS = 250;
+let labelsBuiltAt = 0;
+const _labelCam = new THREE.Vector3();
+const _labelPos = new THREE.Vector3();
+const labelKeep = new Set();
+
+function updateShipLabels(now) {
+  if (now - labelsBuiltAt < LABEL_REFRESH_MS) return;
+  labelsBuiltAt = now;
+  const camera = sceneEl.camera;
+  if (!camera) return;
+  camera.getWorldPosition(_labelCam);
+
+  const near = [];
+  if (vrLod === 'flat') {
+    for (const s of Fleet.list) {
+      if (!s._vrVisible || !s.label || !s.hasVisualInit) continue;
+      _labelPos.set(s.visualX, 0, s.visualZ);
+      worldEl.object3D.localToWorld(_labelPos);
+      const d = _labelPos.distanceTo(_labelCam);
+      if (d < LABEL_MAX_DIST_SCENE) near.push({ s, d });
+    }
+    near.sort((a, b) => a.d - b.d);
+  }
+  labelKeep.clear();
+  for (let i = 0; i < Math.min(LABEL_MAX_COUNT, near.length); i++) labelKeep.add(near[i].s);
+
+  for (const s of Fleet.list) {
+    if (!s.label) continue;
+    const on = labelKeep.has(s);
+    if (s._labelVisible !== on) { s.label.object3D.visible = on; s._labelVisible = on; }
+  }
+}
+
+/* Only the vessels actually on screen are eased. Meta's own performance
+ * guidance is blunt about this - work that scales with the size of the world
+ * rather than with what is visible is the thing that kills frame rate on
+ * mobile hardware - and on a global feed this loop would otherwise walk a few
+ * thousand records sixty times a second to move hulls nobody is looking at,
+ * including every time the whole fleet is a dot cloud and no hull is drawn at
+ * all. Anything hidden is snapped to its true position when it reappears (see
+ * applyVrVisibility), so nothing is ever shown mid-ease from stale data. */
 function updateShipSmoothing(dt) {
   if (dt <= 0) return;
   const t = 1 - Math.exp(-dt / POSITION_SMOOTH_TAU);
   for (const s of Fleet.list) {
-    if (!s.hasVisualInit || !s.el) continue;
+    if (!s.hasVisualInit || !s.el || !s._vrVisible) continue;
     s.visualX += (s.targetX - s.visualX) * t;
     s.visualZ += (s.targetZ - s.visualZ) * t;
     s.visualRotY = lerpAngleDeg(s.visualRotY, s.targetRotY, t);
@@ -5884,18 +6449,34 @@ function updateShipSmoothing(dt) {
  * in over a strait and you can *see* two cones about to cross, instead of
  * reading COG/SOG and doing the geometry in your head. */
 const KN_TO_MPS = 0.514444;
-let coursesEnabled = true;
+/* How many cones to draw.
+ *
+ * Every cone is its own translucent mesh, so a busy feed at sea level was
+ * putting four hundred of them on screen: half the draw calls in the scene,
+ * a great deal of overlapping transparency (the thing Meta's guidance warns
+ * about most specifically after draw calls), and a thicket you cannot read a
+ * conflict out of anyway. The point of a cone is spotting a conflict, and the
+ * conflicts are already known - so the default draws the ones that are
+ * actually converging, plus whatever vessel you are asking about. ALL is still
+ * there for a quiet stretch of water where seeing every intent is useful. */
+const CONE_MODES = ['off', 'alerts', 'all'];
+let conesMode = 'alerts';
 let lookaheadMin = 10;
 const CONVERGE_CHECK_MS = 1500;
+let cpaEvents = [];   // filled by checkConvergence(), drawn by renderCpaMarkers()
 const MIN_SOG_FOR_CONE_KN = 0.5; // anchored/stopped ships get no cone - nothing to project
 
 function updateCourseCone(s, dims) {
   dims = dims || shipDims(s);
-  // an unreported course must not project a confident cone due north, which is
-  // what a plain `hdg || 0` would do for every vessel whose COG never arrived
-  const hasCourse = coursesEnabled && s.hdgKnown && s.speedKnown && s.speed >= MIN_SOG_FOR_CONE_KN;
+  // an unreported course must not project a confident track due north, which
+  // is what a plain `hdg || 0` would do for every vessel whose COG never
+  // arrived
+  const moving = s.hdgKnown && s.speedKnown && s.speed >= MIN_SOG_FOR_CONE_KN;
 
-  if (hasCourse) {
+  // The velocity is maintained whatever the cone mode: the convergence check
+  // and the CPA markers are built on it, and they should not stop working
+  // because the cones were turned down to reduce clutter.
+  if (moving) {
     const sogMps = s.speed * KN_TO_MPS;
     const rad = s.hdg * DEG2RAD;
     // same heading convention as headingToYRotation(): scene north is -Z, so a
@@ -5905,6 +6486,11 @@ function updateCourseCone(s, dims) {
   } else {
     s.velX = 0; s.velZ = 0;
   }
+
+  const hasCourse = moving && (
+    conesMode === 'all' ||
+    (conesMode === 'alerts' && (s.coneConverging || s.id === selectedShipId || s.id === hoveredShipId))
+  );
 
   const lookaheadSec = Math.max(1, lookaheadMin) * 60;
   const length = hasCourse ? s.speed * KN_TO_MPS * lookaheadSec : 0;
@@ -5933,6 +6519,7 @@ function checkConvergence() {
   for (const s of Fleet.list) { if (s.el && (s.velX || s.velZ)) list.push(s); }
   const stillConverging = new Set();
   const lookaheadSec = Math.max(1, lookaheadMin) * 60;
+  cpaEvents.length = 0;
 
   for (let i = 0; i < list.length; i++) {
     for (let j = i + 1; j < list.length; j++) {
@@ -5945,9 +6532,24 @@ function checkConvergence() {
       const dx = px + vx * t, dz = pz + vz * t;
       const dist = Math.sqrt(dx * dx + dz * dz);
       const threshold = Math.max(120, (shipDims(a).lengthM + shipDims(b).lengthM) / 2 + 60);
-      if (dist < threshold) { stillConverging.add(a.id); stillConverging.add(b.id); }
+      if (dist < threshold) {
+        stillConverging.add(a.id); stillConverging.add(b.id);
+        // the pair's positions at the moment of closest approach, and the
+        // point between them - which is the thing worth standing next to
+        cpaEvents.push({
+          aId: a.id, bId: b.id, t, dist,
+          ax: a.sceneX + a.velX * t, az: a.sceneZ + a.velZ * t,
+          bx: b.sceneX + b.velX * t, bz: b.sceneZ + b.velZ * t,
+          x: (a.sceneX + a.velX * t + b.sceneX + b.velX * t) / 2,
+          z: (a.sceneZ + a.velZ * t + b.sceneZ + b.velZ * t) / 2
+        });
+      }
     }
   }
+  // soonest first, then capped: a busy strait can produce dozens at once, and
+  // the ones worth looking at are the ones about to happen
+  cpaEvents.sort((p, q) => p.t - q.t);
+  if (cpaEvents.length > CPA_MAX_MARKERS) cpaEvents.length = CPA_MAX_MARKERS;
 
   for (const s of Fleet.list) {
     if (!s.el) continue;
@@ -5956,7 +6558,92 @@ function checkConvergence() {
     if (s.coneConverging !== was) updateCourseCone(s);
   }
 }
-setInterval(() => { if (coursesEnabled) checkConvergence(); }, CONVERGE_CHECK_MS);
+setInterval(() => { if (conesMode !== 'off') { checkConvergence(); renderCpaMarkers(); } }, CONVERGE_CHECK_MS);
+
+/* ============================================================ */
+/* closest point of approach, as a place rather than a number    */
+/* ============================================================ */
+/* The convergence pass above already works out exactly where and when two
+ * tracks come closest - the same calculation a vessel traffic service runs -
+ * and until now all that came of it was turning two cones red. That tells you
+ * a conflict exists somewhere in front of you; it does not tell you where to
+ * look.
+ *
+ * So the answer gets drawn where the answer is: a ring on the water at the
+ * point the two vessels will be closest, labelled with how long until it
+ * happens and how close they get, with a line joining where each of them will
+ * be at that moment. On a flat map this would be clutter over the top of the
+ * tracks it describes. Standing on the water it is a place you can walk to,
+ * and the one thing this view can show that a chart cannot.
+ *
+ * Markers are pooled rather than created and destroyed every pass - the check
+ * runs on a timer and a busy strait would otherwise churn a few dozen entities
+ * every second and a half. */
+const CPA_MAX_MARKERS = 12;
+const cpaRoot = document.getElementById('cpa');
+const cpaPool = [];
+
+function makeCpaMarker() {
+  const el = document.createElement('a-entity');
+
+  const ring = document.createElement('a-ring');
+  ring.setAttribute('radius-inner', 0.86);
+  ring.setAttribute('radius-outer', 1);
+  ring.setAttribute('segments-theta', 40);
+  ring.setAttribute('rotation', '-90 0 0');
+  ring.setAttribute('material', 'color: #ff5e7a; opacity: 0.85; transparent: true; shader: flat; side: double');
+  el.appendChild(ring);
+
+  const label = document.createElement('a-entity');
+  label.setAttribute('billboard', '');
+  label.setAttribute('text', { value: '', align: 'center', width: 10, color: '#ff8fa3', baseline: 'bottom' });
+  el.appendChild(label);
+
+  // the pair's predicted positions, joined - two points and a line between
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({
+    color: '#ff5e7a', transparent: true, opacity: 0.6, fog: false
+  }));
+  line.frustumCulled = false;
+  el.setObject3D('cpa-line', line);
+
+  cpaRoot.appendChild(el);
+  const rec = { el, ring, label, line };
+  cpaPool.push(rec);
+  return rec;
+}
+
+function fmtCpaTime(sec) {
+  if (sec < 60) return Math.round(sec) + ' s';
+  return (sec / 60).toFixed(1) + ' min';
+}
+
+function renderCpaMarkers() {
+  const show = conesMode !== 'off' && vrLod === 'flat';
+  const n = show ? cpaEvents.length : 0;
+  for (let i = 0; i < Math.max(n, cpaPool.length); i++) {
+    const rec = cpaPool[i] || (i < n ? makeCpaMarker() : null);
+    if (!rec) break;
+    if (i >= n) { rec.el.object3D.visible = false; continue; }
+
+    const e = cpaEvents[i];
+    rec.el.object3D.visible = true;
+    rec.el.object3D.position.set(e.x, 0, e.z);
+    // the ring is drawn at unit radius and scaled, so one geometry serves every
+    // marker whatever the miss distance
+    const r = Math.max(60, e.dist / 2);
+    rec.ring.object3D.scale.set(r, r, 1);
+    rec.label.object3D.position.set(0, r * 0.35 + 30, 0);
+    rec.label.setAttribute('text', 'value',
+      'CPA ' + fmtCpaTime(e.t) + '\n' + (e.dist < 20 ? 'converging' : Math.round(e.dist) + ' m apart'));
+
+    const pos = rec.line.geometry.attributes.position;
+    pos.setXYZ(0, e.ax - e.x, 2, e.az - e.z);
+    pos.setXYZ(1, e.bx - e.x, 2, e.bz - e.z);
+    pos.needsUpdate = true;
+  }
+}
 
 
 /* ============================================================ */
@@ -6139,10 +6826,39 @@ function clearBeacons() {
  * is live, falling back to the selection once the pointer moves off. The
  * selection is the same `selectedShipId` the 2D renderer highlights, so
  * picking a ship in one view has it singled out in the other. */
-function selectShip(id) { selectedShipId = String(id); sidebarDirty = true; refreshInfoDisplay(); }
-function clearSelection() { selectedShipId = null; refreshInfoDisplay(); }
-function hoverShip(id) { hoveredShipId = String(id); refreshInfoDisplay(); }
-function unhoverShip(id) { if (hoveredShipId === String(id)) hoveredShipId = null; refreshInfoDisplay(); }
+/* Selection and hover both feed the cone rules (see updateCourseCone), so the
+ * vessel you are asking about always projects its track even when the rest are
+ * turned down - which is most of why you asked. Only the two vessels involved
+ * are refreshed, not the whole fleet. */
+function refreshConesFor(prevSel, prevHover) {
+  if (conesMode !== 'alerts') return;
+  for (const id of new Set([prevSel, prevHover, selectedShipId, hoveredShipId])) {
+    if (id == null) continue;
+    const s = Fleet.get(id);
+    if (s && s.el) updateCourseCone(s);
+  }
+}
+function selectShip(id) {
+  const prev = selectedShipId;
+  selectedShipId = String(id); sidebarDirty = true;
+  refreshConesFor(prev, hoveredShipId); refreshInfoDisplay();
+}
+function clearSelection() {
+  const prev = selectedShipId;
+  selectedShipId = null;
+  refreshConesFor(prev, hoveredShipId); refreshInfoDisplay();
+}
+function hoverShip(id) {
+  const prev = hoveredShipId;
+  hoveredShipId = String(id);
+  refreshConesFor(selectedShipId, prev); refreshInfoDisplay();
+}
+function unhoverShip(id) {
+  if (hoveredShipId !== String(id)) return;
+  const prev = hoveredShipId;
+  hoveredShipId = null;
+  refreshConesFor(selectedShipId, prev); refreshInfoDisplay();
+}
 
 function refreshInfoDisplay() {
   const id = hoveredShipId != null ? hoveredShipId : selectedShipId;
@@ -6166,6 +6882,105 @@ function renderInfoPanel(s) {
   ];
   document.getElementById('ship-info-hud-text').setAttribute('text', 'value', lines.join('\n'));
   document.getElementById('ship-info-hud').object3D.visible = true;
+}
+
+/* Where the selected vessel has been.
+ *
+ * The shared registry already keeps a trail of the last eighty positions for
+ * every vessel - the flat map draws it as a wake line, and until now the 3D
+ * view threw it away. Laid on the water it answers a question the flat map
+ * cannot: which side of the channel did it come up, and was it already turning
+ * before it reached you. Only the selected vessel gets one, because eighty
+ * points times a busy feed is a lot of geometry for a question you are only
+ * asking about one ship.
+ *
+ * The line is rebuilt when the selection changes or the vessel reports a new
+ * position - not per frame, and it lives inside #world so the zoom carries it
+ * along with everything else. */
+let trailObj = null;
+let trailForId = null, trailPoints = 0;
+
+function updateSelectedTrail() {
+  const id = selectedShipId;
+  const s = id != null ? Fleet.get(id) : null;
+  const trail = s && s.trail;
+  if (!s || !trail || trail.length < 2 || vrLod !== 'flat' || !s._vrVisible) {
+    if (trailObj) trailObj.visible = false;
+    trailForId = null;
+    return;
+  }
+  if (trailForId === id && trailPoints === trail.length) {
+    trailObj.visible = true;
+    return;   // nothing new to draw
+  }
+  trailForId = id;
+  trailPoints = trail.length;
+
+  const pos = new Float32Array(trail.length * 3);
+  for (let i = 0; i < trail.length; i++) {
+    const q = llToScene(trail[i].lat, trail[i].lon);
+    pos[i * 3] = q.x;
+    pos[i * 3 + 1] = 1.5;      // just clear of the water so it is not z-fighting it
+    pos[i * 3 + 2] = q.z;
+  }
+  if (!trailObj) {
+    trailObj = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({
+      color: '#ffb83e', transparent: true, opacity: 0.75, fog: false
+    }));
+    trailObj.frustumCulled = false;
+    worldEl.object3D.add(trailObj);
+  } else {
+    trailObj.geometry.dispose();
+    trailObj.geometry = new THREE.BufferGeometry();
+  }
+  trailObj.geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  trailObj.visible = true;
+}
+
+/* A ring round whatever the pointer is on, positioned in scene coordinates so
+ * one piece of code covers both a dot on the sphere and a hull on the water.
+ *
+ * Its size is the interesting part: a fixed size in metres is invisible from
+ * orbit and a fixed size on screen swallows the ship you are standing next to.
+ * So it takes whichever is larger - a constant few degrees of your view, which
+ * is what a pointer marker wants to be, or big enough to enclose the vessel
+ * itself, which is what a selection marker wants to be. */
+const shipMarkerEl = document.getElementById('ship-marker');
+const MARKER_ANGULAR_REF = 260;   // distance at which the ring is drawn at its authored size
+const _markerPos = new THREE.Vector3();
+const _markerCam = new THREE.Vector3();
+
+function updateShipMarker() {
+  const id = hoveredShipId != null ? hoveredShipId : selectedShipId;
+  const s = id != null ? Fleet.get(id) : null;
+  const camera = sceneEl.camera;
+  if (!s || s.lat == null || !camera) { shipMarkerEl.object3D.visible = false; return; }
+
+  if (vrLod === 'globe') {
+    if (!globeSphereReady) { shipMarkerEl.object3D.visible = false; return; }
+    _markerPos.copy(latLonToGlobeVec(s.lat, s.lon, EARTH_R_M + DOT_SCENE_RADIUS / Math.max(1e-9, worldScale)));
+    globeEl.object3D.localToWorld(_markerPos);
+  } else {
+    if (!s.hasVisualInit || !s._vrVisible) { shipMarkerEl.object3D.visible = false; return; }
+    _markerPos.set(s.visualX, 0, s.visualZ);
+    worldEl.object3D.localToWorld(_markerPos);
+  }
+
+  camera.getWorldPosition(_markerCam);
+  const dist = _markerCam.distanceTo(_markerPos);
+  const angular = dist / MARKER_ANGULAR_REF;
+  const enclosing = vrLod === 'flat' ? (shipDims(s).lengthM * worldScale * 0.7) / 9.5 : 0;
+  shipMarkerEl.object3D.scale.setScalar(Math.max(0.02, angular, enclosing));
+  shipMarkerEl.object3D.position.copy(_markerPos);
+  if (vrLod === 'flat') {
+    // flat on the water, like a circle drawn on a chart around the vessel.
+    // Turned to face the camera instead it reads as a halo standing on its
+    // edge behind the ship, which is a different and much less useful thing.
+    shipMarkerEl.object3D.rotation.set(-Math.PI / 2, 0, 0);
+  } else {
+    shipMarkerEl.object3D.lookAt(_markerCam);   // a dot on a sphere has no ground plane to lie on
+  }
+  shipMarkerEl.object3D.visible = true;
 }
 
 /* The fast-travel shortcut: re-anchor the tangent plane on this vessel and
@@ -6248,6 +7063,9 @@ function fitViewToShips() {
 }
 
 function recenterView() {
+  // snap turn leaves the rig facing wherever you left it; recentring is the
+  // one action that should reliably put the world back in front of you
+  rigEl.object3D.rotation.y = 0;
   worldEl.object3D.position.set(0, 0, 0);
   // no standing-back offset at globe zoom: up there the rig has to sit exactly
   // over the tangent point, and absorbRigMotionIntoGlobe() would read a 260
@@ -6317,16 +7135,19 @@ sceneEl.addEventListener('loaded', () => {
  * version, closer to the full sidebar list, did not. */
 const CONTROLS_HUD_TEXT =
   'CONTROLS\n\n' +
-  'Look: mouse-look / head-track\n' +
-  'Fly: WASD / R-stick\n' +
-  'Travel: click the sea or the\nplanet, or point + trigger\n' +
-  'Zoom: right-drag / wheel /\ngrip + pull / L-stick up-down\n' +
+  'R-stick up/down  move\n' +
+  'R-stick left/right  turn\n' +
+  'L-stick up/down  zoom\n' +
   '  one range, planet to 1:1\n' +
-  'Ship info: click / trigger\n' +
-  '  then ZOOM TO REAL SCALE\n' +
-  'Panel: M button / X on the\n  left controller\n' +
-  'Recentre: R / R button\n' +
-  'Back to the flat map: 2D';
+  'L-stick left/right  strafe\n' +
+  'L-stick click  fly / teleport\n' +
+  'Grip + pull  grab and zoom\n' +
+  'Both grips  drag and scale\n' +
+  'Trigger  select a vessel,\n  the sea, or the planet\n' +
+  '  then ZOOM TO REAL SCALE\n\n' +
+  'M  this panel and filters\n' +
+  'R  recentre    2D  the map\n\n' +
+  'desktop: WASD, right-drag or\nwheel to zoom, click to descend';
 document.getElementById('controls-hud-text').setAttribute('text', 'value', CONTROLS_HUD_TEXT);
 let controlsHudOpen = false;
 document.getElementById('controls-hud-toggle').addEventListener('click', () => {
@@ -6401,9 +7222,9 @@ function buildWristMenu() {
   let l = 0;
   makeWristHeading(-1, l++, 'VIEW');
   makeWristRow(-1, l++, {
-    text: () => 'CONES  ' + (coursesEnabled ? 'ON' : 'OFF'),
-    color: () => coursesEnabled ? '#3eff9a' : '#7a8099',
-    onClick: () => setCoursesEnabled(!coursesEnabled)
+    text: () => 'CONES  ' + conesMode.toUpperCase(),
+    color: () => conesMode === 'off' ? '#7a8099' : conesMode === 'all' ? '#ffb83e' : '#3eff9a',
+    onClick: () => setConesMode(CONE_MODES[(CONE_MODES.indexOf(conesMode) + 1) % CONE_MODES.length])
   });
   makeWristRow(-1, l++, {
     text: () => 'LOOKAHEAD  ' + lookaheadMin + ' min',
@@ -6417,6 +7238,11 @@ function buildWristMenu() {
     text: () => 'DENSITY  ' + (densityEnabled ? 'ON' : 'OFF'),
     color: () => densityEnabled ? '#3eff9a' : '#7a8099',
     onClick: () => setDensityEnabled(!densityEnabled)
+  });
+  makeWristRow(-1, l++, {
+    text: () => 'COMPASS  ' + (compassEnabled ? 'ON' : 'OFF'),
+    color: () => compassEnabled ? '#3eff9a' : '#7a8099',
+    onClick: () => { compassEnabled = !compassEnabled; updateCompass(); }
   });
 
   makeWristHeading(-1, l++, 'TIME');
@@ -6517,10 +7343,11 @@ function updateWristMenuButton() {
 /* ============================================================ */
 /* 3D view settings, shared with the sidebar                     */
 /* ============================================================ */
-function setCoursesEnabled(on) {
-  coursesEnabled = on;
-  document.getElementById('cones-toggle').checked = on;
+function setConesMode(mode) {
+  conesMode = CONE_MODES.indexOf(mode) >= 0 ? mode : 'alerts';
+  document.getElementById('cones-toggle').value = conesMode;
   refreshAllCones();
+  renderCpaMarkers();
   syncWristMenu();
 }
 function setLookahead(min) {
@@ -6530,7 +7357,7 @@ function setLookahead(min) {
   refreshAllCones();
   syncWristMenu();
 }
-document.getElementById('cones-toggle').addEventListener('change', e => setCoursesEnabled(e.target.checked));
+document.getElementById('cones-toggle').addEventListener('change', e => setConesMode(e.target.value));
 document.getElementById('lookahead-min').addEventListener('input', e => setLookahead(Number(e.target.value)));
 document.getElementById('density-toggle').addEventListener('change', e => setDensityEnabled(e.target.checked));
 document.getElementById('vr-zoom').addEventListener('input', e => {
@@ -6574,6 +7401,8 @@ function vrOnShown() {
 
 sceneEl.addEventListener('loaded', () => {
   initSky();
+  initVignette();
+  initCompass();
   buildWristMenu();
   setGlobeOrientation();
   initGlobe();
