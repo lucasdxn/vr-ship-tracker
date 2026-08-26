@@ -628,7 +628,7 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
            whatever the viewer is looking at, with a marker showing the current
            scrub position. Hidden entirely in LIVE mode. Click anywhere along
            it to seek there, same click-to-act pattern as click-teleport. -->
-      <a-entity id="timeline-rig" no-frustum-cull visible="false" position="0 -0.55 -1.3">
+      <a-entity id="timeline-rig" class="hud" no-frustum-cull visible="false" position="0 -0.55 -1.3">
         <a-box id="timeline-bar" class="clickable" timeline-seek
                width="1" height="0.05" depth="0.01"
                material="color: #1b2230; opacity: 0.9; shader: flat"></a-box>
@@ -652,7 +652,7 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
            button under it is the fast-travel shortcut required alongside
            manual zoom: it re-anchors the tangent-plane origin on that ship and
            drops the world scale straight to true size. -->
-      <a-entity id="ship-info-hud" no-frustum-cull visible="false" position="0.45 0.12 -1.05" scale="0.2 0.2 0.2">
+      <a-entity id="ship-info-hud" class="hud" no-frustum-cull visible="false" position="0.45 0.12 -1.05" scale="0.2 0.2 0.2">
         <a-plane width="3" height="1.5" position="0 -0.14 -0.01"
                  material="color: #0d0f14; opacity: 0.9; shader: flat; side: double"></a-plane>
         <a-entity id="ship-info-hud-text" position="0 0.14 0"
@@ -670,13 +670,13 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
            (both were keyboard-only before, i.e. unreachable in a headset), and
            "M" opens the wrist menu that carries every sidebar control that has
            a VR equivalent. -->
-      <a-box id="controls-hud-toggle" class="clickable" no-frustum-cull
+      <a-box id="controls-hud-toggle" class="clickable hud" no-frustum-cull
              width="0.14" height="0.14" depth="0.02" position="-0.285 0.46 -1"
              material="color: #131720; opacity: 0.88; shader: flat">
         <a-entity id="controls-hud-toggle-text" text="value: ?; align: center; baseline: center; width: 2; color: #3ea8ff"
                    position="0 0 0.011"></a-entity>
       </a-box>
-      <a-box id="recenter-toggle" class="clickable" no-frustum-cull
+      <a-box id="recenter-toggle" class="clickable hud" no-frustum-cull
              width="0.14" height="0.14" depth="0.02" position="0.095 0.46 -1"
              material="color: #131720; opacity: 0.88; shader: flat">
         <a-entity text="value: R; align: center; baseline: center; width: 2; color: #3ea8ff"
@@ -685,13 +685,13 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
       <!-- the way back to the flat map. The header's EXIT VR button is DOM, so
            inside a headset it does not exist - without this there is no way out
            of the immersive session except taking the headset off. -->
-      <a-box id="exit-vr-toggle" class="clickable" no-frustum-cull
+      <a-box id="exit-vr-toggle" class="clickable hud" no-frustum-cull
              width="0.14" height="0.14" depth="0.02" position="0.285 0.46 -1"
              material="color: #131720; opacity: 0.88; shader: flat">
         <a-entity text="value: 2D; align: center; baseline: center; width: 2; color: #ffb83e"
                    position="0 0 0.011"></a-entity>
       </a-box>
-      <a-box id="wrist-menu-toggle" class="clickable" no-frustum-cull
+      <a-box id="wrist-menu-toggle" class="clickable hud" no-frustum-cull
              width="0.14" height="0.14" depth="0.02" position="-0.095 0.46 -1"
              material="color: #131720; opacity: 0.88; shader: flat">
         <a-entity id="wrist-menu-toggle-text" text="value: M; align: center; baseline: center; width: 2; color: #3ea8ff"
@@ -701,7 +701,7 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
       <!-- controls reference. Kept small and close enough to read in one
            glance without turning your head - the first version (wider, further
            out) did not fit inside a real headset's FOV all at once. -->
-      <a-entity id="controls-hud" no-frustum-cull visible="false" position="-0.34 0 -1.1" scale="0.2 0.2 0.2">
+      <a-entity id="controls-hud" class="hud" no-frustum-cull visible="false" position="-0.34 0 -1.1" scale="0.2 0.2 0.2">
         <a-plane width="2.6" height="2.9" material="color: #0d0f14; opacity: 0.92; shader: flat; side: double"></a-plane>
         <a-entity id="controls-hud-text" position="0 0 0.011"
                    text="value: -; align: center; baseline: center; width: 2.3; wrapCount: 30; color: #e2e6f0; lineHeight: 55"></a-entity>
@@ -728,7 +728,7 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
            attached rather than controller-attached so that it behaves
            identically on a desktop screen, where there is no controller to
            hang it off. -->
-      <a-entity id="wrist-menu" no-frustum-cull visible="false" position="-0.22 -0.06 -0.95" scale="0.18 0.18 0.18">
+      <a-entity id="wrist-menu" class="hud" no-frustum-cull visible="false" position="-0.22 -0.06 -0.95" scale="0.18 0.18 0.18">
         <a-plane id="wrist-menu-bg" width="2.6" height="3.4" position="0 0 -0.006"
                  material="color: #0d0f14; opacity: 0.94; shader: flat; side: double"></a-plane>
         <a-entity id="wrist-menu-rows"></a-entity>
@@ -1179,6 +1179,7 @@ const ships = Fleet.list;
 let nextId = 1;
 let selectedShipId = null;   // String(id) of the singled-out ship, or null
 let hoveredShipId = null;    // 3D only: what a controller ray / mouse is pointing at right now
+let cardShipId = null;       // 3D only: what the detail card is about - stickier than hover, see refreshInfoDisplay()
 
 // Declared up here, ahead of the sections that own them, because code in this
 // first script block reads them: the animate() loop skips painting the canvas
@@ -4385,6 +4386,7 @@ AFRAME.registerComponent('click-teleport', {
       // huge plane) - without this the last thing every zoom drag did was also
       // teleport you to wherever you let go
       if (suppressNextOceanClick) { suppressNextOceanClick = false; return; }
+      if (hudUnderPointer()) return;
       const point = evt.detail && evt.detail.intersection && evt.detail.intersection.point;
       if (!point) return;
       const w = worldEl.object3D.position;
@@ -4713,6 +4715,30 @@ function setRaycastable(el, on) {
   el.classList.toggle('clickable', on);
   return true;
 }
+/* Is a head-up control the nearest thing under the pointer?
+ *
+ * The panels live a metre from the eye and the world is hundreds of units
+ * away, so this should never be in doubt - but a-frame's cursor picks a single
+ * element per intersection event using its own heuristics over newly
+ * intersected elements, and it can settle on the world behind a panel. When it
+ * does, pressing a button travels you to whatever was behind it instead, which
+ * is a strange and unrecoverable-feeling thing for a button to do.
+ *
+ * So the world asks first. The raycasters' own sorted intersection lists are
+ * the authority: if the nearest hit belongs to a panel, the world is not being
+ * clicked, whatever the cursor decided. */
+function hudUnderPointer() {
+  const rcs = document.querySelectorAll('[raycaster]');
+  for (let i = 0; i < rcs.length; i++) {
+    const comp = rcs[i].components && rcs[i].components.raycaster;
+    const hits = comp && comp.intersections;
+    if (!hits || !hits.length) continue;
+    const el = hits[0].object && hits[0].object.el;
+    if (el && el.closest && el.closest('.hud')) return true;
+  }
+  return false;
+}
+
 // the raycasters cache their target list and only rebuild it when the scene
 // graph changes, which a className change is not
 function refreshRaycasters() {
@@ -6053,7 +6079,7 @@ let dotHoverId = null;
 const _dotCentre = new THREE.Vector3();
 function updateGlobeDotHover() {
   let found = null;
-  if (vrLod === 'globe' && globeDotPicks) {
+  if (vrLod === 'globe' && globeDotPicks && !hudUnderPointer()) {
     /* Which vessel, when several pick targets overlap.
      *
      * The targets are deliberately much fatter than the dots they stand for,
@@ -6112,6 +6138,7 @@ function clickHoveredDot() {
 }
 
 globeDotsEl.addEventListener('click', (evt) => {
+  if (hudUnderPointer()) return;
   // stop the globe underneath treating it as a click on open water as well
   if (clickHoveredDot()) evt.stopPropagation();
 });
@@ -6133,6 +6160,7 @@ AFRAME.registerComponent('globe-click', {
   init: function () {
     this.el.addEventListener('click', (evt) => {
       if (suppressNextOceanClick) { suppressNextOceanClick = false; return; }
+      if (hudUnderPointer()) return;
       // a vessel under the pointer wins over the water behind it, whichever
       // element the cursor decided to send the click to
       if (clickHoveredDot()) return;
@@ -6232,6 +6260,7 @@ function vrRemoveShip(s) {
   s.el = null; s.label = null;
   if (hoveredShipId === s.id) hoveredShipId = null;
   if (selectedShipId === s.id) selectedShipId = null;
+  if (cardShipId === s.id) cardShipId = null;
   refreshInfoDisplay();
 }
 
@@ -6846,6 +6875,7 @@ function selectShip(id) {
 function clearSelection() {
   const prev = selectedShipId;
   selectedShipId = null;
+  cardShipId = null;          // clicking open water dismisses the card outright
   refreshConesFor(prev, hoveredShipId); refreshInfoDisplay();
 }
 function hoverShip(id) {
@@ -6860,14 +6890,33 @@ function unhoverShip(id) {
   refreshConesFor(selectedShipId, prev); refreshInfoDisplay();
 }
 
+/* Which vessel the card is about, which is deliberately stickier than what the
+ * pointer is on this instant.
+ *
+ * The card carries a button, and reaching for that button means pointing away
+ * from the ship - at which point a card driven by live hover has no subject
+ * any more, and pressing it does nothing at all. That is not a race to be
+ * tightened up; it happens every single time, because the button is never
+ * where the ship is.
+ *
+ * So the card remembers. Pointing at a vessel makes it the subject, pointing
+ * at another replaces it, and only dismissing it (clicking open water) or
+ * losing the vessel clears it. The button then always has something to act on,
+ * and the card stays readable while you look at it rather than blinking out
+ * the moment your aim drifts. */
 function refreshInfoDisplay() {
-  const id = hoveredShipId != null ? hoveredShipId : selectedShipId;
-  const s = id != null ? Fleet.get(id) : null;
+  const live = hoveredShipId != null ? hoveredShipId : selectedShipId;
+  if (live != null) cardShipId = live;
+  const s = cardShipId != null ? Fleet.get(cardShipId) : null;
   if (s) renderInfoPanel(s); else hideInfoPanel();
 }
 
 function hideInfoPanel() {
   document.getElementById('ship-info-hud').object3D.visible = false;
+  // an invisible button is still a raycast target - three tests layers, not
+  // visibility - so a dismissed card left one floating a metre in front of
+  // your face, quietly swallowing anything aimed through it
+  if (setRaycastable(document.getElementById('ship-zoom-btn'), false)) refreshRaycasters();
 }
 
 function renderInfoPanel(s) {
@@ -6882,6 +6931,7 @@ function renderInfoPanel(s) {
   ];
   document.getElementById('ship-info-hud-text').setAttribute('text', 'value', lines.join('\n'));
   document.getElementById('ship-info-hud').object3D.visible = true;
+  if (setRaycastable(document.getElementById('ship-zoom-btn'), true)) refreshRaycasters();
 }
 
 /* Where the selected vessel has been.
@@ -7003,9 +7053,9 @@ function zoomToRealScale(s) {
   selectShip(s.id);
   addLog('Zoomed to ' + (s.name || s.id) + ' at real scale');
 }
-document.getElementById('ship-zoom-btn').addEventListener('click', () => {
-  const id = hoveredShipId != null ? hoveredShipId : selectedShipId;
-  if (id != null) zoomToRealScale(Fleet.get(id));
+document.getElementById('ship-zoom-btn').addEventListener('click', (evt) => {
+  evt.stopPropagation();   // never let it reach the world behind the card
+  if (cardShipId != null) zoomToRealScale(Fleet.get(cardShipId));
 });
 
 // the 2D sidebar's "focus" action, but in 3D: clicking a vessel card while the
@@ -7020,7 +7070,10 @@ window.focusShip = function (id) {
 };
 
 /* clicking empty water clears the pin, same as clicking away from anything */
-oceanEl.addEventListener('click', () => { if (!suppressNextOceanClick) clearSelection(); });
+oceanEl.addEventListener('click', () => {
+  if (suppressNextOceanClick || hudUnderPointer()) return;
+  clearSelection();
+});
 
 /* ============================================================ */
 /* recentre and fit                                              */
