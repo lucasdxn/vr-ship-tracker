@@ -88,7 +88,7 @@ fileLog('---- relay session started ----');
 // replay. This is a second, separate append-only log, one JSON line per
 // message actually produced by any of the three providers: {ts, msg}, where
 // msg is the exact aisstream.io-shaped object the browser would have
-// received. vr_ship_tracker.html's playback mode reads this back through the
+// received. ship_tracker.html's playback mode reads this back through the
 // /api/history endpoint below.
 const HISTORY_LOG_PATH = path.join(__dirname, 'ais_message_log.jsonl');
 const HISTORY_LOG_MAX_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB - same truncate-on-overflow approach as stream_log.txt above
@@ -154,9 +154,11 @@ function scanHistoryLogBounds() {
 const STATIC_FILES = {
   '/':                         { file: 'ais_data_stream.html',    type: 'text/html; charset=utf-8' },
   '/ais_data_stream.html':     { file: 'ais_data_stream.html',    type: 'text/html; charset=utf-8' },
-  '/globe_ship_tracker.html':  { file: 'globe_ship_tracker.html', type: 'text/html; charset=utf-8' },
-  '/vr_ship_tracker.html':     { file: 'vr_ship_tracker.html',    type: 'text/html; charset=utf-8' },
   '/ship_tracker.html':        { file: 'ship_tracker.html',       type: 'text/html; charset=utf-8' },
+  // the globe and the VR view were two separate pages until they were merged
+  // into the one above; these keep old bookmarks and links working
+  '/globe_ship_tracker.html':  { file: 'ship_tracker.html',       type: 'text/html; charset=utf-8' },
+  '/vr_ship_tracker.html':     { file: 'ship_tracker.html',       type: 'text/html; charset=utf-8' },
 };
 
 const server = http.createServer((req, res) => {
@@ -225,9 +227,7 @@ const server = http.createServer((req, res) => {
     'Not found: ' + url + '\n\n' +
     'AIS relay is running.\n' +
     'UI:        http://localhost:' + PORT + '/\n' +
-    'Combined:  http://localhost:' + PORT + '/ship_tracker.html\n' +
-    'Globe:     http://localhost:' + PORT + '/globe_ship_tracker.html\n' +
-    'VR:        http://localhost:' + PORT + '/vr_ship_tracker.html\n' +
+    'Tracker:   http://localhost:' + PORT + '/ship_tracker.html\n' +
     'WebSocket: ws://localhost:' + PORT + '/v0/stream\n' +
     'History:   http://localhost:' + PORT + '/api/history?since=<ms>&until=<ms>\n' +
     'Upstream:  ' + UPSTREAM + '\n'
@@ -583,9 +583,7 @@ wss.on('connection', (client, req) => {
 server.listen(PORT, async () => {
   console.log('AIS relay listening on http://localhost:' + PORT + '/');
   console.log('  UI:        http://localhost:' + PORT + '/');
-  console.log('  Combined:  http://localhost:' + PORT + '/ship_tracker.html');
-  console.log('  Globe:     http://localhost:' + PORT + '/globe_ship_tracker.html');
-  console.log('  VR:        http://localhost:' + PORT + '/vr_ship_tracker.html');
+  console.log('  Tracker:   http://localhost:' + PORT + '/ship_tracker.html');
   console.log('  WebSocket: ws://localhost:' + PORT + '/v0/stream');
   console.log('  History:   http://localhost:' + PORT + '/api/history');
   console.log('Forwarding to ' + UPSTREAM);

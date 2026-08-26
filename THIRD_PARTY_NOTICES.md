@@ -8,10 +8,10 @@ third-party code and data. Their own licenses apply to their own files.
 | Component | How it's used | License |
 |---|---|---|
 | [ws](https://github.com/websockets/ws) 8.20.1 | npm dependency, bundled in `node_modules/ws` | MIT |
-| [A-Frame](https://aframe.io) 1.5.0 | Loaded from `aframe.io` CDN in `vr_ship_tracker.html` | MIT |
-| [d3](https://d3js.org) | Loaded from CDN in `globe_ship_tracker.html` | ISC |
-| [topojson-client](https://github.com/topojson/topojson-client) | Loaded from CDN in `globe_ship_tracker.html` | ISC |
-| [world-atlas](https://github.com/topojson/world-atlas) | Loaded from CDN in `globe_ship_tracker.html` | ISC |
+| [A-Frame](https://aframe.io) 1.5.0 | Loaded from `aframe.io` CDN in `ship_tracker.html` | MIT |
+| [d3](https://d3js.org) | Loaded from CDN in `ship_tracker.html` | ISC |
+| [topojson-client](https://github.com/topojson/topojson-client) | Loaded from CDN in `ship_tracker.html` | ISC |
+| [world-atlas](https://github.com/topojson/world-atlas) | Loaded from CDN in `ship_tracker.html` | ISC |
 
 ```
 d3, topojson-client, world-atlas
@@ -34,7 +34,7 @@ THIS SOFTWARE.
 ## Map data
 
 **[Natural Earth](https://www.naturalearthdata.com)** basemap vectors, loaded
-from CDN via `world-atlas`/`topojson` in `globe_ship_tracker.html`.
+from CDN via `world-atlas`/`topojson` in `ship_tracker.html`.
 Public domain — no permission or attribution required, per the Natural Earth
 terms of use.
 

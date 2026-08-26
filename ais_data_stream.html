@@ -176,8 +176,7 @@ main {
         It subscribes to the <code>ais-stream</code> BroadcastChannel and renders
         every PositionReport this page receives.
       </div>
-      <a class="btn-primary" id="open-globe" href="globe_ship_tracker.html" target="_blank" rel="noopener" style="display:inline-block; text-align:center; text-decoration:none;">Open globe tracker &rarr;</a>
-      <a class="btn-primary" id="open-vr" href="vr_ship_tracker.html" target="_blank" rel="noopener" style="display:inline-block; text-align:center; text-decoration:none; margin-top: var(--space-2);">Open VR tracker &rarr;</a>
+      <a class="btn-primary" id="open-globe" href="ship_tracker.html" target="_blank" rel="noopener" style="display:inline-block; text-align:center; text-decoration:none;">Open tracker &rarr;</a>
     </div>
 
     <div class="panel">
@@ -202,7 +201,7 @@ main {
       <div class="modal-sub">
         Live ship tracking. Positions are published on the
         <code>ais-stream</code> BroadcastChannel for any other tab on this origin
-        (e.g. the <a href="globe_ship_tracker.html" target="_blank" rel="noopener">globe tracker</a>) to consume.
+        (e.g. the <a href="ship_tracker.html" target="_blank" rel="noopener">tracker</a>) to consume.
         <br><br>
         <b>Start the local relay first:</b> <code>npm install &amp;&amp; node relay.js</code>
       </div>
@@ -303,7 +302,7 @@ main {
  */
 
 /* BroadcastChannel: any tab subscribing to 'ais-stream' on this origin gets
- * every PositionReport this page receives. globe_ship_tracker.html is the
+ * every PositionReport this page receives. ship_tracker.html is the
  * intended consumer - that's the actual 3D globe visualization. this page
  * here is "just" the connection manager plus a live text log. */
 const bc = new BroadcastChannel('ais-stream');

@@ -10,7 +10,7 @@ RUN npm install --omit=dev
 
 # Copy application sources (HTML pages, relay).
 COPY relay.js ./
-COPY ais_data_stream.html globe_ship_tracker.html vr_ship_tracker.html ./
+COPY ais_data_stream.html ship_tracker.html ./
 
 # relay.js reads PORT from the environment; host on 8080.
 ENV PORT=8080

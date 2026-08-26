@@ -15,27 +15,31 @@ Then open `http://localhost:3333/`. Pick a data source in the connect modal —
 see [Data sources](#data-sources) below for what each one needs.
 
 - `ais_data_stream.html` — connection manager + live event log
-- `ship_tracker.html` — the tracker: flat 2D globe and 3D/VR scene in one page,
-  switchable from the header, with **ENTER VR** for a WebXR headset session
-- `globe_ship_tracker.html` — the earlier standalone 2D globe
-- `vr_ship_tracker.html` — the earlier standalone VR view
+- `ship_tracker.html` — the tracker
 
-All of them run on the same origin (served by `relay.js`) and share live data
-over a `BroadcastChannel`.
+Both run on the same origin (served by `relay.js`) and share live data over a
+`BroadcastChannel`. (The old `globe_ship_tracker.html` and
+`vr_ship_tracker.html` were merged into the tracker; those URLs still serve it.)
 
-### The combined tracker
+### The tracker
 
-`ship_tracker.html` merges the two earlier pages onto one shared vessel
-registry: one `BroadcastChannel` listener, one set of filters, one playback
-clock, painted by three renderers (the 2D canvas, the globe's dot cloud, and
-true-scale 3D hulls). Whichever is off screen keeps its state current, so
-switching views is instant rather than a reload.
+There is one map. **ENTER VR** puts the view you are already looking at into a
+headset, at the same place and the same zoom, and brings it back where you left
+it — there is no separate "3D mode" to find first, and no second page.
 
-The 3D side has a single continuous zoom running from the whole planet down to
-standing on the water beside a hull — no modes, no jumps. The sphere becomes a
-flat sea automatically once the earth's curvature stops being visible, and the
-sea is re-centred under you every frame, so there is no edge to reach at any
-zoom or distance.
+Clicking is how you go deeper: click a vessel or a patch of sea and the view
+descends a rung, on the flat map and in the headset alike. The zoom is one
+continuous range from the whole planet down to standing on the water beside a
+hull. The sphere becomes a flat sea automatically once the earth's curvature
+stops being visible, and the sea is re-centred under you every frame, so there
+is no edge to reach at any zoom or distance.
+
+Everything is drawn from one shared vessel registry: one `BroadcastChannel`
+listener, one set of filters, one playback clock, painted by three renderers
+(the flat canvas, the globe's dot cloud, and true-scale 3D hulls). Whichever is
+off screen keeps its state current, so switching is instant rather than a
+reload. The coastline is the same `world-atlas` / Natural Earth data in both,
+at the same detail tier.
 
 Inside a headset no DOM renders at all, so the controls that matter there are
 built as in-scene panels: a wrist menu (the **M** button, or X on the left
