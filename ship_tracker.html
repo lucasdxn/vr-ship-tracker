@@ -650,19 +650,28 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
            "M" opens the wrist menu that carries every sidebar control that has
            a VR equivalent. -->
       <a-box id="controls-hud-toggle" class="clickable" no-frustum-cull
-             width="0.14" height="0.14" depth="0.02" position="-0.19 0.46 -1"
+             width="0.14" height="0.14" depth="0.02" position="-0.285 0.46 -1"
              material="color: #131720; opacity: 0.88; shader: flat">
         <a-entity id="controls-hud-toggle-text" text="value: ?; align: center; baseline: center; width: 2; color: #3ea8ff"
                    position="0 0 0.011"></a-entity>
       </a-box>
       <a-box id="recenter-toggle" class="clickable" no-frustum-cull
-             width="0.14" height="0.14" depth="0.02" position="0.19 0.46 -1"
+             width="0.14" height="0.14" depth="0.02" position="0.095 0.46 -1"
              material="color: #131720; opacity: 0.88; shader: flat">
         <a-entity text="value: R; align: center; baseline: center; width: 2; color: #3ea8ff"
                    position="0 0 0.011"></a-entity>
       </a-box>
+      <!-- the way back to the flat map. The header's EXIT VR button is DOM, so
+           inside a headset it does not exist - without this there is no way out
+           of the immersive session except taking the headset off. -->
+      <a-box id="exit-vr-toggle" class="clickable" no-frustum-cull
+             width="0.14" height="0.14" depth="0.02" position="0.285 0.46 -1"
+             material="color: #131720; opacity: 0.88; shader: flat">
+        <a-entity text="value: 2D; align: center; baseline: center; width: 2; color: #ffb83e"
+                   position="0 0 0.011"></a-entity>
+      </a-box>
       <a-box id="wrist-menu-toggle" class="clickable" no-frustum-cull
-             width="0.14" height="0.14" depth="0.02" position="0 0.46 -1"
+             width="0.14" height="0.14" depth="0.02" position="-0.095 0.46 -1"
              material="color: #131720; opacity: 0.88; shader: flat">
         <a-entity id="wrist-menu-toggle-text" text="value: M; align: center; baseline: center; width: 2; color: #3ea8ff"
                    position="0 0 0.011"></a-entity>
@@ -3727,7 +3736,9 @@ const vrSceneEl = document.querySelector('a-scene');
  * canvas scale 1, and a harbour at canvas scale 1400 - and logarithmic in
  * between, which is what makes a step of zoom feel like the same amount of
  * descent whichever renderer is drawing it. */
-const VIEW_SYNC_EXP = 1.237;   // ln(alt range) / ln(scale range), for the calibration above
+// VIEW_SYNC_EXP is declared with the zoom constants further down, next to the
+// MAX_ALT_M it is derived from - a top-level const cannot read one that has not
+// been evaluated yet, and these two functions only need it at call time.
 
 function altForCanvasScale(sc) {
   return clampAlt(MAX_ALT_M * Math.pow(Math.max(MIN_SCALE, sc), -VIEW_SYNC_EXP));
@@ -4316,14 +4327,43 @@ AFRAME.registerComponent('click-teleport', {
  * stays meaningful at both ends. "How high am I" answers itself on the way
  * down, and it is what the nav readout can honestly print. */
 const EARTH_R_M = 6371000;
-const GLOBE_SCENE_RADIUS = 300;   // how many scene units the whole planet spans at full zoom-out
 const RIG_SCENE_Y = 220;          // eye height in scene units while the world is still being scaled
 
-const MIN_WORLD_SCALE = GLOBE_SCENE_RADIUS / EARTH_R_M;  // ~4.7e-5
+/* How big the planet is at full zoom-out, and therefore how far out you can
+ * go. This is not a free choice - it decides whether the planet is visible at
+ * all in a headset.
+ *
+ * The planet is always directly beneath the viewer (that is what keeps the
+ * zoom continuous and the sphere-to-sea handover seamless), so how much of it
+ * a level head can see depends entirely on how much of the lower hemisphere it
+ * fills: the top of its limb sits 90 - asin(R/(R+h)) degrees below the
+ * horizon. At a 300-unit radius with a 220-unit eye height that is 55 degrees
+ * down - and on a flat screen the camera's own pitch made up the difference,
+ * but in VR there is no such pitch to apply (a fixed offset on a head-tracked
+ * camera tilts the world relative to the viewer's inner ear, which is how you
+ * make people ill). The result in a headset was a black screen with the whole
+ * planet underfoot.
+ *
+ * At 2000 units the limb rises to 26 degrees below the horizon, which is
+ * comfortably inside a level field of view - you get a big curved earth ahead
+ * and below, the view from low orbit, rather than a marble at your feet. The
+ * trade is that "fully zoomed out" is now about 700 km up rather than 4700:
+ * a horizon-to-horizon 3000 km of ocean instead of the whole globe. The flat
+ * map is the whole-globe view, and it is one button away. */
+const GLOBE_SCENE_RADIUS = 2000;
+
+const MIN_WORLD_SCALE = GLOBE_SCENE_RADIUS / EARTH_R_M;  // ~3.1e-4
 const MAX_WORLD_SCALE = 1;                               // true scale; below the cap, the viewer descends instead
-const MAX_ALT_M = RIG_SCENE_Y / MIN_WORLD_SCALE;         // ~4670 km - whole planet in frame
+const MAX_ALT_M = RIG_SCENE_Y / MIN_WORLD_SCALE;         // ~700 km - the whole North Sea and then some
 const MIN_ALT_M = 1.6;                                   // standing on the water
-const DEFAULT_ALT_M = MAX_ALT_M;                          // the page opens on the planet
+const DEFAULT_ALT_M = MAX_ALT_M;                          // the 3D view opens as far out as it goes
+
+/* The exponent tying the flat map's zoom to this one (see altForCanvasScale()).
+ * Calibrated at the two ends of the range - the whole map at canvas scale 1,
+ * and a harbour at 1400 - and derived rather than written down, so moving
+ * either end cannot silently put the two cameras out of step. */
+const HARBOUR_SCALE = 1400, HARBOUR_ALT_M = 600;
+const VIEW_SYNC_EXP = Math.log(MAX_ALT_M / HARBOUR_ALT_M) / Math.log(HARBOUR_SCALE);
 
 /* The sphere/plane swap, with the same adopt/drop hysteresis pair the 2D
  * renderer uses on its coastline tiers: a single threshold makes the surface
@@ -4517,7 +4557,7 @@ function applyLodVisibility() {
  * the viewer's inner ear, which is the classic recipe for making people ill;
  * in VR, looking down is something you do with your neck. */
 const TILT_FLAT_DEG = -26;
-const TILT_GLOBE_DEG = -70;   // the planet is directly below the viewer at globe zoom, so this is most of the way to looking down at it
+const TILT_GLOBE_DEG = -45;   // the planet's limb sits ~26 deg below the horizon at full zoom-out; this centres the band between there and straight down
 function updateCameraTilt() {
   const deg = sceneEl.is('vr-mode') ? 0 : (vrLod === 'globe' ? TILT_GLOBE_DEG : TILT_FLAT_DEG);
   document.getElementById('camera-tilt').setAttribute('rotation', { x: deg, y: 0, z: 0 });
@@ -5404,16 +5444,26 @@ function setGlobeOrientation() {
   globeEl.object3D.position.set(0, -EARTH_R_M, 0);
 }
 
+/* The sphere is built first and textured afterwards, rather than awaiting the
+ * basemap and building both at the end. A fetch that fails is handled inside
+ * buildGlobeTexture(); a fetch that simply never answers is not - and that
+ * would leave this function suspended forever with no planet in the scene at
+ * all, which from inside a headset is indistinguishable from the renderer
+ * being broken. A plain blue sphere that is there is worth more than a
+ * detailed one that might be. */
 async function initGlobe() {
-  const texture = await buildGlobeTexture();
   const mesh = new THREE.Mesh(
     new THREE.SphereGeometry(EARTH_R_M, GLOBE_SEGMENTS, GLOBE_SEGMENTS),
-    new THREE.MeshBasicMaterial({ map: texture })
+    new THREE.MeshBasicMaterial({ color: SEA_FILL })
   );
   globeEl.setObject3D('globe-sphere', mesh);
   globeSphereReady = true;
   setGlobeOrientation();
   rebuildGlobeDots();
+
+  mesh.material.map = await buildGlobeTexture();
+  mesh.material.color.set('#ffffff');   // the tint was standing in for the map; let it through now
+  mesh.material.needsUpdate = true;
   updateGlobeTexture();
 }
 
@@ -6213,6 +6263,13 @@ function recenterView() {
   addLog('Recentred the 3D view');
 }
 document.getElementById('recenter-toggle').addEventListener('click', recenterView);
+/* Leaves the headset session, which drops back onto the flat map at whatever
+ * place and zoom you got to (see the exit-vr handler). If we are not actually
+ * in a session - the 3D view on a desktop screen - there is nothing to exit,
+ * so switch the view directly. */
+document.getElementById('exit-vr-toggle').addEventListener('click', () => {
+  if (sceneEl.is('vr-mode')) sceneEl.exitVR(); else setView('2d');
+});
 document.getElementById('btn-vr-recenter').addEventListener('click', recenterView);
 document.getElementById('btn-vr-globe').addEventListener('click', () => {
   setViewAlt(MAX_ALT_M);
@@ -6268,7 +6325,8 @@ const CONTROLS_HUD_TEXT =
   'Ship info: click / trigger\n' +
   '  then ZOOM TO REAL SCALE\n' +
   'Panel: M button / X on the\n  left controller\n' +
-  'Recentre: R / R button';
+  'Recentre: R / R button\n' +
+  'Back to the flat map: 2D';
 document.getElementById('controls-hud-text').setAttribute('text', 'value', CONTROLS_HUD_TEXT);
 let controlsHudOpen = false;
 document.getElementById('controls-hud-toggle').addEventListener('click', () => {
