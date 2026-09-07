@@ -475,6 +475,7 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
   <div class="view-overlay">
     <div class="scale-switch" id="scale-switch">
       <button class="scale-btn" data-scale="1" title="Whole earth">GLOBE</button>
+      <button class="scale-btn" data-scale="4" title="Continent — roughly 5000 km across">CONTINENT</button>
       <button class="scale-btn" data-scale="14" title="Sea area — roughly 1600 km across">AREA</button>
       <button class="scale-btn" data-scale="140" title="Region — roughly 160 km across">REGION</button>
       <button class="scale-btn" data-scale="1400" title="Harbour / strait — roughly 16 km across, vessels near true scale">HARBOUR</button>
@@ -603,7 +604,7 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
      scene to be multiview-aware, and a-frame's SDF text is a custom
      ShaderMaterial - every HUD panel, ship label and wrist-menu row in here is
      text. Worth revisiting only with a headset to hand to confirm it. -->
-<a-scene embedded xr-mode-ui="enabled: false"
+<a-scene embedded tracker-loop xr-mode-ui="enabled: false"
          renderer="highRefreshRate: true; foveationLevel: 1; anisotropy: 8"
          background="color: #04070c" fog="type: linear; color: #16324a; near: 17000; far: 40000">
   <a-assets></a-assets>
@@ -671,13 +672,13 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
            "M" opens the wrist menu that carries every sidebar control that has
            a VR equivalent. -->
       <a-box id="controls-hud-toggle" class="clickable hud" no-frustum-cull
-             width="0.14" height="0.14" depth="0.02" position="-0.285 0.46 -1"
+             width="0.14" height="0.14" depth="0.02" position="-0.475 0.46 -1"
              material="color: #131720; opacity: 0.88; shader: flat">
         <a-entity id="controls-hud-toggle-text" text="value: ?; align: center; baseline: center; width: 2; color: #3ea8ff"
                    position="0 0 0.011"></a-entity>
       </a-box>
       <a-box id="recenter-toggle" class="clickable hud" no-frustum-cull
-             width="0.14" height="0.14" depth="0.02" position="0.095 0.46 -1"
+             width="0.14" height="0.14" depth="0.02" position="-0.095 0.46 -1"
              material="color: #131720; opacity: 0.88; shader: flat">
         <a-entity text="value: R; align: center; baseline: center; width: 2; color: #3ea8ff"
                    position="0 0 0.011"></a-entity>
@@ -685,14 +686,22 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
       <!-- the way back to the flat map. The header's EXIT VR button is DOM, so
            inside a headset it does not exist - without this there is no way out
            of the immersive session except taking the headset off. -->
-      <a-box id="exit-vr-toggle" class="clickable hud" no-frustum-cull
+      <!-- flat map on a screen, or the world at true scale. The label says
+           where pressing it takes you, not where you are. -->
+      <a-box id="map-mode-toggle" class="clickable hud" no-frustum-cull
              width="0.14" height="0.14" depth="0.02" position="0.285 0.46 -1"
+             material="color: #131720; opacity: 0.88; shader: flat">
+        <a-entity id="map-mode-toggle-text" text="value: 3D; align: center; baseline: center; width: 2; color: #3eff9a"
+                   position="0 0 0.011"></a-entity>
+      </a-box>
+      <a-box id="exit-vr-toggle" class="clickable hud" no-frustum-cull
+             width="0.14" height="0.14" depth="0.02" position="0.475 0.46 -1"
              material="color: #131720; opacity: 0.88; shader: flat">
         <a-entity text="value: 2D; align: center; baseline: center; width: 2; color: #ffb83e"
                    position="0 0 0.011"></a-entity>
       </a-box>
       <a-box id="wrist-menu-toggle" class="clickable hud" no-frustum-cull
-             width="0.14" height="0.14" depth="0.02" position="-0.095 0.46 -1"
+             width="0.14" height="0.14" depth="0.02" position="-0.285 0.46 -1"
              material="color: #131720; opacity: 0.88; shader: flat">
         <a-entity id="wrist-menu-toggle-text" text="value: M; align: center; baseline: center; width: 2; color: #3ea8ff"
                    position="0 0 0.011"></a-entity>
@@ -794,6 +803,15 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
          double as a teleport target when clicked. -->
     <a-entity id="beacons"></a-entity>
   </a-entity>
+
+  <!-- The flat map, in the headset.
+       A curved screen carrying the 2D renderer's own canvas as a texture, with
+       the pointer mapped back onto it - so the whole of that renderer works in
+       here, coastline tiers, labels, silhouettes, wakes and all, rather than
+       being reimplemented in 3D. Built in JS (see the map-panel section) since
+       it is a cylindrical segment with flipped UVs, which no a-frame primitive
+       expresses. -->
+  <a-entity id="map-panel" class="clickable" visible="false"></a-entity>
 
   <!-- Eight-point compass, world-locked at the viewer's own height and carried
        along with them. Over open water at true scale there is nothing else to
@@ -1187,6 +1205,7 @@ let cardShipId = null;       // 3D only: what the detail card is about - stickie
 // messages while playback owns the registry. Both are assigned from the
 // later blocks that actually implement them.
 let activeView = '2d';       // '2d' | 'vr'   - see setView()
+let mapPanelActive = false;  // is the flat map being shown as a screen in the headset? - see setMapPanelActive()
 let playbackMode = false;    //               - see setPlaybackMode()
 let vrVisibilityDirty = true; // 3D twin of visibleShipsDirty, cleared on its own frame
 
@@ -1268,6 +1287,20 @@ let sidebarDirty = true;
 
 const canvas = document.getElementById('globe-canvas');
 const container = document.getElementById('globe-container');
+
+/* The size of the surface the map is drawn on, in logical pixels.
+ *
+ * Normally that is simply the container - the map fills the window. But the
+ * same renderer also feeds a panel inside the headset (see the map-panel
+ * section of the 3D block), and there the right resolution has nothing to do
+ * with the browser window sitting behind it: it is however many pixels the
+ * panel subtends in the headset's own optics. So the size is indirected
+ * through these two, and everything that lays the map out - the projection,
+ * the canvas backing store, hit-testing, the scale bar - asks them rather than
+ * the DOM. */
+let mapSurface = null;   // { w, h } while the panel owns the size, else null
+function surfaceW() { return mapSurface ? mapSurface.w : container.clientWidth; }
+function surfaceH() { return mapSurface ? mapSurface.h : container.clientHeight; }
 const ctx = canvas.getContext('2d');
 const tooltip = document.getElementById('tooltip');
 
@@ -1300,13 +1333,13 @@ function smoothstep(a, b, x) {
   return t * t * (3 - 2 * t);
 }
 function globeRadiusPx() {
-  return Math.min(container.clientWidth, container.clientHeight) / 2 * 0.85 * scale;
+  return Math.min(surfaceW(), surfaceH()) / 2 * 0.85 * scale;
 }
 // Near the centre of an orthographic projection the scale distortion is
 // negligible, so one constant km/px is accurate enough for a scale bar and
 // for sizing hulls in the region view.
 function kmPerPixel() { return EARTH_R_KM / globeRadiusPx(); }
-function viewSpanKm() { return container.clientWidth * kmPerPixel(); }
+function viewSpanKm() { return surfaceW() * kmPerPixel(); }
 function detailLevel() { return smoothstep(DETAIL_START, DETAIL_FULL, scale); }
 function isRegionView() { return scale >= DETAIL_START; }
 
@@ -1329,7 +1362,7 @@ function graticuleStepForSpan(spanKm) {
 }
 
 function updateProjection() {
-  const w = container.clientWidth, h = container.clientHeight;
+  const w = surfaceW(), h = surfaceH();
   const r = Math.min(w, h) / 2 * 0.85 * scale;
   projection = d3.geoOrthographic()
     .scale(r)
@@ -1383,8 +1416,9 @@ function stepCamera(dtMs) {
 function cancelCameraFlight() { camAnim = null; }
 
 function resize() {
-  const dpr = window.devicePixelRatio || 1;
-  const w = container.clientWidth, h = container.clientHeight;
+  // the panel supplies its own pixels; no device ratio to honour there
+  const dpr = mapSurface ? 1 : (window.devicePixelRatio || 1);
+  const w = surfaceW(), h = surfaceH();
   canvas.width = w * dpr;
   canvas.height = h * dpr;
   canvas.style.width = w + 'px';
@@ -2006,7 +2040,7 @@ function drawMapLabels() {
 
 function drawGlobe() {
   updateProjection();
-  const w = container.clientWidth, h = container.clientHeight;
+  const w = surfaceW(), h = surfaceH();
   const r = Math.min(w, h) / 2 * 0.85 * scale;
   const cx = w/2, cy = h/2;
   ctx.clearRect(0, 0, w, h);
@@ -2578,7 +2612,7 @@ function drawShipLabel(x, y, ship) {
   ctx.font = '600 11px Inter, sans-serif';
   ctx.textBaseline = 'middle';
   const padX = 7, h = 20, tw = ctx.measureText(text).width, w = tw + padX * 2;
-  const cw = container.clientWidth, ch = container.clientHeight;
+  const cw = surfaceW(), ch = surfaceH();
   let lx = x + 18, ly = y - h / 2;
   if (lx + w > cw) lx = x - 18 - w;     // flip to the left near the right edge
   if (ly < 2) ly = 2;
@@ -2618,8 +2652,8 @@ function flushShipLabels() {
 }
 
 function draw(tms) {
-  viewW = container.clientWidth;
-  viewH = container.clientHeight;
+  viewW = surfaceW();
+  viewH = surfaceH();
   curDetail = detailLevel();
   curKmPerPx = kmPerPixel();
   labelBudget = MAX_REGION_LABELS;
@@ -2870,7 +2904,7 @@ let tapCandidate = null;      // down-point of a potential tap (cleared once it 
  * under the pointer - a vessel if there was one, otherwise that patch of sea.
  * The same ladder is used in the 3D scene (see stepZoomInAt()), so a click
  * means the same thing and travels the same distance in both. */
-const ZOOM_TIERS = [1, 14, 140, 1400];
+const ZOOM_TIERS = [1, 4, 14, 140, 1400];
 function nextZoomTier(from) {
   for (const t of ZOOM_TIERS) if (t > from * 1.05) return t;
   return Math.min(MAX_SCALE, from * 2.5);   // past the last preset, keep stepping
@@ -3058,7 +3092,7 @@ function activeScaleBtn() {
     const d = Math.abs(Math.log(scale / parseFloat(b.dataset.scale)));
     if (d < bestD) { bestD = d; best = b; }
   }
-  return bestD < 0.9 ? best : null;   // no rung claimed when between them
+  return bestD < 0.6 ? best : null;   // no rung claimed when between them
 }
 
 document.getElementById('region-jump').addEventListener('change', e => {
@@ -3079,7 +3113,7 @@ canvas.addEventListener('dblclick', e => {
   e.preventDefault();
   const [mx, my] = canvasXY(e.clientX, e.clientY);
   const target = projection && projection.invert ? projection.invert([mx, my]) : null;
-  const next = scale < 12 ? 14 : scale < 120 ? 140 : scale < 1200 ? 1400 : MAX_SCALE;
+  const next = nextZoomTier(scale);
   if (target) flyTo({ lat: target[1], lon: target[0], scale: next, ms: 850 });
   else flyTo({ scale: next, ms: 850 });
 });
@@ -3200,8 +3234,20 @@ function addLog(msg) {
 
 let last = 0;
 let chipAccum = 0;
-function animate(ts) {
-  requestAnimationFrame(animate);
+/* One frame of the flat renderer.
+ *
+ * Not self-scheduling, and deliberately not driven by window.requestAnimation-
+ * Frame: that stops being called the moment an immersive WebXR session starts,
+ * because the headset drives frames through XRSession.requestAnimationFrame
+ * instead. A window-rAF loop therefore runs perfectly on a desktop, runs
+ * perfectly in a-frame's flat "vr-mode" preview - and silently stops the
+ * instant you put the headset on, which is the worst possible failure mode
+ * because nothing errors and every test on a laptop passes.
+ *
+ * Everything per-frame in this page now hangs off one a-frame component tick
+ * (see tracker-loop), which rides three's setAnimationLoop and follows the
+ * session wherever it goes. */
+function animateFrame(ts) {
   const dt = Math.min((ts - last) / 1000, 0.1);
   last = ts;
   pulse = (Math.sin(ts / 500) + 1) / 2;
@@ -3215,7 +3261,9 @@ function animate(ts) {
   // also has zero size while display:none, which would divide by zero all
   // through the projection math.
   simulateShips(dt);
-  if (activeView === '2d') {
+  // the map panel in the headset is this same canvas, so the flat renderer
+  // keeps running whenever either of them is on screen
+  if (activeView === '2d' || mapPanelActive) {
     draw(ts);
     // The chip only has to keep up with the eye, not the frame rate.
     chipAccum += dt;
@@ -3771,7 +3819,6 @@ setInterval(() => {
 // reflowing ~150 cards into a DOM no one is looking at.
 setInterval(() => { if (!document.hidden) renderSidebar(); }, 2000);
 
-requestAnimationFrame(animate);
 </script>
 
 <!-- ============================================================ -->
@@ -3848,7 +3895,9 @@ function setView(view) {
   appEl.classList.toggle('vr-view', view === 'vr');
   document.getElementById('stat-scale-wrap').style.display = view === 'vr' ? '' : 'none';
   if (view === '2d') {
-    syncCanvasFromScene();
+    // hand the canvas back to the window before reading anything off it
+    applyMapPanel();
+    if (!mapPanelWanted) syncCanvasFromScene();
     cancelCameraFlight();
     // the canvas had zero size while hidden, so every cached pixel dimension
     // in the projection is stale - resize() re-reads the container and the
@@ -3856,6 +3905,11 @@ function setView(view) {
     resize();
     updateProjection();
   } else {
+    applyMapPanel();
+    // Whichever way the 3D view opens, the map is the thing that carried the
+    // position across from the flat page - so the world follows it, never the
+    // reverse. Syncing the other way here is what made the screen open on the
+    // whole globe no matter where you had just been looking.
     syncSceneFromCanvas();
     // a-frame sizes its canvas from the container, which was display:none and
     // therefore 0x0 until a moment ago. resize is debounced internally, so
@@ -3886,7 +3940,12 @@ enterVrBtn.addEventListener('click', () => {
     if (pr && pr.catch) pr.catch(err => addLog('No headset session (' + (err && err.message || err) + ') - showing the 3D view on screen'));
   });
 });
-vrSceneEl.addEventListener('enter-vr', () => { syncEnterVrButton(); updateCameraTilt(); });
+vrSceneEl.addEventListener('enter-vr', () => {
+  syncEnterVrButton(); updateCameraTilt();
+  // the standing pose only exists once a session does; put the screen where the
+  // viewer actually is rather than where the flat preview guessed
+  if (typeof placeMapPanel === 'function' && mapPanelActive) placeMapPanel();
+});
 vrSceneEl.addEventListener('exit-vr', () => {
   syncEnterVrButton(); updateCameraTilt();
   // leaving the headset drops you back onto the map where you got to, rather
@@ -4078,16 +4137,14 @@ function setPlaying(v) {
   syncWristMenu();
 }
 
-function playbackTick(now) {
+function playbackFrame(now) {
   if (playbackMode && playing && windowMessages.length) {
     if (lastPlaybackFrameTime != null) {
       advancePlayback(playbackClock + (now - lastPlaybackFrameTime) * playbackSpeed);
     }
     lastPlaybackFrameTime = now;
   }
-  requestAnimationFrame(playbackTick);
 }
-requestAnimationFrame(playbackTick);
 
 function setPlaybackMode(on) {
   playbackMode = on;
@@ -4706,8 +4763,10 @@ function applyLodVisibility() {
  * both ends, a single angle close to the framing angle frames both. */
 const TILT_DEG = -27;
 function updateCameraTilt() {
-  document.getElementById('camera-tilt').setAttribute(
-    'rotation', { x: sceneEl.is('vr-mode') ? 0 : TILT_DEG, y: 0, z: 0 });
+  // no pitch in a headset (the neck owns that), and none while a flat screen
+  // is what is on show - you look straight at a screen
+  const deg = (sceneEl.is('vr-mode') || mapPanelActive) ? 0 : TILT_DEG;
+  document.getElementById('camera-tilt').setAttribute('rotation', { x: deg, y: 0, z: 0 });
 }
 
 function setRaycastable(el, on) {
@@ -4902,6 +4961,7 @@ function updateTwoHandGrab(pl, pr) {
 
 const _handL = new THREE.Vector3(), _handR = new THREE.Vector3();
 function updateVrGrab() {
+  if (mapPanelActive) return;   // the panel owns the controls while it is up
   const gripL = buttonPressed(handGamepad(handLeftEl), 1);
   const gripR = buttonPressed(handGamepad(handRightEl), 1);
 
@@ -4960,7 +5020,7 @@ function updateVrGrab() {
 // the moment your ray misses the world (pointing at empty sky past the edge of
 // the planet, for one).
 function updateStickZoom(dt) {
-  if (dt <= 0 || vrGrabHand) return;
+  if (dt <= 0 || vrGrabHand || mapPanelActive) return;
   const stick = thumbstickAxes(handGamepad(handLeftEl));
   if (Math.abs(stick.y) < STICK_DEADZONE) return;
   setViewAlt(viewAltM * Math.exp(stick.y * STICK_ZOOM_RATE * dt), viewAnchor());
@@ -5177,7 +5237,7 @@ function initCompass() {
 }
 
 function updateCompass() {
-  const on = compassEnabled;
+  const on = compassEnabled && !mapPanelActive;
   compassEl.object3D.visible = on;
   if (!on) return;
   const rig = rigEl.object3D.position;
@@ -5648,7 +5708,7 @@ function updateOceanTiling() {
 
 let lastNavFrameTime = null;
 let lastCullAt = 0;
-function navTick(now) {
+function navTickFrame(now) {
   const dt = lastNavFrameTime != null ? Math.min(0.1, (now - lastNavFrameTime) / 1000) : 0;
   lastNavFrameTime = now;
 
@@ -5663,11 +5723,20 @@ function navTick(now) {
   updateShipSmoothing(dt);
   updateVignette(dt);
   updateCompass();
+  updateMapPanelFollow(dt);
+  updateMapPanelPointer();
+  updateMapPanelZoom(dt);
+  updateMapPanelTexture(now);
   // the distance cull is only as current as the last pass, and the viewer is
   // free to fly away from what it decided; re-run it on a slow tick
   if (now - lastCullAt > CULL_REFRESH_MS) { lastCullAt = now; vrVisibilityDirty = true; }
   if (activeView === 'vr') {
-    syncCanvasFromScene();
+    // Whichever renderer is on screen owns the camera, and the other one is
+    // brought into step when you switch (see setMapPanelActive). Syncing every
+    // frame regardless would mean the world quietly overwriting the map's
+    // position as fast as you could drag it - the map would simply refuse to
+    // move.
+    if (!mapPanelActive) syncCanvasFromScene();
     // the basemap tier loader and the sticky coastline tier both key off the
     // canvas scale, so this is what pulls finer coastlines down as you descend
     // in the headset - and what makes the sea and the planet repaint when they
@@ -5685,9 +5754,24 @@ function navTick(now) {
     updateSelectedTrail();
   }
   if (vrVisibilityDirty) { applyVrVisibility(); vrVisibilityDirty = false; }
-
-  requestAnimationFrame(navTick);
 }
+
+/* The single clock for the whole page.
+ *
+ * A-frame ticks its components from three's setAnimationLoop, which switches
+ * itself over to the XR session's own frame callback when a session begins -
+ * so this keeps running inside the headset, where window.requestAnimationFrame
+ * does not. Everything that used to schedule itself is called from here, in
+ * the order the frame needs: the flat renderer first (the 3D map panel is a
+ * texture of its canvas, so it has to be painted before it is uploaded), then
+ * playback, then the 3D scene. */
+AFRAME.registerComponent('tracker-loop', {
+  tick: function (time) {
+    animateFrame(time);
+    playbackFrame(time);
+    navTickFrame(time);
+  }
+});
 
 
 /* ============================================================ */
@@ -6324,10 +6408,6 @@ Fleet.on('add', vrAddShip);
 Fleet.on('update', vrUpdateShip);
 Fleet.on('remove', vrRemoveShip);
 Fleet.on('reset', vrResetShips);
-// The first script block restores the saved session (and may already have
-// ingested live messages) before this block is even parsed, so subscribing is
-// not enough on its own - anything already in the registry needs building too.
-for (const s of Fleet.list) vrAddShip(s);
 
 /* Which hulls are actually on screen. Three things gate it and they are
  * deliberately combined in one place: the shared filters (so the 3D scene and
@@ -6905,6 +6985,7 @@ function unhoverShip(id) {
  * and the card stays readable while you look at it rather than blinking out
  * the moment your aim drifts. */
 function refreshInfoDisplay() {
+  if (mapPanelActive) { hideInfoPanel(); return; }
   const live = hoveredShipId != null ? hoveredShipId : selectedShipId;
   if (live != null) cardShipId = live;
   const s = cardShipId != null ? Fleet.get(cardShipId) : null;
@@ -7004,7 +7085,7 @@ function updateShipMarker() {
   const id = hoveredShipId != null ? hoveredShipId : selectedShipId;
   const s = id != null ? Fleet.get(id) : null;
   const camera = sceneEl.camera;
-  if (!s || s.lat == null || !camera) { shipMarkerEl.object3D.visible = false; return; }
+  if (mapPanelActive || !s || s.lat == null || !camera) { shipMarkerEl.object3D.visible = false; return; }
 
   if (vrLod === 'globe') {
     if (!globeSphereReady) { shipMarkerEl.object3D.visible = false; return; }
@@ -7119,6 +7200,7 @@ function recenterView() {
   // snap turn leaves the rig facing wherever you left it; recentring is the
   // one action that should reliably put the world back in front of you
   rigEl.object3D.rotation.y = 0;
+  if (mapPanelActive) { placeMapPanel(); return; }
   worldEl.object3D.position.set(0, 0, 0);
   // no standing-back offset at globe zoom: up there the rig has to sit exactly
   // over the tangent point, and absorbRigMotionIntoGlobe() would read a 260
@@ -7298,6 +7380,12 @@ function buildWristMenu() {
     onClick: () => { compassEnabled = !compassEnabled; updateCompass(); }
   });
 
+  makeWristRow(-1, l++, {
+    text: () => mapPanelWanted ? 'VIEW  FLAT MAP' : 'VIEW  TRUE SCALE',
+    color: () => mapPanelWanted ? '#3eff9a' : '#3ea8ff',
+    onClick: toggleMapPanel
+  });
+
   makeWristHeading(-1, l++, 'TIME');
   makeWristRow(-1, l++, {
     text: () => playbackMode ? 'MODE  PLAYBACK' : 'MODE  LIVE',
@@ -7417,6 +7505,291 @@ document.getElementById('vr-zoom').addEventListener('input', e => {
   setViewAlt(altForZoomT(Number(e.target.value) / 1000), viewAnchor());
 });
 
+
+/* ============================================================ */
+/* the flat map, on a screen, in the headset                     */
+/* ============================================================ */
+/* The 3D world is the reason this page exists, but the flat renderer is the
+ * one that knows things: real coastlines at four levels of detail, country and
+ * sea and port and river labels, typed hull silhouettes with wakes and decks,
+ * trails, the scale bar. Reimplementing all of that as 3D geometry would be a
+ * long project and would end up worse.
+ *
+ * So it isn't reimplemented. The flat renderer draws to its canvas exactly as
+ * it always does, and that canvas is hung in the headset as a texture on a
+ * curved screen, with the pointer mapped back onto it. Everything that
+ * renderer can do works in here, because it *is* that renderer - the same
+ * draw() on the same canvas, at a resolution chosen for the optics rather than
+ * for the browser window behind them.
+ *
+ * The honest limits: it is a screen, so there is no depth to it and no true
+ * scale; and text is only as sharp as the pixels the panel subtends, which is
+ * about the same as a good virtual monitor - readable, not a desk monitor.
+ * What it buys is every feature, immediately, in one renderer instead of two.
+ */
+const MAP_PANEL_W = 1600, MAP_PANEL_H = 1000;   // the canvas the panel carries
+const MAP_PANEL_RADIUS = 2.4;                    // metres from the eye - a comfortable reading distance
+const MAP_PANEL_ARC_DEG = 72;                    // how much of the horizon it wraps
+const MAP_PANEL_UPLOAD_MS = 50;                  // ~20 Hz; a full re-upload of 6.4 MB is not a per-frame cost
+
+const mapPanelEl = document.getElementById('map-panel');
+let mapPanelTex = null;
+let mapPanelMesh = null;
+let mapPanelUploadedAt = 0;
+
+function buildMapPanel() {
+  const arc = MAP_PANEL_ARC_DEG * DEG2RAD;
+  const width = MAP_PANEL_RADIUS * arc;
+  const height = width * (MAP_PANEL_H / MAP_PANEL_W);
+  // an open cylinder segment, seen from the inside: the curve keeps every part
+  // of the map the same distance from the eye, which a flat panel this wide
+  // does not
+  const geo = new THREE.CylinderGeometry(
+    MAP_PANEL_RADIUS, MAP_PANEL_RADIUS, height, 64, 1, true,
+    -arc / 2 + Math.PI, arc
+  );
+  // Seen from inside, the texture reads mirrored. Flipping the geometry's own
+  // UVs rather than the texture's transform keeps intersection.uv usable
+  // directly as a canvas coordinate, which is what the pointer mapping wants.
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setX(i, 1 - uv.getX(i));
+  uv.needsUpdate = true;
+
+  mapPanelTex = asSRGB(new THREE.CanvasTexture(canvas));
+  mapPanelTex.minFilter = THREE.LinearFilter;   // no mipmaps: it is re-uploaded constantly and always viewed head-on
+  mapPanelTex.generateMipmaps = false;
+  mapPanelMesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+    map: mapPanelTex, side: THREE.BackSide, fog: false
+  }));
+  mapPanelMesh.frustumCulled = false;
+  mapPanelEl.setObject3D('screen', mapPanelMesh);
+}
+
+/* The panel hangs in front of the viewer and stays there: world-locked, so you
+ * can lean in to read it, but re-placed whenever you recentre, because a map
+ * you have to walk back to is not a map.
+ *
+ * Centred on the head, not on the rig. The camera sits a person's height above
+ * the rig - a-frame's default when there is no room-scale floor to measure
+ * from, and the real standing height when there is - so a panel placed at the
+ * rig's height hangs at your knees, and a ray from the eye passes clean over
+ * the top of it. Likewise the yaw comes from where the viewer is looking
+ * rather than from where the rig happens to face, since after a snap turn or
+ * two those are not the same thing. */
+const _panelPos = new THREE.Vector3();
+const _panelQuat = new THREE.Quaternion();
+const _panelEuler = new THREE.Euler();
+
+function placeMapPanel() {
+  const camera = sceneEl.camera;
+  if (camera) {
+    camera.getWorldPosition(_panelPos);
+    camera.getWorldQuaternion(_panelQuat);
+    _panelEuler.setFromQuaternion(_panelQuat, 'YXZ');   // yaw only; the screen stays upright
+  } else {
+    _panelPos.copy(rigEl.object3D.position);
+    _panelEuler.set(0, rigEl.object3D.rotation.y, 0);
+  }
+  mapPanelEl.object3D.position.copy(_panelPos);
+  mapPanelEl.object3D.rotation.set(0, _panelEuler.y, 0);
+}
+
+/* Switching between the screen and the world hands the camera over in the
+ * direction of travel, so each renderer picks up where the other left off:
+ * the map opens on whatever the world was looking at, and stepping into the
+ * world puts you where the map was pointed - or, if you had a vessel selected,
+ * alongside it. Browsing on the map and then walking into it is the whole
+ * point of having both. */
+/* `mapPanelWanted` is the preference; `mapPanelActive` is whether it is
+ * currently applied. They differ whenever the flat view is on screen, because
+ * the panel owns the canvas's size while it is up and the window needs it back
+ * the moment the map is being looked at directly. */
+let mapPanelWanted = true;   // the 3D view opens on the flat map
+
+function applyMapPanel() { setMapPanelActive(mapPanelWanted && activeView === 'vr'); }
+
+/* Switching between the screen and the world hands the camera over in the
+ * direction of travel, so each picks up where the other left off. Which
+ * direction that is belongs here rather than inside setMapPanelActive(),
+ * because the same mechanics also run when you merely enter or leave the 3D
+ * view - and there the map is the thing that persists, so the sync goes the
+ * other way. */
+function toggleMapPanel() {
+  const stepInto = mapPanelWanted && selectedShipId != null ? Fleet.get(selectedShipId) : null;
+  mapPanelWanted = !mapPanelWanted;
+  if (mapPanelWanted) syncCanvasFromScene();   // to the screen: the map takes over where the world was
+  applyMapPanel();
+  if (!mapPanelWanted) {
+    // into the world: beside whatever you had picked out, or wherever the map
+    // was pointed
+    if (stepInto && stepInto.lat != null) zoomToRealScale(stepInto);
+    else syncSceneFromCanvas();
+  }
+}
+
+function setMapPanelActive(on) {
+  if (on === mapPanelActive) return;
+  mapPanelActive = on;
+  if (!mapPanelMesh) buildMapPanel();
+
+  if (on) {
+    // the flat renderer starts drawing at the panel's resolution instead of
+    // the window's
+    mapSurface = { w: MAP_PANEL_W, h: MAP_PANEL_H };
+    resize();          // this reallocates the backing store, which clears it
+    updateProjection();
+    // ...so paint it before anything can upload it. A blank canvas on a
+    // MeshBasicMaterial is an untextured white slab, which is precisely what a
+    // headset showed while the frame loop was stopped.
+    draw(performance.now());
+    if (mapPanelTex) mapPanelTex.needsUpdate = true;
+    placeMapPanel();
+  } else {
+    mapSurface = null;
+    resize();
+    updateProjection();
+  }
+  mapPanelEl.object3D.visible = on;
+  if (setRaycastable(mapPanelEl, on)) refreshRaycasters();
+  updateCameraTilt();
+
+  // the 3D world steps aside rather than being torn down, so switching back is
+  // instant and nothing has to be rebuilt
+  worldEl.object3D.visible = !on;
+  globeEl.object3D.visible = !on && vrLod === 'globe';
+  skyEl.object3D.visible = !on && vrLod === 'flat';
+  compassEl.object3D.visible = !on && compassEnabled;
+  // the flat renderer has its own tooltip and the sidebar has the full record,
+  // so the in-scene card would only be a second answer sitting over the map
+  document.getElementById('nav-hud').object3D.visible = !on;
+  if (on) hideInfoPanel();
+  document.getElementById('map-mode-toggle-text').setAttribute('text', 'value', on ? '3D' : 'MAP');
+
+  syncWristMenu();
+}
+
+/* ...and having placed it, it keeps up.
+ *
+ * Strictly world-locked, the panel is left behind the moment you fly anywhere,
+ * and it is placed at boot before the camera has settled into its standing
+ * pose, so it starts out slightly off. Strictly head-locked, it swims with
+ * every movement of your neck, which is the classic way to make a VR panel
+ * unpleasant.
+ *
+ * So: anchored, with a dead zone and a lag. Small movements do nothing at all
+ * and you can lean in to read the small print; travel further, or turn away
+ * far enough that it is no longer in front of you, and it eases across to
+ * where you now are rather than snapping. */
+const MAP_PANEL_MOVE_DEADZONE = 0.35;   // metres
+const MAP_PANEL_TURN_DEADZONE = 25;     // degrees
+const MAP_PANEL_FOLLOW_TAU = 0.4;       // seconds to close ~63% of the gap
+
+function updateMapPanelFollow(dt) {
+  if (!mapPanelActive || dt <= 0) return;
+  const camera = sceneEl.camera;
+  if (!camera) return;
+  const obj = mapPanelEl.object3D;
+  camera.getWorldPosition(_panelPos);
+  camera.getWorldQuaternion(_panelQuat);
+  _panelEuler.setFromQuaternion(_panelQuat, 'YXZ');
+
+  const k = 1 - Math.exp(-dt / MAP_PANEL_FOLLOW_TAU);
+  if (obj.position.distanceTo(_panelPos) > MAP_PANEL_MOVE_DEADZONE) obj.position.lerp(_panelPos, k);
+
+  const wantDeg = THREE.MathUtils.radToDeg(_panelEuler.y);
+  const haveDeg = THREE.MathUtils.radToDeg(obj.rotation.y);
+  const offBy = Math.abs(((wantDeg - haveDeg + 180) % 360 + 360) % 360 - 180);
+  if (offBy > MAP_PANEL_TURN_DEADZONE) {
+    obj.rotation.y = THREE.MathUtils.degToRad(lerpAngleDeg(haveDeg, wantDeg, k));
+  }
+}
+
+function updateMapPanelTexture(now) {
+  if (!mapPanelActive || !mapPanelTex) return;
+  if (now - mapPanelUploadedAt < MAP_PANEL_UPLOAD_MS) return;
+  mapPanelUploadedAt = now;
+  mapPanelTex.needsUpdate = true;
+}
+
+/* ---- pointing at the map ------------------------------------------------
+ *
+ * The hit point on the panel becomes a pixel on the canvas, and that pixel is
+ * fed to the flat renderer as a real pointer event on its own canvas element.
+ * Nothing about dragging the globe, tapping a vessel, descending a rung or
+ * reading the tooltip is reimplemented here - those handlers already exist and
+ * are already correct, and this just gives them a pointer. */
+let mapPointerDown = false;
+const _mapUv = { x: 0, y: 0 };
+
+function mapPanelHitUv() {
+  const rcs = document.querySelectorAll('[raycaster]');
+  for (let i = 0; i < rcs.length; i++) {
+    const comp = rcs[i].components && rcs[i].components.raycaster;
+    const hits = comp && comp.intersections;
+    if (!hits) continue;
+    for (let k = 0; k < hits.length; k++) {
+      if (hits[k].object === mapPanelMesh && hits[k].uv) {
+        _mapUv.x = hits[k].uv.x; _mapUv.y = hits[k].uv.y;
+        return _mapUv;
+      }
+    }
+  }
+  return null;
+}
+
+function sendMapPointer(type, uv, extra) {
+  const rect = canvas.getBoundingClientRect();
+  const ev = new PointerEvent(type, Object.assign({
+    pointerId: 1, pointerType: 'mouse', bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+    clientX: rect.left + uv.x * surfaceW(),
+    clientY: rect.top + (1 - uv.y) * surfaceH()
+  }, extra || {}));
+  canvas.dispatchEvent(ev);
+}
+
+function updateMapPanelPointer() {
+  if (!mapPanelActive) return;
+  const uv = mapPanelHitUv();
+  if (!uv) {
+    if (mapPointerDown) { mapPointerDown = false; canvas.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1, bubbles: true })); }
+    return;
+  }
+  sendMapPointer('pointermove', uv);
+}
+
+// the trigger, via a-frame's own cursor events on the panel
+mapPanelEl.addEventListener('mousedown', () => {
+  const uv = mapPanelHitUv();
+  if (!uv) return;
+  mapPointerDown = true;
+  sendMapPointer('pointerdown', uv);
+});
+mapPanelEl.addEventListener('mouseup', () => {
+  if (!mapPointerDown) return;
+  const uv = mapPanelHitUv() || _mapUv;
+  mapPointerDown = false;
+  sendMapPointer('pointerup', uv);
+});
+
+/* The left stick zooms the map, the same axis that zooms the world when the
+ * world is what is on screen - fed in as wheel events so the flat renderer's
+ * own zoom-about-the-pointer logic does the work. */
+const MAP_STICK_WHEEL = 9;   // wheel delta per second at full deflection
+function updateMapPanelZoom(dt) {
+  if (!mapPanelActive || dt <= 0) return;
+  const stick = thumbstickAxes(handGamepad(handLeftEl));
+  if (Math.abs(stick.y) < STICK_DEADZONE) return;
+  const uv = mapPanelHitUv() || { x: 0.5, y: 0.5 };
+  const rect = canvas.getBoundingClientRect();
+  canvas.dispatchEvent(new WheelEvent('wheel', {
+    deltaY: stick.y * MAP_STICK_WHEEL * dt * 60, bubbles: true, cancelable: true,
+    clientX: rect.left + uv.x * surfaceW(),
+    clientY: rect.top + (1 - uv.y) * surfaceH()
+  }));
+}
+
+document.getElementById('map-mode-toggle').addEventListener('click', toggleMapPanel);
+
 /* ============================================================ */
 /* boot                                                          */
 /* ============================================================ */
@@ -7444,15 +7817,33 @@ function initSky() {
   }
 }
 
+/* The 3D view opens on the flat map rather than on the world. It is the
+ * renderer that has every feature, and it is the one most sessions want; the
+ * world at true scale is one button away and is the thing you go to
+ * deliberately. */
 function vrOnShown() {
   // the hull positions may have gone stale while the tangent origin moved
   // around at globe zoom with nothing on screen to notice
   if (originDirty && vrLod === 'flat') refreshAllShipPositions();
+  if (mapPanelActive) placeMapPanel();
   vrVisibilityDirty = true;
   updateZoomReadouts();
 }
 
 sceneEl.addEventListener('loaded', () => {
+  /* The first script block restores the saved session, and may already have
+   * ingested live messages, before this block is even parsed - so subscribing
+   * to the registry is not enough on its own; anything already in it needs
+   * building too.
+   *
+   * Deferred to here rather than run where the subscriptions are set up.
+   * Building a hull builds its course cone, which reads constants declared
+   * further down this same block, and a top-level const cannot be read before
+   * it has been evaluated. With an empty registry nothing noticed; with a
+   * saved session that had vessels in it, the whole 3D renderer failed to
+   * start. */
+  for (const s of Fleet.list) vrAddShip(s);
+
   initSky();
   initVignette();
   initCompass();
@@ -7468,7 +7859,6 @@ sceneEl.addEventListener('loaded', () => {
   // did. Scene 'loaded' guarantees every entity is past that.
   rigEl.object3D.position.set(0, RIG_SCENE_Y, 0); // the page opens at globe zoom - see recenterView() for why z is 0 there
   setViewAlt(DEFAULT_ALT_M);
-  requestAnimationFrame(navTick);
 });
 
 </script>
