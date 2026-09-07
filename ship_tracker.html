@@ -742,6 +742,28 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
                  material="color: #0d0f14; opacity: 0.94; shader: flat; side: double"></a-plane>
         <a-entity id="wrist-menu-rows"></a-entity>
       </a-entity>
+
+      <!-- The vessel finder: a searchable, pageable list of the fleet.
+           Inside a headset no DOM renders, so the sidebar's vessel list and its
+           name/country search simply do not exist there - which left a headset
+           user able to act only on vessels they could already see and point at.
+           Finding a vessel by name, or jumping to one over the horizon, was
+           impossible in VR and trivial on the flat screen.
+
+           Its rows are built in JS (see buildFinderPanel()) rather than
+           declared here: the letter picker is one button per character and the
+           result list is one row per visible slot, and every one of them has to
+           re-render as the fleet and the search buffer change.
+
+           Centred, and it closes the wrist menu when it opens - it needs the
+           width for vessel names and the height for results, and two panels
+           side by side at this distance would push one of them out toward the
+           edge of vision where a controller ray is hard to aim. -->
+      <a-entity id="finder-panel" class="hud" no-frustum-cull visible="false" position="0 -0.04 -0.95" scale="0.18 0.18 0.18">
+        <a-plane id="finder-bg" width="4.5" height="3.9" position="0 0 -0.006"
+                 material="color: #0d0f14; opacity: 0.95; shader: flat; side: double"></a-plane>
+        <a-entity id="finder-rows"></a-entity>
+      </a-entity>
     </a-camera>
     </a-entity>
     <a-entity id="hand-left" laser-controls="hand: left" raycaster="objects: .clickable; far: 20000" line="color: #3ea8ff; opacity: 0.6"></a-entity>
@@ -5020,7 +5042,7 @@ function updateVrGrab() {
 // the moment your ray misses the world (pointing at empty sky past the edge of
 // the planet, for one).
 function updateStickZoom(dt) {
-  if (dt <= 0 || vrGrabHand || mapPanelActive) return;
+  if (dt <= 0 || vrGrabHand || mapPanelActive || finderOpen) return;
   const stick = thumbstickAxes(handGamepad(handLeftEl));
   if (Math.abs(stick.y) < STICK_DEADZONE) return;
   setViewAlt(viewAltM * Math.exp(stick.y * STICK_ZOOM_RATE * dt), viewAnchor());
@@ -5723,6 +5745,8 @@ function navTickFrame(now) {
   updateShipSmoothing(dt);
   updateVignette(dt);
   updateCompass();
+  updateFinderScroll(dt);
+  syncFinderPanel(false);   // cheap-guarded: returns at once unless the finder is open
   updateMapPanelFollow(dt);
   updateMapPanelPointer();
   updateMapPanelZoom(dt);
@@ -7386,6 +7410,13 @@ function buildWristMenu() {
     onClick: toggleMapPanel
   });
 
+  makeWristHeading(-1, l++, 'FIND');
+  makeWristRow(-1, l++, {
+    text: () => finderOpen ? 'CLOSE FINDER' : 'FIND VESSELS',
+    color: () => finderOpen ? '#ffb83e' : '#3eff9a',
+    onClick: () => setFinderOpen(!finderOpen)
+  });
+
   makeWristHeading(-1, l++, 'TIME');
   makeWristRow(-1, l++, {
     text: () => playbackMode ? 'MODE  PLAYBACK' : 'MODE  LIVE',
@@ -7448,6 +7479,9 @@ function buildWristMenu() {
   document.getElementById('wrist-menu-bg').setAttribute('width', WRIST_COL_X * 2 + WRIST_ROW_W + 0.16);
   document.getElementById('wrist-menu-bg').setAttribute('position',
     { x: 0, y: WRIST_TOP_Y - (rows - 1) * WRIST_ROW_H / 2, z: -0.006 });
+  // built into a menu that starts closed, so the rows start outside the
+  // raycast set as well (see setWristMenuOpen)
+  setWristMenuOpen(wristMenuOpen);
   syncWristMenu();
 }
 
@@ -7467,6 +7501,14 @@ function setWristMenuOpen(open) {
   wristMenuOpen = open;
   document.getElementById('wrist-menu').object3D.visible = open;
   document.getElementById('wrist-menu-toggle-text').setAttribute('text', 'value', open ? 'X' : 'M');
+  /* Hiding it has to take its rows out of the raycast set too. Three tests
+   * layers rather than visibility, so a closed menu went on quietly eating
+   * every ray aimed through the space it used to occupy - which nothing
+   * noticed until a second panel was opened in the same place and half its
+   * buttons stopped responding. */
+  let changed = false;
+  for (const row of wristRows) changed = setRaycastable(row.box, open) || changed;
+  if (changed) refreshRaycasters();
   if (open) syncWristMenu();
 }
 document.getElementById('wrist-menu-toggle').addEventListener('click', () => setWristMenuOpen(!wristMenuOpen));
@@ -7479,6 +7521,308 @@ function updateWristMenuButton() {
   const pressed = buttonPressed(gp, 4) || buttonPressed(gp, 5);
   if (pressed && !prevMenuButton) setWristMenuOpen(!wristMenuOpen);
   prevMenuButton = pressed;
+}
+
+
+/* ============================================================ */
+/* the vessel finder - search and jump, without a keyboard       */
+/* ============================================================ */
+/* The flat sidebar can already list every vessel and filter it by name, and
+ * clicking a card flies to that ship. None of that reaches a headset: no DOM
+ * renders inside an immersive session, so in VR a user could only ever act on
+ * vessels already in front of them. "Find the one called NORDIC STAR" was
+ * trivial on the screen and impossible in the headset.
+ *
+ * This is the same capability, in-scene. It deliberately drives the *shared*
+ * filter state rather than keeping a private copy: typing here narrows the
+ * hulls, the dot cloud, the flat map and the sidebar together, because they all
+ * read `filters` through passesFilters(). The list you see is literally the set
+ * the renderers are drawing.
+ *
+ * Text entry is a letter picker rather than a full keyboard. A vessel name only
+ * has to be narrowed enough to pick it out of a list, which is two or three
+ * characters in practice, and a grid of chunky buttons is far quicker to aim a
+ * controller at than a dense QWERTY. (If a future task needs real free text -
+ * a destination, say - a-frame's `super-keyboard` would be the thing to reach
+ * for; it is heavier and slower to aim, so it is not worth it for this.) */
+const FINDER_ROW_H = 0.28;        // matches the wrist rows, which are sized for a controller ray
+const FINDER_W = 4.3;             // panel units; vessel names need the width
+const FINDER_TOP_Y = 1.62;
+const FINDER_RESULT_SLOTS = 8;    // 3D text rows cost far more than <div>s - page, don't dump
+const FINDER_KEYS_PER_ROW = 12;
+const FINDER_SCROLL_REPEAT_S = 0.18;
+const FINDER_SYNC_MS = 250;       // the fleet changes as AIS arrives; this is often enough to look live
+
+// A-Z then 0-9, three rows of twelve exactly. Digits earn their place: real
+// vessel names are full of them.
+const FINDER_KEYS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split('');
+
+let finderOpen = false;
+let finderQuery = '';             // what the letter picker has spelled out so far
+let finderPage = 0;               // first result index shown
+let finderResults = [];           // the current filtered, sorted page source
+let finderSyncedAt = 0;
+let finderScrollCooldown = 0;
+const finderChrome = [];          // fixed buttons: { box, label, def }
+const finderSlots = [];           // result rows: { box, label, shipId }
+
+const finderPanelEl = document.getElementById('finder-panel');
+const finderRowsEl = document.getElementById('finder-rows');
+
+/* One clickable button on the panel. Same shape as makeWristRow's rows - a box
+ * with a text child and a click listener - but positioned freely, because the
+ * finder is a grid rather than a single column. */
+function makeFinderButton(x, y, w, def, opts) {
+  const o = opts || {};
+  const box = document.createElement('a-box');
+  box.classList.add('clickable');
+  box.setAttribute('width', w);
+  box.setAttribute('height', (o.height || FINDER_ROW_H) - 0.05);
+  box.setAttribute('depth', 0.01);
+  box.setAttribute('position', { x, y, z: 0 });
+  box.setAttribute('material', 'color: ' + (o.bg || '#131720') + '; opacity: 0.94; shader: flat');
+  const label = document.createElement('a-entity');
+  label.setAttribute('position', '0 0 0.008');
+  // wrapCount against width is what fixes the glyph size; without it a-frame
+  // lays text out for a 40-character line and it is unreadable at this scale
+  label.setAttribute('text', {
+    value: '', align: o.align || 'center', baseline: 'center',
+    width: w, wrapCount: o.wrapCount || Math.max(3, Math.round(w * 6)), color: '#e2e6f0'
+  });
+  box.appendChild(label);
+  box.addEventListener('click', (e) => { e.stopPropagation(); def.onClick(); syncFinderPanel(true); });
+  finderRowsEl.appendChild(box);
+  return { box, label, def };
+}
+
+function makeFinderText(x, y, w, value, color) {
+  const el = document.createElement('a-entity');
+  el.setAttribute('position', { x, y, z: 0 });
+  el.setAttribute('text', {
+    value, align: 'center', baseline: 'center', width: w,
+    wrapCount: Math.max(3, Math.round(w * 7)), color: color || '#7a8099'
+  });
+  finderRowsEl.appendChild(el);
+  return el;
+}
+
+/* The search buffer feeds the *shared* name filter, so the flat sidebar's own
+ * search box has to show the same thing - otherwise the two disagree about why
+ * the fleet has shrunk, and a user who takes the headset off finds a filter
+ * they cannot see the cause of. */
+function setFinderQuery(next) {
+  finderQuery = next;
+  filters.name = next.trim().toLowerCase();
+  const input = document.getElementById('filter-name');
+  if (input) input.value = finderQuery;
+  finderPage = 0;
+  markVisibleDirty();
+  renderSidebar();
+}
+
+let finderTitleEl = null, finderCountEl = null, finderQueryLabel = null;
+
+function buildFinderPanel() {
+  let y = FINDER_TOP_Y;
+
+  finderTitleEl = makeFinderText(-FINDER_W / 2 + 1.0, y, 2.0, 'FIND VESSELS', '#3ea8ff');
+  finderCountEl = makeFinderText(FINDER_W / 2 - 1.1, y, 2.2, '', '#7a8099');
+  y -= FINDER_ROW_H;
+
+  // the search buffer, shown as a field so it is obvious what has been typed
+  finderChrome.push(makeFinderButton(-0.62, y, 3.0, {
+    onClick: () => {}   // display only; the letters below do the work
+  }, { bg: '#0a1a28', align: 'left', wrapCount: 26 }));
+  finderQueryLabel = finderChrome[finderChrome.length - 1].label;
+  finderChrome.push(makeFinderButton(1.25, y, 0.78, {
+    text: () => 'DEL', color: () => '#ffb83e',
+    onClick: () => setFinderQuery(finderQuery.slice(0, -1))
+  }, { bg: '#1a1420' }));
+  finderChrome.push(makeFinderButton(1.85, y, 0.4, {
+    text: () => 'X', color: () => '#ff5e7a',
+    onClick: () => setFinderQuery('')
+  }, { bg: '#1a1420' }));
+  y -= FINDER_ROW_H;
+
+  // the letter picker
+  const keyW = FINDER_W / FINDER_KEYS_PER_ROW;
+  for (let i = 0; i < FINDER_KEYS.length; i++) {
+    const ch = FINDER_KEYS[i];
+    const col = i % FINDER_KEYS_PER_ROW;
+    const row = Math.floor(i / FINDER_KEYS_PER_ROW);
+    finderChrome.push(makeFinderButton(
+      -FINDER_W / 2 + keyW / 2 + col * keyW,
+      y - row * FINDER_ROW_H,
+      keyW - 0.03,
+      {
+        text: () => ch, color: () => '#e2e6f0',
+        // capped so a stuck trigger cannot spell something unreadable that
+        // silently filters the whole fleet away
+        onClick: () => { if (finderQuery.length < 12) setFinderQuery(finderQuery + ch); }
+      },
+      { wrapCount: 2.6 }
+    ));
+  }
+  y -= FINDER_ROW_H * Math.ceil(FINDER_KEYS.length / FINDER_KEYS_PER_ROW);
+
+  // paging, and the way back to the wrist menu
+  finderChrome.push(makeFinderButton(-1.6, y, 1.0, {
+    text: () => 'UP', color: () => finderPage > 0 ? '#3ea8ff' : '#3a3f52',
+    onClick: () => scrollFinder(-1)
+  }));
+  finderChrome.push(makeFinderButton(-0.45, y, 1.0, {
+    text: () => 'DOWN',
+    color: () => (finderPage + FINDER_RESULT_SLOTS) < finderResults.length ? '#3ea8ff' : '#3a3f52',
+    onClick: () => scrollFinder(1)
+  }));
+  finderChrome.push(makeFinderButton(1.35, y, 1.6, {
+    text: () => 'CLOSE', color: () => '#e2e6f0',
+    onClick: () => setFinderOpen(false)
+  }));
+  y -= FINDER_ROW_H;
+
+  // the result rows. Built empty and refilled by syncFinderPanel(); a slot with
+  // no vessel in it is hidden AND taken out of the raycast set, since an
+  // invisible target still swallows anything aimed through it.
+  for (let i = 0; i < FINDER_RESULT_SLOTS; i++) {
+    const slot = makeFinderButton(0, y - i * FINDER_ROW_H, FINDER_W - 0.1, {
+      onClick: () => {
+        const s = finderSlots[i] && finderSlots[i].shipId != null ? Fleet.get(finderSlots[i].shipId) : null;
+        if (!s) return;
+        // the existing fly-to path, exactly as the sidebar's own vessel cards
+        // use it - it flies there and sets the selection
+        window.focusShip(s.id);
+        // out of the way, so the vessel it just flew to is actually visible
+        setFinderOpen(false);
+      }
+    }, { bg: '#141b26', align: 'left', wrapCount: 44 });
+    slot.shipId = null;
+    finderSlots.push(slot);
+  }
+  y -= FINDER_ROW_H * FINDER_RESULT_SLOTS;
+
+  // the background sized to what was actually laid out
+  const top = FINDER_TOP_Y + FINDER_ROW_H * 0.6;
+  const bottom = y + FINDER_ROW_H * 0.4;
+  const bg = document.getElementById('finder-bg');
+  bg.setAttribute('height', top - bottom);
+  bg.setAttribute('width', FINDER_W + 0.2);
+  bg.setAttribute('position', { x: 0, y: (top + bottom) / 2, z: -0.006 });
+
+  setFinderRaycastable(false);   // built hidden
+  syncFinderPanel(true);
+}
+
+/* Hidden panels must leave the raycast set, not merely stop drawing: three
+ * tests layers rather than visibility, so an invisible row goes on quietly
+ * eating every click aimed through it. */
+function setFinderRaycastable(on) {
+  let changed = false;
+  for (const c of finderChrome) changed = setRaycastable(c.box, on) || changed;
+  for (let i = 0; i < finderSlots.length; i++) {
+    const slot = finderSlots[i];
+    // an empty slot is never clickable, even while the panel is open
+    changed = setRaycastable(slot.box, on && slot.shipId != null) || changed;
+  }
+  if (changed) refreshRaycasters();
+}
+
+function setFinderOpen(open) {
+  finderOpen = open;
+  finderPanelEl.object3D.visible = open;
+  if (open) {
+    // the two panels would crowd each other at this distance; the finder needs
+    // the middle of the view because it is the one being read and aimed at
+    setWristMenuOpen(false);
+    finderPage = 0;
+    // the whole panel rejoins the raycast set - syncFinderPanel() below only
+    // decides the *result* rows, so without this the letter picker and the
+    // paging buttons render perfectly and ignore the controller completely
+    setFinderRaycastable(true);
+    syncFinderPanel(true);
+  } else {
+    setFinderRaycastable(false);
+  }
+  syncWristMenu();
+}
+
+function scrollFinder(dir) {
+  const maxPage = Math.max(0, finderResults.length - FINDER_RESULT_SLOTS);
+  finderPage = Math.max(0, Math.min(maxPage, finderPage + dir));
+  syncFinderPanel(true);
+}
+
+/* Left thumbstick scrolls the list while the finder is open. It normally zooms,
+ * so both zoom paths stand down for the duration (see updateStickZoom and
+ * updateMapPanelZoom) - a stick that both scrolls and zooms would do neither
+ * predictably. Polled rather than event-driven, like every other control here. */
+function updateFinderScroll(dt) {
+  if (!finderOpen || dt <= 0) return;
+  const stick = thumbstickAxes(handGamepad(handLeftEl));
+  if (Math.abs(stick.y) < STICK_DEADZONE) { finderScrollCooldown = 0; return; }
+  finderScrollCooldown -= dt;
+  if (finderScrollCooldown > 0) return;
+  finderScrollCooldown = FINDER_SCROLL_REPEAT_S;
+  scrollFinder(stick.y > 0 ? 1 : -1);
+}
+
+function finderShipLine(s) {
+  const info = SHIP_TYPES[s.typeKey] || SHIP_TYPES.other;
+  let name = shipTitle(s);
+  if (name.length > 26) name = name.slice(0, 25) + '…';
+  const spd = s.speedKnown ? s.speed.toFixed(1) + ' kn' : '—';
+  return name + '   ' + info.label + ' · ' + spd;
+}
+
+/* Rebuilds the visible rows from the shared registry. `force` skips the
+ * throttle for anything the user just did, so a press feels immediate while the
+ * live feed only costs one pass every FINDER_SYNC_MS. */
+function syncFinderPanel(force) {
+  if (!finderOpen || !finderSlots.length) return;
+  const now = performance.now();
+  if (!force && now - finderSyncedAt < FINDER_SYNC_MS) return;
+  finderSyncedAt = now;
+
+  // the same predicate every renderer uses, so this list can never disagree
+  // with what the hulls and the dot cloud are showing
+  finderResults = Fleet.list.filter(passesFilters);
+  finderResults.sort((a, b) => shipTitle(a).localeCompare(shipTitle(b)));
+
+  const maxPage = Math.max(0, finderResults.length - FINDER_RESULT_SLOTS);
+  if (finderPage > maxPage) finderPage = maxPage;
+
+  finderQueryLabel.setAttribute('text', {
+    value: finderQuery ? finderQuery : 'search…',
+    color: finderQuery ? '#3eff9a' : '#4a4f62'
+  });
+  finderCountEl.setAttribute('text', 'value',
+    finderResults.length + ' of ' + Fleet.list.length +
+    (finderResults.length > FINDER_RESULT_SLOTS
+      ? '   ' + (finderPage + 1) + '-' + Math.min(finderResults.length, finderPage + FINDER_RESULT_SLOTS)
+      : ''));
+
+  let changed = false;
+  for (let i = 0; i < finderSlots.length; i++) {
+    const slot = finderSlots[i];
+    const s = finderResults[finderPage + i];
+    if (s) {
+      slot.shipId = s.id;
+      slot.box.object3D.visible = true;
+      slot.label.setAttribute('text', {
+        value: finderShipLine(s),
+        color: String(s.id) === selectedShipId ? '#3eff9a' : '#e2e6f0'
+      });
+    } else {
+      slot.shipId = null;
+      slot.box.object3D.visible = false;
+    }
+    changed = setRaycastable(slot.box, finderOpen && slot.shipId != null) || changed;
+  }
+  if (changed) refreshRaycasters();
+
+  for (const c of finderChrome) {
+    if (c.def.text) c.label.setAttribute('text', { value: c.def.text(), color: c.def.color() });
+  }
 }
 
 /* ============================================================ */
@@ -7776,7 +8120,7 @@ mapPanelEl.addEventListener('mouseup', () => {
  * own zoom-about-the-pointer logic does the work. */
 const MAP_STICK_WHEEL = 9;   // wheel delta per second at full deflection
 function updateMapPanelZoom(dt) {
-  if (!mapPanelActive || dt <= 0) return;
+  if (!mapPanelActive || dt <= 0 || finderOpen) return;
   const stick = thumbstickAxes(handGamepad(handLeftEl));
   if (Math.abs(stick.y) < STICK_DEADZONE) return;
   const uv = mapPanelHitUv() || { x: 0.5, y: 0.5 };
@@ -7848,6 +8192,7 @@ sceneEl.addEventListener('loaded', () => {
   initVignette();
   initCompass();
   buildWristMenu();
+  buildFinderPanel();
   setGlobeOrientation();
   initGlobe();
   applyLodVisibility();
