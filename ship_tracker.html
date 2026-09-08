@@ -819,6 +819,10 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
 
     <a-entity id="density" visible="false"></a-entity>
 
+    <!-- named places on the horizon, so the coastline you can see is a coast
+         you can name - see updateLandmarks() -->
+    <a-entity id="landmarks"></a-entity>
+
     <!-- tall beacons over the busiest current traffic spots - at true scale
          over open water there is otherwise nothing to tell you where anything
          interesting is. Visible from far off and, like the ship list, they
@@ -2763,7 +2767,22 @@ function simulateShips(dt) {
 /* ============================================================ */
 /* AIS ingestion via BroadcastChannel from ais_data_stream.html */
 /* ============================================================ */
-const AIS_STALE_MS = 10 * 60 * 1000;
+/* How long a vessel stays on the chart after its last report.
+ *
+ * This is a retention window, not a liveness check. It used to be ten minutes,
+ * which quietly made the display a view of "what is transmitting right now" -
+ * and worse, made it destructive: lose the feed for a quarter of an hour and
+ * the entire fleet evaporated, so a dropped connection cost you your session.
+ * Reconnecting did not bring it back, because the vessels had been deleted
+ * rather than merely gone quiet.
+ *
+ * Forty-eight hours instead. Everything seen in the last two days stays
+ * visible, a disconnection costs nothing at all, and the only thing that
+ * removes a vessel from the registry is the user pressing Clear (see
+ * clearEverything). A vessel that has stopped reporting is still shown - its
+ * age is visible in the sidebar's own timestamp, and staleness is a judgement
+ * for whoever is reading the chart, not something to silently act on. */
+const AIS_RETENTION_MS = 48 * 60 * 60 * 1000;
 let aisStreamActive = false;
 let lastAisMsgTs = 0;
 const AIS_LIVE_TIMEOUT_MS = 30 * 1000; // no msg for 30s => treat as offline
@@ -2892,8 +2911,8 @@ function ingestAisShip(msg, ts) {
 
 function pruneAisShips() {
   const now = Date.now();
-  const gone = Fleet.removeWhere(s => s.isAis && (now - (s.lastUpdate || 0)) > AIS_STALE_MS);
-  if (gone) markVisibleDirty();
+  const gone = Fleet.removeWhere(s => s.isAis && (now - (s.lastUpdate || 0)) > AIS_RETENTION_MS);
+  if (gone) { addLog('Aged out ' + gone + ' vessel(s) past 48 h'); markVisibleDirty(); }
 }
 
 const aisChannel = new BroadcastChannel('ais-stream');
@@ -2913,7 +2932,7 @@ aisChannel.addEventListener('message', ev => {
     if (msg.state === 'offline' && aisStreamActive) { aisStreamActive = false; addLog('AIS stream offline'); setLiveBadge(false); }
   }
 });
-setInterval(pruneAisShips, 60 * 1000);
+setInterval(pruneAisShips, 5 * 60 * 1000);   // a 48-hour boundary does not need checking every minute
 
 // Interaction — supports mouse drag + wheel, and touch drag + pinch-zoom.
 const pointers = new Map();   // active pointerId -> {x, y}
@@ -4168,25 +4187,52 @@ function playbackFrame(now) {
   }
 }
 
+/* The live fleet, parked while playback borrows the registry.
+ *
+ * Playback has to own the registry outright - a seek replays a window from the
+ * top, so it must start from an empty scene - but that is a reason to set the
+ * live vessels aside, not to destroy them. Switching to playback and back used
+ * to cost you everything you had collected, which is exactly the kind of
+ * silent loss the 48-hour retention window exists to prevent. Records are
+ * handed back intact, so a vessel keeps its trail, its dimensions and its
+ * timestamps across the excursion. */
+let parkedLiveFleet = null;
+
 function setPlaybackMode(on) {
+  if (on === playbackMode) return;
   playbackMode = on;
   document.getElementById('mode-toggle').checked = on;
   document.getElementById('timeline-rig').setAttribute('visible', on);
-  Fleet.clear();
-  pendingStatics.clear();
+
+  if (on) {
+    parkedLiveFleet = { ships: Fleet.list.slice(), statics: new Map(pendingStatics) };
+    Fleet.clear();
+    pendingStatics.clear();
+  }
   windowMessages = []; windowStart = null; windowEnd = null; playbackClock = 0;
   setPlaying(false);
-  markVisibleDirty();
-  renderSidebar();
+
   if (on) {
     setLiveBadge(false);
     aisStreamActive = false;
     fetchHistoryRange();
   } else {
+    // back to live: the parked fleet returns as it was, and the feed carries on
+    // adding to it
+    Fleet.clear();
+    pendingStatics.clear();
+    if (parkedLiveFleet) {
+      Fleet.replaceAll(parkedLiveFleet.ships);
+      for (const [k, v] of parkedLiveFleet.statics) pendingStatics.set(k, v);
+      addLog('Restored ' + parkedLiveFleet.ships.length + ' live vessel(s)');
+      parkedLiveFleet = null;
+    }
     document.getElementById('pb-log-range').textContent = 'live feed';
     setPbStatus('switch on to load the relay’s message log');
     ['pb-jump','pb-scrub','pb-playpause','pb-speed'].forEach(id => document.getElementById(id).disabled = true);
   }
+  markVisibleDirty();
+  renderSidebar();
   syncWristMenu();
 }
 
@@ -5295,7 +5341,13 @@ function updateNavHud() {
   text += vrLod === 'globe' ? ' · GLOBE' : ' · ' + (worldScale >= 1 ? '1:1' : worldScale.toFixed(2) + '×');
   // the sea's grid is the only thing out there to judge a distance against,
   // and a square of unknown size is no help at all
-  if (vrLod === 'flat' && oceanCellM > 0) text += ' · GRID ' + fmtAltitude(oceanCellM);
+  if (vrLod === 'flat' && oceanCellM > 0 && viewAltM > GRID_FADE_LO_M) text += ' · GRID ' + fmtAltitude(oceanCellM);
+  // the single most useful line down here: what is nearest, and which way
+  if (nearestLandmark) {
+    text += '\n' + nearestLandmark.c.name.toUpperCase() + ' ' +
+            fmtRange(nearestLandmark.d) + ' ' +
+            bearingLabel(sceneBearingDeg(nearestLandmark.dx, nearestLandmark.dz));
+  }
   if (cpaEvents.length && conesMode !== 'off' && vrLod === 'flat') text += ' · ' + cpaEvents.length + ' CPA';
   if (sceneEl.is('vr-mode')) text += ' · ' + (locomotionMode === 'fly' ? 'FLY' : 'TELEPORT');
   document.getElementById('nav-hud-text').setAttribute('text', 'value', text);
@@ -5630,14 +5682,20 @@ function niceCellSize(x) {
  * position on it would be drawn. */
 function paintSea(cx, cz, extentM, cellM) {
   if (!seaCtx) seaCtx = makeCanvas(SEA_TEX, SEA_TEX);
+  if (!roughCtx) roughCtx = makeCanvas(SEA_TEX, SEA_TEX);
   const ctx = seaCtx;
   const ppm = SEA_TEX / extentM;
   ctx.fillStyle = SEA_FILL;
   ctx.fillRect(0, 0, SEA_TEX, SEA_TEX);
 
-  // the metric grid, drawn straight in pixels - the plane maps to the canvas
-  // linearly, so a world-local multiple of cellM is just an x you can compute
+  /* The chart grid, faded by how close to the surface the viewer is. High up
+   * it is the only thing giving scale to open water; at eye level it is a
+   * wireframe floor and the waves have taken over the job. */
+  const gridAlpha = Math.max(0, Math.min(1,
+    (viewAltM - GRID_FADE_LO_M) / (GRID_FADE_HI_M - GRID_FADE_LO_M)));
   const half = extentM / 2;
+  if (gridAlpha > 0.01) {
+  ctx.globalAlpha = gridAlpha;
   // two weights: every line, then every fifth one brighter, so you can count
   // squares to judge a distance instead of guessing at an even mesh
   for (const major of [false, true]) {
@@ -5656,6 +5714,8 @@ function paintSea(cx, cz, extentM, cellM) {
     }
     ctx.stroke();
   }
+  ctx.globalAlpha = 1;
+  }
 
   const spanDeg = (extentM / M_PER_DEG_LAT);
   const projection = d3.geoAzimuthalEquidistant()
@@ -5667,12 +5727,33 @@ function paintSea(cx, cz, extentM, cellM) {
     .precision(0.4);
   paintLandThrough(ctx, projection, 1);
 
+  // the same coastline again, as a roughness mask
+  const rctx = roughCtx;
+  rctx.fillStyle = 'rgb(0,' + Math.round(SEA_ROUGHNESS * 255) + ',0)';
+  rctx.fillRect(0, 0, SEA_TEX, SEA_TEX);
+  rctx.fillStyle = 'rgb(0,' + Math.round(LAND_ROUGHNESS * 255) + ',0)';
+  const rpath = d3.geoPath(projection, rctx);
+  rctx.beginPath();
+  rpath(basemapLand());
+  rctx.fill();
+  if (roughTexture) roughTexture.needsUpdate = true;
+
   if (!seaTexture) {
     seaTexture = asSRGB(new THREE.CanvasTexture(ctx.canvas));
     seaTexture.wrapS = seaTexture.wrapT = THREE.ClampToEdgeWrapping;
     const mesh = oceanEl.getObject3D('mesh');
     if (mesh) {
       mesh.material.map = seaTexture;
+      if (!waveTexture) waveTexture = buildWaveTexture();
+      mesh.material.normalMap = waveTexture;
+      mesh.material.normalScale = new THREE.Vector2(0.6, 0.6);
+      // roughness comes from the mask rather than a constant, so 1.0 here
+      // leaves the map's green channel as the whole answer
+      roughTexture = new THREE.CanvasTexture(roughCtx.canvas);   // data, not colour
+      roughTexture.wrapS = roughTexture.wrapT = THREE.ClampToEdgeWrapping;
+      mesh.material.roughnessMap = roughTexture;
+      mesh.material.roughness = 1.0;
+      mesh.material.metalness = 0.02;
       // the sea is looked at from a very low angle most of the time, which is
       // exactly where an unfiltered texture turns to mush
       const r = sceneEl.renderer;
@@ -5695,7 +5776,84 @@ function paintSea(cx, cz, extentM, cellM) {
       out.set(q.x, lift, q.z);
     }));
 
-  seaPainted = { cx, cz, extent: extentM, lat: origin.lat, lon: origin.lon, tier: landTier };
+  seaPainted = { cx, cz, extent: extentM, lat: origin.lat, lon: origin.lon, tier: landTier,
+                 gridAlpha: Math.round(gridAlpha * 10) / 10 };
+}
+
+/* ---- the surface of the water -------------------------------------------
+ *
+ * The sea used to be a chart grid, which is what it looked like: a wireframe
+ * floor, not water. The grid earned its place as motion parallax - a flat
+ * colour gives you nothing to judge speed or distance against - but at true
+ * scale a ruled grid is exactly the wrong thing, because you are standing on
+ * the sea rather than reading a chart of it.
+ *
+ * It cannot be fixed in the sea texture. That texture spans the whole visible
+ * plane, tens of kilometres across 2048 pixels, so at 1:1 one texel is about
+ * twenty metres - it could not resolve a wave if it tried. So the waves are a
+ * separate tiling normal map with its own repeat, which is free to be a few
+ * metres per tile no matter what the diffuse map is doing. Lit by the existing
+ * directional light it gives moving highlights, which is what actually reads
+ * as water, and it costs one texture and no geometry.
+ *
+ * The chart grid stays, but only where it is useful: it fades out as you
+ * approach the surface and is gone by the time you are on it. High up it is a
+ * scale reference; down here the waves are the parallax. */
+const WAVE_TEX = 256;
+const WAVE_TILE_MIN_M = 6;      // metres per wave tile at eye level
+const WAVE_TILE_MAX_M = 4000;   // ...and far enough up that it never aliases
+const WAVE_DRIFT_MPS = 0.35;    // the swell moves, which sells it more than the shape does
+const GRID_FADE_LO_M = 250;     // no chart lines at all below this
+const GRID_FADE_HI_M = 2500;    // full strength above it
+let waveTexture = null;
+/* The land is painted into the same texture as the sea, so the gloss and the
+ * ripples meant for water were landing on the coast as well - it caught the
+ * directional light and came out a bright olive slick. A roughness map fixes
+ * it per-texel: three multiplies material.roughness by this map's green
+ * channel, so painting the sea dark green and the land white leaves the water
+ * glossy and the land matte, from the same shapes in the same pass. */
+const SEA_ROUGHNESS = 0.42, LAND_ROUGHNESS = 1.0;
+let roughTexture = null, roughCtx = null;
+
+/* A seamless wave normal map. Height is a sum of a few sine waves at integer
+ * frequencies across the tile - integer so the pattern wraps exactly - and the
+ * normal is the gradient of that height. Built once. */
+function buildWaveTexture() {
+  const ctx = makeCanvas(WAVE_TEX, WAVE_TEX);
+  const img = ctx.createImageData(WAVE_TEX, WAVE_TEX);
+  const waves = [
+    { fx: 3, fy: 1, amp: 1.00, ph: 0.0 },
+    { fx: -2, fy: 3, amp: 0.65, ph: 1.7 },
+    { fx: 5, fy: 4, amp: 0.38, ph: 3.1 },
+    { fx: 1, fy: -6, amp: 0.26, ph: 0.8 },
+    { fx: 8, fy: 3, amp: 0.15, ph: 2.2 },
+    { fx: -7, fy: -5, amp: 0.11, ph: 5.0 }
+  ];
+  const TAU = Math.PI * 2;
+  for (let y = 0; y < WAVE_TEX; y++) {
+    for (let x = 0; x < WAVE_TEX; x++) {
+      const u = x / WAVE_TEX, v = y / WAVE_TEX;
+      let dhdu = 0, dhdv = 0;
+      for (const w of waves) {
+        const c = Math.cos(TAU * (w.fx * u + w.fy * v) + w.ph) * w.amp * TAU;
+        dhdu += c * w.fx;
+        dhdv += c * w.fy;
+      }
+      // nz sets how pronounced the swell reads; larger is flatter
+      const nx = -dhdu, ny = -dhdv, nz = 26;
+      const len = Math.hypot(nx, ny, nz);
+      const i = (y * WAVE_TEX + x) * 4;
+      img.data[i]     = Math.round((nx / len * 0.5 + 0.5) * 255);
+      img.data[i + 1] = Math.round((ny / len * 0.5 + 0.5) * 255);
+      img.data[i + 2] = Math.round((nz / len * 0.5 + 0.5) * 255);
+      img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  // a normal map is data, not colour - it must not be tagged sRGB
+  const tex = new THREE.CanvasTexture(ctx.canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
 }
 
 const oceanLocalPos = new THREE.Vector3();
@@ -5721,10 +5879,25 @@ function updateOceanTiling() {
     oceanExtentM = extent;
   }
 
+  const wantGridAlpha = Math.round(Math.max(0, Math.min(1,
+    (viewAltM - GRID_FADE_LO_M) / (GRID_FADE_HI_M - GRID_FADE_LO_M))) * 10) / 10;
   const p = seaPainted;
   if (!p || p.extent !== extent || p.lat !== origin.lat || p.lon !== origin.lon ||
-      p.tier !== landTier || Math.hypot(cx - p.cx, cz - p.cz) > extent * 0.12) {
+      p.tier !== landTier || p.gridAlpha !== wantGridAlpha ||
+      Math.hypot(cx - p.cx, cz - p.cz) > extent * 0.12) {
     paintSea(cx, cz, extent, cell);
+  }
+
+  /* The swell. Its tile is sized in real metres and tracks eye height, so it
+   * is a few metres across when you are on the water and coarse enough not to
+   * shimmer when you are kilometres above it. The offset drifts with time,
+   * which is most of what makes a flat plane read as a moving sea. */
+  if (waveTexture) {
+    const tileM = Math.max(WAVE_TILE_MIN_M, Math.min(WAVE_TILE_MAX_M, viewAltM * 0.05));
+    const reps = extent / tileM;
+    waveTexture.repeat.set(reps, reps);
+    const drift = (performance.now() / 1000) * WAVE_DRIFT_MPS / tileM;
+    waveTexture.offset.set(drift * 0.6, drift);
   }
 }
 
@@ -5766,6 +5939,10 @@ function navTickFrame(now) {
     // in the headset - and what makes the sea and the planet repaint when they
     // arrive
     ensureDetailLayers();
+    // the named places the landmarks are built from live in the ports layer,
+    // which the flat map only fetches past its own zoom threshold - down on
+    // the water they are the whole orientation story, so ask directly
+    if (vrLod === 'flat' && mapLayers.ports) loadLayer('ports', g => basemap.ports = prepareGeo(g));
     currentLandTier();
     updateNavHud();
     updateOceanTiling();
@@ -5775,6 +5952,7 @@ function navTickFrame(now) {
     updateGlobeDotHover();
     updateShipMarker();
     updateShipLabels(now);
+    updateLandmarks(now);
     updateSelectedTrail();
   }
   if (vrVisibilityDirty) { applyVrVisibility(); vrVisibilityDirty = false; }
@@ -5890,7 +6068,6 @@ function refreshAllShipPositions() {
   originDirty = false;
   trailForId = null;   // its points are in the old local frame
   for (const s of Fleet.list) {
-    if (!s.el) continue;
     refreshEntity(s);
     // force an immediate snap rather than the usual ease: a changed origin can
     // move a ship's local position by hundreds of kilometres in one step, and
@@ -6294,7 +6471,6 @@ AFRAME.registerComponent('globe-click', {
  * level of detail is showing - hiding a hull is a visibility flag, never a
  * teardown, so coming back down onto the water shows the fleet instantly
  * instead of rebuilding a few thousand meshes at the worst possible moment. */
-const STALE_MS = 10 * 60 * 1000;
 /* How far a hull is drawn - measured from the viewer, in scene units, not from
  * the tangent origin in metres.
  *
@@ -6322,8 +6498,33 @@ function shipDims(s) {
     : fallbackDims(s.typeKey);
 }
 
+/* A new vessel costs almost nothing until it is looked at.
+ *
+ * The registry keeps two days of traffic, which on a wide bounding box is tens
+ * of thousands of vessels - and a hull entity is 23 KB of the 29 KB each one
+ * used to cost, four-fifths of it geometry that had never been on screen and
+ * mostly never would be. The flat map, the globe dots, the sidebar and the
+ * finder all work from the record; only the true-scale hulls need an entity,
+ * and applyVrVisibility() already works out exactly which those are. So the
+ * entity is built the first time a vessel is actually about to be drawn.
+ *
+ * Once built it is kept. Destroying entities as vessels leave view would
+ * thrash geometry on every pan, and the set that has ever been visible is
+ * bounded by where the viewer has actually been - which is the point. */
 function vrAddShip(s) {
   if (!originInitialised && s.lat != null) setOrigin(s.lat, s.lon, 'none');
+  s.el = null;
+  s.label = null;
+  s.hasVisualInit = false;
+  s.coneConverging = false;
+  s._vrVisible = null;
+  s._labelVisible = false;
+  updateShipTrack(s);   // position and velocity are needed immediately; the hull is not
+  vrVisibilityDirty = true;
+}
+
+function ensureShipEntity(s) {
+  if (s.el) return s.el;
 
   const el = document.createElement('a-entity');
   el.classList.add('clickable');
@@ -6356,11 +6557,12 @@ function vrAddShip(s) {
 
   s.el = el;
   s.label = label;
-  s.hasVisualInit = false;
-  s.coneConverging = false;
-  s._vrVisible = null;
+  // it may have been tracked for a long time before anyone looked at it, so
+  // put it straight where it belongs rather than easing in from the origin
   refreshEntity(s);
-  vrVisibilityDirty = true;
+  snapShipVisual(s);
+  updateCourseCone(s);
+  return el;
 }
 
 function vrRemoveShip(s) {
@@ -6381,7 +6583,38 @@ function vrResetShips() {
   updateGlobeDots();
 }
 
+/* Where a vessel is and how fast, in scene space. Kept separate from what it
+ * looks like, because every vessel needs this and only a few need a hull: the
+ * density grid, the convergence check and the range cull all read sceneX/sceneZ
+ * and velX/velZ, and they have to be right for vessels that have never been
+ * drawn. */
+function updateShipTrack(s) {
+  if (s.lat == null) return;
+  const p = llToScene(s.lat, s.lon);
+  // raw reported position - the convergence and density maths want this, not
+  // the smoothed visual one used for rendering
+  s.sceneX = p.x; s.sceneZ = p.z;
+  s.targetX = p.x; s.targetZ = p.z;
+  s.targetRotY = headingToYRotation(s.hdgKnown ? s.hdg : 0);
+
+  // an unreported course must not project a confident track due north, which
+  // is what a plain `hdg || 0` would do for every vessel whose COG never
+  // arrived
+  const moving = s.hdgKnown && s.speedKnown && s.speed >= MIN_SOG_FOR_CONE_KN;
+  if (moving) {
+    const sogMps = s.speed * KN_TO_MPS;
+    const rad = s.hdg * DEG2RAD;
+    // same heading convention as headingToYRotation(): scene north is -Z, so a
+    // ship steering a compass bearing of `hdg` moves (sin, -cos)
+    s.velX = sogMps * Math.sin(rad);
+    s.velZ = -sogMps * Math.cos(rad);
+  } else {
+    s.velX = 0; s.velZ = 0;
+  }
+}
+
 function refreshEntity(s) {
+  updateShipTrack(s);
   if (!s.el || s.lat == null) return;
   const dims = shipDims(s);
 
@@ -6391,12 +6624,6 @@ function refreshEntity(s) {
     opacity: s.hasRealDims ? 1 : 0.55
   });
 
-  const p = llToScene(s.lat, s.lon);
-  // raw reported position - the convergence and density maths want this, not
-  // the smoothed visual one below
-  s.sceneX = p.x; s.sceneZ = p.z;
-  s.targetX = p.x; s.targetZ = p.z;
-  s.targetRotY = headingToYRotation(s.hdgKnown ? s.hdg : 0);
   if (!s.hasVisualInit) snapShipVisual(s); // first sighting: appear immediately, nothing to smooth from yet
   // subsequent updates are left to updateShipSmoothing() to ease toward rather
   // than snap - AIS position noise that was invisible at flat-screen pixel
@@ -6418,7 +6645,9 @@ function refreshEntity(s) {
 }
 
 function vrUpdateShip(s) {
-  if (!s.el) return;
+  // refreshEntity updates the track for every vessel and the visuals only for
+  // those that have a hull - the density grid below is fed by the track, so it
+  // must not be gated on one
   refreshEntity(s);
   // one density bump per position report, not per registry touch - a static
   // message arriving for a stationary vessel must not count as traffic
@@ -6456,9 +6685,11 @@ function applyVrVisibility() {
   }
   const maxLocal = HULL_MAX_DIST_SCENE / Math.max(1e-9, worldScale);
   for (const s of Fleet.list) {
-    if (!s.el) continue;
     const vis = flat && passesFilters(s) &&
       (s.sceneX == null || Math.hypot(s.sceneX - _cullCam.x, s.sceneZ - _cullCam.z) < maxLocal);
+    // a vessel earns its hull the first time it is about to be drawn
+    if (vis && !s.el) ensureShipEntity(s);
+    if (!s.el) continue;
     if (s._vrVisible !== vis) {
       // straight to object3D, not setAttribute: this can touch thousands of
       // entities and a-frame's attribute path re-parses and diffs a string
@@ -6498,6 +6729,7 @@ function lerpAngleDeg(a, b, t) {
 
 function snapShipVisual(s) {
   s.visualX = s.targetX; s.visualZ = s.targetZ; s.visualRotY = s.targetRotY;
+  if (!s.el) { s.hasVisualInit = true; return; }
   s.el.object3D.position.set(s.visualX, 0, s.visualZ);
   s.el.object3D.rotation.y = THREE.MathUtils.degToRad(s.visualRotY);
   s.hasVisualInit = true;
@@ -6599,26 +6831,15 @@ const CONVERGE_CHECK_MS = 1500;
 let cpaEvents = [];   // filled by checkConvergence(), drawn by renderCpaMarkers()
 const MIN_SOG_FOR_CONE_KN = 0.5; // anchored/stopped ships get no cone - nothing to project
 
+/* Draws the cone. The velocity it is based on belongs to updateShipTrack(),
+ * which runs for every vessel whether or not one is drawn - the convergence
+ * check and the CPA markers are built on that velocity and must not stop
+ * working because the cones were turned down, or because a vessel has no hull
+ * yet. */
 function updateCourseCone(s, dims) {
+  if (!s.el) return;
   dims = dims || shipDims(s);
-  // an unreported course must not project a confident track due north, which
-  // is what a plain `hdg || 0` would do for every vessel whose COG never
-  // arrived
   const moving = s.hdgKnown && s.speedKnown && s.speed >= MIN_SOG_FOR_CONE_KN;
-
-  // The velocity is maintained whatever the cone mode: the convergence check
-  // and the CPA markers are built on it, and they should not stop working
-  // because the cones were turned down to reduce clutter.
-  if (moving) {
-    const sogMps = s.speed * KN_TO_MPS;
-    const rad = s.hdg * DEG2RAD;
-    // same heading convention as headingToYRotation(): scene north is -Z, so a
-    // ship steering a compass bearing of `hdg` moves (sin, -cos)
-    s.velX = sogMps * Math.sin(rad);
-    s.velZ = -sogMps * Math.cos(rad);
-  } else {
-    s.velX = 0; s.velZ = 0;
-  }
 
   const hasCourse = moving && (
     conesMode === 'all' ||
@@ -6637,7 +6858,7 @@ function updateCourseCone(s, dims) {
 }
 
 function refreshAllCones() {
-  for (const s of Fleet.list) { if (s.el) updateCourseCone(s); }
+  for (const s of Fleet.list) { updateCourseCone(s); }   // no-ops for vessels with no hull yet
 }
 
 // Runs on a timer rather than per frame (O(n^2) pairs isn't free) and rather
@@ -6647,9 +6868,40 @@ function refreshAllCones() {
 // alarm: treat each ship as a point at constant velocity, find the time within
 // [0, lookahead] where the gap is smallest, flag it if that gap is inside both
 // hulls' combined "close enough to matter" radius.
+/* How many vessels the pairwise check will look at.
+ *
+ * It compares every moving pair, so its cost is quadratic - fine at the few
+ * hundred vessels a ten-minute window ever held, ruinous now that the registry
+ * keeps two days of traffic: six thousand vessels measured at 123 ms a pass,
+ * every 1.5 s, which in a headset is a visible hitch rather than a slow frame.
+ *
+ * Two bounds fix it without changing what the feature means. Only vessels that
+ * are actually on screen are considered - this is a flat-level-of-detail
+ * feature already (the markers are not drawn at globe zoom and nothing in the
+ * 2D renderer reads its results), so a conflict between two ships over the
+ * horizon was never going to be shown. And past that, only the nearest few
+ * hundred, because zoomed far out "on screen" can still be half a continent.
+ * The cap is on candidates, not on markers: CPA_MAX_MARKERS still decides how
+ * many are drawn. */
+const CPA_MAX_CANDIDATES = 600;   // 180k pairs, ~4 ms - comfortably inside a frame budget
+const _cpaCam = new THREE.Vector3();
+
 function checkConvergence() {
-  const list = [];
-  for (const s of Fleet.list) { if (s.el && (s.velX || s.velZ)) list.push(s); }
+  let list = [];
+  for (const s of Fleet.list) { if (s.el && s._vrVisible && (s.velX || s.velZ)) list.push(s); }
+  if (list.length > CPA_MAX_CANDIDATES) {
+    // nearest to the viewer wins - those are the ones being looked at
+    const camera = sceneEl.camera;
+    if (camera) {
+      camera.getWorldPosition(_cpaCam);
+      worldEl.object3D.worldToLocal(_cpaCam);
+    } else {
+      _cpaCam.set(0, 0, 0);
+    }
+    list.sort((a, b) => (Math.hypot(a.sceneX - _cpaCam.x, a.sceneZ - _cpaCam.z))
+                      - (Math.hypot(b.sceneX - _cpaCam.x, b.sceneZ - _cpaCam.z)));
+    list.length = CPA_MAX_CANDIDATES;
+  }
   const stillConverging = new Set();
   const lookaheadSec = Math.max(1, lookaheadMin) * 60;
   cpaEvents.length = 0;
@@ -6684,8 +6936,10 @@ function checkConvergence() {
   cpaEvents.sort((p, q) => p.t - q.t);
   if (cpaEvents.length > CPA_MAX_MARKERS) cpaEvents.length = CPA_MAX_MARKERS;
 
+  // every vessel is reconsidered, not just the candidates - one that has left
+  // the set has by definition no known conflict any more, and must not keep a
+  // red cone from a check that no longer covers it
   for (const s of Fleet.list) {
-    if (!s.el) continue;
     const was = s.coneConverging;
     s.coneConverging = stillConverging.has(s.id);
     if (s.coneConverging !== was) updateCourseCone(s);
@@ -7523,6 +7777,159 @@ function updateWristMenuButton() {
   prevMenuButton = pressed;
 }
 
+
+
+/* ============================================================ */
+/* landmarks - knowing which coast you are looking at            */
+/* ============================================================ */
+/* Zoomed in at true scale you can see a coastline, the grid tells you how far
+ * things are and the compass tells you which way you are facing - and none of
+ * that tells you *where you are*. A coastline with no name on it is the same
+ * shape everywhere.
+ *
+ * So the named places already loaded for the flat map get put into the scene.
+ * Ports first, because a port is what a coastline means at sea and Natural
+ * Earth's ports layer is the one thing here with real names on the water's
+ * edge; country centroids as a coarse fallback when no ports are near or the
+ * layer has not been fetched yet.
+ *
+ * A place further away than the fog is still drawn, pulled in to a ring at the
+ * edge of visibility along its true bearing, with its real distance on the
+ * label. That is a signpost rather than a position, which is deliberate: for
+ * orientation the direction and the distance are the whole answer, and a
+ * marker you cannot see because it is 200 km away answers nothing. Anything
+ * within view sits at its true position. */
+const LANDMARK_COUNT = 6;
+const LANDMARK_REFRESH_MS = 2000;
+const LANDMARK_MAX_M = 400000;      // past this it is not a useful cue, it is noise
+/* How large a landmark label is drawn, as a fraction of how far away it is -
+ * so it subtends a constant angle and reads the same whether the place is a
+ * kilometre off or pinned at the horizon. Measured rather than guessed: at
+ * 1/320 the glyphs came out about six pixels tall and were effectively
+ * invisible; this puts them at roughly twenty. */
+const LANDMARK_LABEL_ANGLE = 1 / 100;
+const landmarksRoot = document.getElementById('landmarks');
+const landmarkPool = [];
+let landmarksBuiltAt = 0;
+let nearestLandmark = null;         // fed to the nav readout
+
+function landmarkCandidates() {
+  const out = [];
+  if (mapLayers.ports && basemap.ports) {
+    for (const d of basemap.ports) {
+      const c = d.f && d.f.geometry && d.f.geometry.coordinates;
+      if (!c || !d.name) continue;
+      out.push({ name: d.name, lon: c[0], lat: c[1], port: true });
+    }
+  }
+  if (out.length < LANDMARK_COUNT) {
+    // no ports loaded yet (they only arrive past a zoom threshold) - country
+    // names are coarse but better than an anonymous coast
+    for (const pl of getPlaces()) {
+      if (pl.name && pl.c) out.push({ name: pl.name, lon: pl.c[0], lat: pl.c[1], port: false });
+    }
+  }
+  return out;
+}
+
+function makeLandmark() {
+  const el = document.createElement('a-entity');
+  const post = document.createElement('a-cylinder');
+  post.setAttribute('radius', 1);
+  post.setAttribute('height', 1);
+  post.setAttribute('material', 'color: #ffd08a; opacity: 0.5; transparent: true; shader: flat; side: double');
+  el.appendChild(post);
+  const label = document.createElement('a-entity');
+  label.setAttribute('billboard', '');
+  // wrapCount against width is what fixes the glyph size - without it a-frame
+  // lays the line out for 40 characters and the letters end up a fraction of a
+  // unit tall, which at kilometres of range is under a pixel
+  label.setAttribute('text', { value: '', align: 'center', width: 10, wrapCount: 16,
+                               color: '#ffd08a', baseline: 'bottom' });
+  el.appendChild(label);
+  landmarksRoot.appendChild(el);
+  const rec = { el, post, label };
+  landmarkPool.push(rec);
+  return rec;
+}
+
+function fmtRange(m) {
+  return m >= 1000 ? (m / 1000).toFixed(m < 10000 ? 1 : 0) + ' km' : Math.round(m) + ' m';
+}
+
+function bearingLabel(deg) {
+  const pts = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return pts[Math.round(((deg % 360 + 360) % 360) / 22.5) % 16];
+}
+
+function updateLandmarks(now) {
+  const on = vrLod === 'flat' && !mapPanelActive;
+  if (!on) {
+    if (landmarksRoot.object3D.visible) landmarksRoot.object3D.visible = false;
+    nearestLandmark = null;
+    return;
+  }
+  landmarksRoot.object3D.visible = true;
+  if (now - landmarksBuiltAt < LANDMARK_REFRESH_MS) return;
+  landmarksBuiltAt = now;
+
+  // where the viewer is, in the same world-local metres the places project to
+  const camera = sceneEl.camera;
+  const eye = new THREE.Vector3();
+  if (camera) { camera.getWorldPosition(eye); worldEl.object3D.worldToLocal(eye); }
+
+  const near = [];
+  for (const c of landmarkCandidates()) {
+    const p = llToScene(c.lat, c.lon);
+    const dx = p.x - eye.x, dz = p.z - eye.z;
+    const d = Math.hypot(dx, dz);
+    if (d > LANDMARK_MAX_M) continue;
+    near.push({ c, x: p.x, z: p.z, dx, dz, d });
+  }
+  near.sort((a, b) => a.d - b.d);
+  // a port beats a country name at the same sort of range, so if any port made
+  // the cut drop the coarse entries entirely
+  const anyPort = near.slice(0, LANDMARK_COUNT * 2).some(n => n.c.port);
+  const chosen = (anyPort ? near.filter(n => n.c.port) : near).slice(0, LANDMARK_COUNT);
+  nearestLandmark = chosen.length ? chosen[0] : null;
+
+  // how far out a marker may sit before it is pulled in to the visible ring
+  const ringM = (VIEW_RANGE_SCENE * 0.72) / Math.max(1e-9, worldScale);
+
+  for (let i = 0; i < Math.max(chosen.length, landmarkPool.length); i++) {
+    const rec = landmarkPool[i] || (i < chosen.length ? makeLandmark() : null);
+    if (!rec) break;
+    if (i >= chosen.length) { rec.el.object3D.visible = false; continue; }
+
+    const n = chosen[i];
+    const pulledIn = n.d > ringM;
+    const k = pulledIn ? ringM / n.d : 1;
+    rec.el.object3D.visible = true;
+    rec.el.object3D.position.set(eye.x + n.dx * k, 0, eye.z + n.dz * k);
+
+    // sized against how far away it is drawn, so it reads the same whether it
+    // is a kilometre off or pinned at the horizon
+    const drawnM = n.d * k;
+    const postR = Math.max(4, drawnM * 0.0026);
+    const postH = Math.max(60, drawnM * 0.075);
+    rec.post.object3D.scale.set(postR, postH, postR);
+    rec.post.object3D.position.set(0, postH / 2, 0);
+    // a-frame text is sized in world units, so at a few kilometres a
+    // default-width label is a couple of pixels tall. Scaling it with how far
+    // away it is drawn keeps it subtending a constant angle - readable at any
+    // range without ballooning up close.
+    rec.label.object3D.scale.setScalar(Math.max(1, drawnM * LANDMARK_LABEL_ANGLE));
+    rec.label.object3D.position.set(0, postH + drawnM * 0.012 + 20, 0);
+    rec.label.setAttribute('text', 'value',
+      n.c.name.toUpperCase() + '\n' + fmtRange(n.d) + ' ' + bearingLabel(sceneBearingDeg(n.dx, n.dz)) +
+      (pulledIn ? ' →' : ''));
+  }
+}
+
+// scene convention: -Z is north, +X is east
+function sceneBearingDeg(dx, dz) {
+  return (Math.atan2(dx, -dz) * 180 / Math.PI + 360) % 360;
+}
 
 /* ============================================================ */
 /* the vessel finder - search and jump, without a keyboard       */
