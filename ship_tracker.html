@@ -5385,6 +5385,14 @@ const GRID_LINE = 'rgba(150,210,245,0.30)';
 const GRID_LINE_MAJOR = 'rgba(170,225,255,0.5)';   // every fifth line, so the spacing is countable at a glance
 
 let land10Feature = null;
+/* Which detail layers are currently in hand. Painted textures are cached
+ * against this, so a layer arriving mid-session repaints the sea rather than
+ * leaving you looking at a coast with no rivers in it. */
+function layerStamp() {
+  return (basemap.rivers ? 'r' : '') + (basemap.lakes ? 'l' : '') +
+         (basemap.ports ? 'p' : '') + landTier;
+}
+
 function basemapLand() {
   // follows the same sticky tier the flat map uses, so the coastline does not
   // swap resolution (and visibly shift) at a threshold you happen to hover on
@@ -5403,9 +5411,22 @@ function basemapBorders() {
   return (landTier >= 1 && basemap.borders50) ? basemap.borders50 : basemap.borders;
 }
 
-// one land fill + coastline stroke + interior borders, through whichever
-// projection the caller has fitted to their canvas
-function paintLandThrough(ctx, projection, coastWidth) {
+/* The basemap, through whichever projection the caller has fitted to their
+ * canvas: land, coastline, borders, and - where the caller asks for it and the
+ * layers have been fetched - inland water and ports.
+ *
+ * Inland water matters more here than on the flat map. Natural Earth's land
+ * polygon does not cut river channels out of the land, so a vessel correctly
+ * reported at Rotterdam, Antwerp or Hamburg sits on solid green with no water
+ * under it - which at sea level reads as a boat in a field. Drawing the rivers
+ * as a nominal channel puts the water back.
+ *
+ * `win` is a lon/lat bounding box used to cull; the river and lake layers are
+ * tens of thousands of segments and only the ones near this patch are worth
+ * projecting. */
+function paintLandThrough(ctx, projection, coastWidth, opts) {
+  const o = opts || {};
+  const win = o.win;
   const path = d3.geoPath(projection, ctx);
   ctx.fillStyle = LAND_FILL;
   ctx.beginPath();
@@ -5427,6 +5448,80 @@ function paintLandThrough(ctx, projection, coastWidth) {
     ctx.beginPath();
     for (let i = 0; i < borders.length; i++) path(borders[i].f);
     ctx.stroke();
+  }
+
+  const near = (d) => !win || !(d.e < win.w || d.w > win.e || d.n < win.s || d.s > win.n);
+
+  // lakes, in the sea colour so they read as water the rivers can run into
+  if (mapLayers.rivers && basemap.lakes) {
+    ctx.beginPath();
+    for (let i = 0; i < basemap.lakes.length; i++) {
+      if (near(basemap.lakes[i])) path(basemap.lakes[i].f);
+    }
+    ctx.fillStyle = SEA_FILL;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(62,168,255,0.3)';
+    ctx.lineWidth = Math.max(0.6, coastWidth * 0.6);
+    ctx.stroke();
+  }
+
+  /* Rivers, as a channel plus a centreline. The channel is a wide stroke in
+   * the sea colour - the width is indicative, not surveyed - and it is what
+   * actually puts water under a vessel in a river port. */
+  if (mapLayers.rivers && basemap.rivers && o.riverChannelPx > 0) {
+    /* Channel width by scalerank - but every river in view gets one, not just
+     * the top few. Natural Earth's scalerank is a labelling hint rather than a
+     * size ordering: the Rhine, the Waal, the Lek and the Nederrijn are all
+     * rank 4, so a `rank <= 3` cut drew no channel through the entire Rhine
+     * delta and left every Rotterdam berth sitting on dry land. */
+    const byRank = [[], [], []];   // 0: rank<=3, 1: 4-5, 2: the rest
+    for (let i = 0; i < basemap.rivers.length; i++) {
+      const d = basemap.rivers[i];
+      if (!near(d)) continue;
+      const r = d.rank == null ? 6 : d.rank;
+      byRank[r <= 3 ? 0 : r <= 5 ? 1 : 2].push(d);
+    }
+    const widthFor = [1, 0.7, 0.45];
+    for (let g = 0; g < 3; g++) {
+      const w = o.riverChannelPx * widthFor[g];
+      if (!byRank[g].length || w <= coastWidth) continue;
+      ctx.beginPath();
+      for (let i = 0; i < byRank[g].length; i++) path(byRank[g][i].f);
+      ctx.strokeStyle = SEA_FILL;
+      ctx.lineWidth = w;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+      ctx.lineCap = 'butt';
+    }
+    // the centreline over the top, so a river still reads when its channel is
+    // too narrow to draw at all
+    const anyRiver = byRank[0].length + byRank[1].length + byRank[2].length;
+    if (anyRiver) {
+      ctx.beginPath();
+      for (let g = 0; g < 3; g++) for (let i = 0; i < byRank[g].length; i++) path(byRank[g][i].f);
+      ctx.strokeStyle = 'rgba(90,180,255,0.5)';
+      ctx.lineWidth = Math.max(0.8, coastWidth);
+      ctx.stroke();
+    }
+  }
+
+  // ports, as a mark on the shore - the 3D signposts name them, this is what
+  // shows you where the berths actually are
+  if (o.portMarkPx > 0 && mapLayers.ports && basemap.ports) {
+    const r = o.portMarkPx;
+    ctx.fillStyle = '#ffc46b';
+    for (let i = 0; i < basemap.ports.length; i++) {
+      const d = basemap.ports[i];
+      if (!near(d)) continue;
+      const c = d.f.geometry && d.f.geometry.coordinates;
+      if (!c) continue;
+      const q = projection(c);
+      if (!q) continue;
+      ctx.beginPath();
+      ctx.arc(q[0], q[1], r, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 }
 
@@ -5578,7 +5673,17 @@ function paintGlobeWindow(latC, lonC, lonSpan) {
     .translate([BASEMAP_W / 2 - k * lonC * DEG2RAD, BASEMAP_H / 2 + k * latC * DEG2RAD])
     .clipExtent([[-8, -8], [BASEMAP_W + 8, BASEMAP_H + 8]])
     .precision(0.4);
-  paintLandThrough(ctx, projection, 0.75);
+  {
+    // pixels per metre on this window, so the river channel and the port marks
+    // are sized the same way the sea patch sizes them
+    const ppmW = k / EARTH_R_M;
+    paintLandThrough(ctx, projection, 0.75, {
+      win: { w: lonC - lonSpan / 2, e: lonC + lonSpan / 2,
+             s: latC - latSpan / 2, n: latC + latSpan / 2 },
+      riverChannelPx: 400 * ppmW,
+      portMarkPx: Math.min(9, 260 * ppmW)
+    });
+  }
 
   if (!globeWindowTex) {
     globeWindowTex = asSRGB(new THREE.CanvasTexture(ctx.canvas));
@@ -5589,7 +5694,7 @@ function paintGlobeWindow(latC, lonC, lonSpan) {
   globeWindowTex.needsUpdate = true;
   globeWindowTex.repeat.set(360 / lonSpan, 180 / latSpan);
   globeWindowTex.offset.set(-(lonC - lonSpan / 2 + 180) / lonSpan, -(latC - latSpan / 2 + 90) / latSpan);
-  globeWindow = { latC, lonC, lonSpan };
+  globeWindow = { latC, lonC, lonSpan, layers: layerStamp() };
 
   // ...and the crisp version on top, lifted just clear of the sphere so it
   // does not z-fight the surface it traces
@@ -5630,7 +5735,8 @@ function updateGlobeTexture() {
   }
   const w = globeWindow;
   const moved = w && Math.hypot(origin.lat - w.latC, (origin.lon - w.lonC) * Math.cos(origin.lat * DEG2RAD));
-  if (w && Math.abs(Math.log(spanDeg / w.lonSpan)) < 0.4 && moved < w.lonSpan * 0.18) return;
+  if (w && w.layers === layerStamp() &&
+      Math.abs(Math.log(spanDeg / w.lonSpan)) < 0.4 && moved < w.lonSpan * 0.18) return;
   paintGlobeWindow(origin.lat, origin.lon, spanDeg);
 }
 
@@ -5718,6 +5824,10 @@ function paintSea(cx, cz, extentM, cellM) {
   }
 
   const spanDeg = (extentM / M_PER_DEG_LAT);
+  const halfDegLat0 = (extentM / 2) / M_PER_DEG_LAT;
+  const halfDegLon0 = halfDegLat0 / Math.max(0.05, Math.cos(origin.lat * DEG2RAD));
+  const cLat0 = origin.lat - cz / M_PER_DEG_LAT;
+  const cLon0 = origin.lon + cx / (M_PER_DEG_LAT * Math.max(0.05, Math.cos(origin.lat * DEG2RAD)));
   const projection = d3.geoAzimuthalEquidistant()
     .rotate([-origin.lon, -origin.lat])
     .scale(ppm * EARTH_R_M)
@@ -5725,7 +5835,18 @@ function paintSea(cx, cz, extentM, cellM) {
     .clipAngle(Math.min(120, spanDeg * 1.5 + 1))
     .clipExtent([[-8, -8], [SEA_TEX + 8, SEA_TEX + 8]])
     .precision(0.4);
-  paintLandThrough(ctx, projection, 1);
+  /* A river channel is drawn at a nominal 400 m, which is what makes a berth
+   * in the Elbe or the Nieuwe Maas actually sit on water. Below a pixel of
+   * width there is nothing to draw, so it is skipped rather than smeared. */
+  const win = {
+    w: cLon0 - halfDegLon0, e: cLon0 + halfDegLon0,
+    s: cLat0 - halfDegLat0, n: cLat0 + halfDegLat0
+  };
+  paintLandThrough(ctx, projection, 1, {
+    win,
+    riverChannelPx: 400 * ppm,
+    portMarkPx: Math.min(12, Math.max(2, 260 * ppm))
+  });
 
   // the same coastline again, as a roughness mask
   const rctx = roughCtx;
@@ -5764,11 +5885,7 @@ function paintSea(cx, cz, extentM, cellM) {
   seaTexture.needsUpdate = true;
 
   // the vector coast for the same patch, a hair above the water
-  const halfDegLat = (extentM / 2) / M_PER_DEG_LAT;
-  const halfDegLon = halfDegLat / Math.max(0.05, Math.cos(origin.lat * DEG2RAD));
-  const cLat = origin.lat - cz / M_PER_DEG_LAT;
-  const cLon = origin.lon + cx / (M_PER_DEG_LAT * Math.max(0.05, Math.cos(origin.lat * DEG2RAD)));
-  const bounds = { w: cLon - halfDegLon, e: cLon + halfDegLon, s: cLat - halfDegLat, n: cLat + halfDegLat };
+  const bounds = win;
   const lift = extentM * 2e-4;
   coastFlatObj = setCoastObject(worldEl, coastFlatObj,
     buildCoastPositions(bounds, (lat, lon, out) => {
@@ -5777,7 +5894,7 @@ function paintSea(cx, cz, extentM, cellM) {
     }));
 
   seaPainted = { cx, cz, extent: extentM, lat: origin.lat, lon: origin.lon, tier: landTier,
-                 gridAlpha: Math.round(gridAlpha * 10) / 10 };
+                 gridAlpha: Math.round(gridAlpha * 10) / 10, layers: layerStamp() };
 }
 
 /* ---- the surface of the water -------------------------------------------
@@ -5883,7 +6000,7 @@ function updateOceanTiling() {
     (viewAltM - GRID_FADE_LO_M) / (GRID_FADE_HI_M - GRID_FADE_LO_M))) * 10) / 10;
   const p = seaPainted;
   if (!p || p.extent !== extent || p.lat !== origin.lat || p.lon !== origin.lon ||
-      p.tier !== landTier || p.gridAlpha !== wantGridAlpha ||
+      p.tier !== landTier || p.gridAlpha !== wantGridAlpha || p.layers !== layerStamp() ||
       Math.hypot(cx - p.cx, cz - p.cz) > extent * 0.12) {
     paintSea(cx, cz, extent, cell);
   }
@@ -5939,10 +6056,17 @@ function navTickFrame(now) {
     // in the headset - and what makes the sea and the planet repaint when they
     // arrive
     ensureDetailLayers();
-    // the named places the landmarks are built from live in the ports layer,
-    // which the flat map only fetches past its own zoom threshold - down on
-    // the water they are the whole orientation story, so ask directly
-    if (vrLod === 'flat' && mapLayers.ports) loadLayer('ports', g => basemap.ports = prepareGeo(g));
+    /* The detail layers are fetched by the flat map on its own zoom
+     * thresholds, which are the wrong trigger down here: at sea level the
+     * ports are the whole orientation story and the rivers are what put water
+     * under a berth. Ask for them directly once the world is the flat sea. */
+    if (vrLod === 'flat') {
+      if (mapLayers.ports) loadLayer('ports', g => basemap.ports = prepareGeo(g));
+      if (mapLayers.rivers) {
+        loadLayer('lakes', g => basemap.lakes = prepareGeo(g));
+        loadLayer('rivers', g => basemap.rivers = prepareGeo(g));
+      }
+    }
     currentLandTier();
     updateNavHud();
     updateOceanTiling();
