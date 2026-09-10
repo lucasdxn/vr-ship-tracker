@@ -4281,124 +4281,11 @@ function inflateBoundingSphere(mesh, factor = 1.6) {
   if (mesh.geometry.boundingSphere) mesh.geometry.boundingSphere.radius *= factor;
 }
 
-AFRAME.registerComponent('ship-hull', {
-  schema: {
-    length: { type: 'number', default: 30 },
-    beam: { type: 'number', default: 6 },
-    color: { type: 'color', default: '#7d8a96' },
-    opacity: { type: 'number', default: 1 }
-  },
-
-  init: function () {
-    // one mesh, one material, one draw call. It was two - a hull and a
-    // separate white deckhouse - which on a busy feed at sea level is two
-    // draw calls per vessel and the single largest CPU cost in the scene on
-    // standalone headset hardware, where draw calls are the thing Meta's own
-    // guidance says to count first. The deckhouse survives as a lighter shade
-    // baked into the vertex colours rather than as a second material.
-    this.mat = new THREE.MeshStandardMaterial({ roughness: 0.65, metalness: 0.1, vertexColors: true });
-    this.mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.mat);
-    this.el.setObject3D('ship-hull', this.mesh);
-    this.build();
-  },
-
-  update: function (oldData) {
-    const dimsChanged = !oldData || oldData.length !== this.data.length || oldData.beam !== this.data.beam;
-    if (dimsChanged) this.build();
-    this.mat.color.set(this.data.color);
-    this.mat.transparent = this.data.opacity < 1;
-    this.mat.opacity = this.data.opacity;
-  },
-
-  /* (Re)builds the silhouette for the current length and beam. Only called
-   * when the dimensions actually change - real ShipStaticData replacing a
-   * guessed fallback, mostly - and never on a position update, which for a
-   * live feed is every second or so per vessel. */
-  build: function () {
-    const L = Math.max(3, this.data.length);
-    const B = Math.max(1.5, this.data.beam);
-    const hl = L / 2, hw = B / 2;
-    const draft = Math.max(1.2, B * 0.35);
-
-    // hull outline in (beam, length) space, centred on the reported position:
-    // flat stern, straight sides for ~70% of the length, then a taper to a
-    // point at the bow
-    const shape = new THREE.Shape();
-    shape.moveTo(-hw, -hl);
-    shape.lineTo(hw, -hl);
-    shape.lineTo(hw, hl * 0.42);
-    shape.lineTo(0, hl);
-    shape.lineTo(-hw, hl * 0.42);
-    shape.closePath();
-
-    const hullGeo = new THREE.ExtrudeGeometry(shape, { depth: draft, bevelEnabled: false }).toNonIndexed();
-    // ExtrudeGeometry lies flat in XY, extruded along +Z. Rotating -90 about X
-    // turns "length" (shape Y) into world Z and "extrude depth" into world Y,
-    // which is what leaves the bow pointing along -Z at rotation.y = 0.
-    hullGeo.rotateX(-Math.PI / 2);
-
-    const deckW = B * 0.5, deckL = L * 0.2, deckH = Math.max(2, B * 0.55);
-    const deckGeo = new THREE.BoxGeometry(deckW, deckH, deckL).toNonIndexed();
-    // toward the stern (+Z in this local space), sitting on the hull deck -
-    // true for most cargo, tanker and passenger vessels, and close enough for
-    // everything else
-    deckGeo.translate(0, draft + deckH / 2, hl * 0.35);
-
-    const merged = mergeShipGeometry(hullGeo, deckGeo, DECK_SHADE);
-    hullGeo.dispose();
-    deckGeo.dispose();
-
-    this.mesh.geometry.dispose();
-    this.mesh.geometry = merged;
-    // Every real headset this was tested on flickered hulls in and out while
-    // turning your head: a stereo ArrayCamera session's frustum test is not
-    // perfectly stable frame to frame right at the edge of view. Disabling
-    // culling outright fixed the flicker and made VR unusable with any real
-    // ship count, since it forces every vessel to submit a draw call in both
-    // eyes even when genuinely off screen. Padding the bounding sphere keeps
-    // real culling working while giving the unstable boundary case enough
-    // slack to settle.
-    inflateBoundingSphere(this.mesh);
-
-    this.currentLabelHeight = draft + deckH + 4;
-  },
-
-  remove: function () {
-    this.el.removeObject3D('ship-hull');
-    this.mesh.geometry.dispose();
-    this.mat.dispose();
-  }
-});
-
-/* Concatenates the two silhouette pieces into a single non-indexed geometry,
- * tagging each with a vertex colour. The material's own colour is the vessel's
- * class colour and the vertex colours multiply into it, so the deckhouse comes
- * out as a lighter version of the hull rather than needing a material of its
- * own. (A `color` attribute is not optional once vertexColors is on: the
- * shader declares the attribute either way, and without one supplied WebGL
- * feeds it (0,0,0) and the whole mesh renders black.) */
-const DECK_SHADE = 1.75;   // the deckhouse, relative to the hull colour
-function mergeShipGeometry(hullGeo, deckGeo, deckShade) {
-  const hp = hullGeo.attributes.position, dp = deckGeo.attributes.position;
-  const hn = hullGeo.attributes.normal, dn = deckGeo.attributes.normal;
-  const total = hp.count + dp.count;
-
-  const pos = new Float32Array(total * 3);
-  const nrm = new Float32Array(total * 3);
-  const col = new Float32Array(total * 3);
-  pos.set(hp.array.subarray(0, hp.count * 3), 0);
-  pos.set(dp.array.subarray(0, dp.count * 3), hp.count * 3);
-  nrm.set(hn.array.subarray(0, hn.count * 3), 0);
-  nrm.set(dn.array.subarray(0, dn.count * 3), hp.count * 3);
-  col.fill(1, 0, hp.count * 3);
-  col.fill(deckShade, hp.count * 3, total * 3);
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  return geo;
-}
+/* The hull used to be a component here, one mesh per vessel. It is now drawn
+ * for the whole fleet in a single instanced call - see "the fleet as one mesh"
+ * further down, which is also where the geometry and the merge helper live.
+ * Each vessel keeps a (mesh-less) entity, which carries its label and its
+ * course cone and costs nothing to render. */
 
 /* ============================================================ */
 /* course-projection cone - the "why VR" collision-spotting feature       */
@@ -6074,12 +5961,14 @@ function navTickFrame(now) {
     updateGlobeDotScale();
     maybeRebuildGlobeDots(now);
     updateGlobeDotHover();
+    updateHullHover();
     updateShipMarker();
     updateShipLabels(now);
     updateLandmarks(now);
     updateSelectedTrail();
   }
   if (vrVisibilityDirty) { applyVrVisibility(); vrVisibilityDirty = false; }
+  else if (hullInstancesDirty) rebuildHullInstances();
 }
 
 /* The single clock for the whole page.
@@ -6650,35 +6539,26 @@ function vrAddShip(s) {
 function ensureShipEntity(s) {
   if (s.el) return s.el;
 
+  /* No mesh of its own. The hull is drawn for the whole fleet in one
+   * instanced call; this entity exists to carry the label and the course cone
+   * and to give them a transform to ride on, which costs a matrix update and
+   * no draw call. It is not clickable either - picking goes through the
+   * instanced pick mesh, since one element cannot report which of two thousand
+   * hulls the pointer is on. */
   const el = document.createElement('a-entity');
-  el.classList.add('clickable');
-  // ship-hull/course-cone pad their own meshes' bounding spheres directly (see
-  // inflateBoundingSphere()) rather than using the no-frustum-cull component
-  // the camera-locked HUD panels use - with a real ship count on screen,
-  // disabling culling outright on every hull/deck/cone/label, in both stereo
-  // eyes, every frame, was the actual cause of "incredibly laggy" VR after the
-  // first attempt at fixing the hull flicker.
-  el.setAttribute('ship-hull', { length: 30, beam: 6, color: SHIP_TYPES.other.color, opacity: 0.55 });
   el.setAttribute('course-cone', { length: 0 });
 
   const label = document.createElement('a-entity');
   label.setAttribute('text', { value: '', align: 'center', width: 10, color: '#e2e6f0', baseline: 'bottom' });
   label.setAttribute('billboard', '');
+  // hidden until updateShipLabels() picks it as one of the nearest few. An
+  // entity is visible by default, and _labelVisible starting false meant the
+  // "has it changed" test never fired - so every vessel in the fleet kept a
+  // live text mesh in the scene graph, capped at forty in name only.
+  label.addEventListener('loaded', () => { if (!s._labelVisible) label.object3D.visible = false; });
   el.appendChild(label);
 
   shipsRoot.appendChild(el);
-  el.addEventListener('click', () => {
-    selectShip(s.id);
-    // same as clicking a vessel on the flat map: pin it and drop a rung. The
-    // card's own button is the shortcut that goes all the way to 1:1.
-    if (s.lat != null) stepZoomInAt(s.lat, s.lon);
-  });
-  // laser-controls bundles the same cursor component the desktop mouse cursor
-  // uses, so this fires from a VR controller merely pointing at a ship, not
-  // just from a mouse hovering one
-  el.addEventListener('mouseenter', () => hoverShip(s.id));
-  el.addEventListener('mouseleave', () => unhoverShip(s.id));
-
   s.el = el;
   s.label = label;
   // it may have been tracked for a long time before anyone looked at it, so
@@ -6693,13 +6573,20 @@ function vrRemoveShip(s) {
   if (s.el && s.el.parentNode) s.el.parentNode.removeChild(s.el);
   s.el = null; s.label = null;
   if (hoveredShipId === s.id) hoveredShipId = null;
+  if (hullHoverId === s.id) hullHoverId = null;
   if (selectedShipId === s.id) selectedShipId = null;
   if (cardShipId === s.id) cardShipId = null;
+  s._vrVisible = false;
+  hullInstancesDirty = true;
   refreshInfoDisplay();
 }
 
 function vrResetShips() {
   while (shipsRoot.firstChild) shipsRoot.removeChild(shipsRoot.firstChild);
+  hullCandidates.length = 0;
+  hullDrawList.length = 0;
+  hullHoverId = null;
+  if (hullSolid) { hullSolid.count = 0; hullEst.count = 0; hullPick.count = 0; }
   clearDensity();
   clearBeacons();
   hoveredShipId = null;
@@ -6742,19 +6629,14 @@ function refreshEntity(s) {
   if (!s.el || s.lat == null) return;
   const dims = shipDims(s);
 
-  s.el.setAttribute('ship-hull', {
-    length: dims.lengthM, beam: dims.beamM,
-    color: shipColor(s),
-    opacity: s.hasRealDims ? 1 : 0.55
-  });
-
   if (!s.hasVisualInit) snapShipVisual(s); // first sighting: appear immediately, nothing to smooth from yet
   // subsequent updates are left to updateShipSmoothing() to ease toward rather
   // than snap - AIS position noise that was invisible at flat-screen pixel
   // scale reads as visible trembling once you are standing at 1:1 next to it
 
-  const hullComp = s.el.components['ship-hull'];
-  const labelY = hullComp ? hullComp.currentLabelHeight : dims.beamM;
+  // where the label floats: clear of the deckhouse, which the unit hull puts
+  // at (draft + deckH) * beam above the waterline
+  const labelY = dims.beamM * 0.9 + 4;
   s.label.setAttribute('position', { x: 0, y: labelY, z: 0 });
   const speedTxt = s.speedKnown ? s.speed.toFixed(1) + ' kn' : '';
   const labelTxt = shipTitle(s) + (speedTxt ? '\n' + speedTxt : '');
@@ -6770,8 +6652,8 @@ function refreshEntity(s) {
 
 function vrUpdateShip(s) {
   // refreshEntity updates the track for every vessel and the visuals only for
-  // those that have a hull - the density grid below is fed by the track, so it
-  // must not be gated on one
+  // those that have an entity - the density grid below is fed by the track, so
+  // it must not be gated on one
   refreshEntity(s);
   // one density bump per position report, not per registry touch - a static
   // message arriving for a stationary vessel must not count as traffic
@@ -6797,7 +6679,6 @@ Fleet.on('reset', vrResetShips);
 const _cullCam = new THREE.Vector3();
 function applyVrVisibility() {
   const flat = vrLod === 'flat';
-  let anyClickableChanged = false;
   // the viewer's own position in world-local metres, so every vessel can be
   // measured against where the eye actually is
   const camera = sceneEl.camera;
@@ -6823,18 +6704,296 @@ function applyVrVisibility() {
       // it has not been eased while it was hidden (see updateShipSmoothing),
       // so bring it to where it actually is before anyone can see it
       if (vis && s.hasVisualInit) snapShipVisual(s);
-      // ...and out of the pointer's way as well. A hull that is merely
-      // invisible still answers the laser, so at globe zoom every dot on the
-      // planet would sit behind a full-size ship hull nobody can see, and
-      // pointing anywhere near one would pop up its card.
-      if (setRaycastable(s.el, vis)) anyClickableChanged = true;
       s._vrVisible = vis;
+      hullInstancesDirty = true;   // the instance buffers list exactly this set
     }
   }
-  if (anyClickableChanged) refreshRaycasters();
+  if (hullInstancesDirty) rebuildHullInstances();
+  // the fleet answers the pointer through its instanced pick mesh, so the one
+  // container has to be in the raycast set whenever hulls are showing
+  if (setRaycastable(shipsRoot, flat)) refreshRaycasters();
   globeDotsEl.object3D.visible = !flat;
   if (!flat) updateGlobeDots();   // queued, not built here - see maybeRebuildGlobeDots()
 }
+
+
+/* ============================================================ */
+/* the fleet as one mesh - instanced hulls                       */
+/* ============================================================ */
+/* A draw call costs the CPU a fixed amount however small the thing being
+ * drawn, and measured on this scene that fixed amount is about 18 us: frame
+ * time came out as roughly 27 ms + 18 us per call, so two thousand vessels at
+ * a mesh each was ~1900 calls and about 17 fps. The triangles were never the
+ * problem - 55k, nothing - and neither was our own JavaScript, at 0.11 ms a
+ * frame. It was purely the number of times the renderer had to be told to draw
+ * something, which is exactly why the machine never looked busy.
+ *
+ * So every hull is drawn from one geometry in one call. The hull is already
+ * parametric - look at the shape below, every dimension falls out of length
+ * and beam - so a single unit hull scaled per instance by (beam, beam, length)
+ * reproduces any vessel exactly. Position, heading and size go into the
+ * instance matrix; the class colour goes into the instance colour, where it
+ * multiplies with the geometry's own vertex colours and so keeps the lighter
+ * deckhouse for free.
+ *
+ * Two meshes rather than one, because a vessel whose dimensions are still a
+ * guess is drawn translucent and opacity cannot vary per instance. Two calls
+ * instead of two thousand is not worth collapsing further.
+ *
+ * The vessels keep their entities: those now carry only the label and the
+ * course cone, which are pooled and capped and are cheap. What has gone is the
+ * per-vessel hull mesh. */
+const DECK_SHADE = 1.75;   // the deckhouse, relative to the hull colour
+const HULL_INSTANCE_CAP = 4000;
+
+let unitHullGeo = null;
+let hullSolid = null, hullEst = null, hullPick = null;
+let hullCandidates = [];      // everything the filters and the range cull admit
+let hullDrawList = [];        // instanceId -> ship, for turning a hit back into a vessel
+let hullInstancesDirty = true;
+
+/* The unit hull: length 1, beam 1, bow along -Z. Same construction as before,
+ * with L and B set to one - scaling by (B, B, L) then gives back exactly the
+ * old geometry, because every term was proportional to one or the other.
+ *
+ * The one thing that does not survive is the floors the old code put under the
+ * draft and the deckhouse height (max(1.2, ...) and max(2, ...)). Those only
+ * bite on vessels a few metres long, which at any zoom where you could see the
+ * difference are a couple of pixels. */
+function buildUnitHullGeometry() {
+  const hl = 0.5, hw = 0.5, draft = 0.35;
+
+  const shape = new THREE.Shape();
+  shape.moveTo(-hw, -hl);
+  shape.lineTo(hw, -hl);
+  shape.lineTo(hw, hl * 0.42);
+  shape.lineTo(0, hl);
+  shape.lineTo(-hw, hl * 0.42);
+  shape.closePath();
+
+  const hullGeo = new THREE.ExtrudeGeometry(shape, { depth: draft, bevelEnabled: false }).toNonIndexed();
+  // ExtrudeGeometry lies flat in XY, extruded along +Z; rotating -90 about X
+  // turns "length" into world Z and the extrude depth into world Y, which is
+  // what leaves the bow pointing along -Z at rotation.y = 0
+  hullGeo.rotateX(-Math.PI / 2);
+
+  const deckH = 0.55;
+  const deckGeo = new THREE.BoxGeometry(0.5, deckH, 0.2).toNonIndexed();
+  deckGeo.translate(0, draft + deckH / 2, hl * 0.35);   // toward the stern, on the deck
+
+  const merged = mergeShipGeometry(hullGeo, deckGeo, DECK_SHADE);
+  hullGeo.dispose();
+  deckGeo.dispose();
+  return merged;
+}
+
+/* Concatenates the two silhouette pieces into one non-indexed geometry,
+ * tagging each with a vertex colour so the deckhouse comes out lighter than
+ * the hull. Three multiplies the vertex colour by the instance colour, so this
+ * survives instancing untouched. (A `color` attribute is not optional once
+ * vertexColors is on: the shader declares it either way, and without one
+ * supplied WebGL feeds it (0,0,0) and everything renders black.) */
+function mergeShipGeometry(hullGeo, deckGeo, deckShade) {
+  const hp = hullGeo.attributes.position, dp = deckGeo.attributes.position;
+  const hn = hullGeo.attributes.normal, dn = deckGeo.attributes.normal;
+  const total = hp.count + dp.count;
+
+  const pos = new Float32Array(total * 3);
+  const nrm = new Float32Array(total * 3);
+  const col = new Float32Array(total * 3);
+  pos.set(hp.array.subarray(0, hp.count * 3), 0);
+  pos.set(dp.array.subarray(0, dp.count * 3), hp.count * 3);
+  nrm.set(hn.array.subarray(0, hn.count * 3), 0);
+  nrm.set(dn.array.subarray(0, dn.count * 3), hp.count * 3);
+  col.fill(1, 0, hp.count * 3);
+  col.fill(deckShade, hp.count * 3, total * 3);
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return geo;
+}
+
+function makeHullMesh(count, translucent) {
+  const mat = new THREE.MeshStandardMaterial({
+    roughness: 0.65, metalness: 0.1, vertexColors: true,
+    transparent: translucent, opacity: translucent ? 0.55 : 1
+  });
+  const m = new THREE.InstancedMesh(unitHullGeo, mat, count);
+  m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);   // rewritten every frame by the smoothing loop
+  // one call for the whole fleet either way, and culling all of it because the
+  // bounding sphere of a scattered fleet leaves the frustum would be wrong
+  m.frustumCulled = false;
+  m.count = 0;
+  return m;
+}
+
+function ensureHullMeshes() {
+  if (hullSolid) return;
+  unitHullGeo = buildUnitHullGeometry();
+  hullSolid = makeHullMesh(HULL_INSTANCE_CAP, false);
+  hullEst = makeHullMesh(HULL_INSTANCE_CAP, true);
+  // the pick target: same geometry, never rendered, and slightly fattened so a
+  // laser at arm's length can actually land on a distant hull. Three tests
+  // layers rather than visibility, so an invisible mesh is still a perfectly
+  // good hit target.
+  hullPick = new THREE.InstancedMesh(unitHullGeo, new THREE.MeshBasicMaterial(), HULL_INSTANCE_CAP);
+  hullPick.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  hullPick.frustumCulled = false;
+  hullPick.visible = false;
+  hullPick.count = 0;
+  shipsRoot.setObject3D('hulls', hullSolid);
+  shipsRoot.setObject3D('hulls-est', hullEst);
+  shipsRoot.setObject3D('hull-picks', hullPick);
+}
+
+/* Which vessels are in the instance buffers. Rebuilt only when the visible set
+ * changes; the per-frame work is just rewriting matrices (see
+ * writeHullInstances), which is what has to happen anyway as ships move. */
+/* The candidate set: everything the filters and the range cull admit. Which of
+ * those actually get written into the instance buffers is decided per frame by
+ * the frustum test in writeHullInstances(). */
+function rebuildHullInstances() {
+  ensureHullMeshes();
+  hullInstancesDirty = false;
+  hullCandidates.length = 0;
+  for (const s of Fleet.list) {
+    if (!s._vrVisible) continue;
+    hullCandidates.push(s);
+    if (hullCandidates.length >= HULL_INSTANCE_CAP) break;
+  }
+  writeHullInstances();
+}
+
+/* Rewrites every instance matrix from the smoothed positions. Called from the
+ * smoothing loop, so hulls move exactly as they did when each was its own
+ * object3D. */
+const _hullQuat = new THREE.Quaternion();
+const _hullPos = new THREE.Vector3();
+const _hullScale = new THREE.Vector3();
+const _hullMat = new THREE.Matrix4();
+const _hullUp = new THREE.Vector3(0, 1, 0);
+const HULL_PICK_FATTEN = 2.2;   // a hull is a thin sliver; the pick target is not
+const _hullFrustum = new THREE.Frustum();
+const _hullProj = new THREE.Matrix4();
+const _hullWorld = new THREE.Vector3();
+const _hullColor = new THREE.Color();
+
+/* Writes the instance buffers from the smoothed positions, frustum-culling as
+ * it goes.
+ *
+ * An InstancedMesh is one object, so three culls it as one object - all or
+ * nothing. Left uncontrolled that meant every vessel the range cull admitted
+ * was submitted, on screen or not: at two thousand vessels, 2000 hulls
+ * rasterised where only 715 were in front of the viewer. Testing each
+ * instance's own position here restores the per-object culling that having a
+ * mesh each used to give for free, and costs six plane comparisons a vessel.
+ *
+ * Colours are written in the same pass rather than cached, because which
+ * buffer slot a vessel occupies now changes as the view moves. */
+function writeHullInstances() {
+  if (!hullSolid) return;
+  const camera = sceneEl.camera;
+  if (camera) {
+    camera.updateMatrixWorld();
+    _hullProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    _hullFrustum.setFromProjectionMatrix(_hullProj);
+  }
+  let iSolid = 0, iEst = 0, iPick = 0;
+  for (let i = 0; i < hullCandidates.length; i++) {
+    const s = hullCandidates[i];
+    _hullPos.set(s.visualX, 0, s.visualZ);
+    if (camera) {
+      _hullWorld.copy(_hullPos);
+      worldEl.object3D.localToWorld(_hullWorld);
+      if (!_hullFrustum.containsPoint(_hullWorld)) continue;
+    }
+    const dims = shipDims(s);
+    _hullQuat.setFromAxisAngle(_hullUp, THREE.MathUtils.degToRad(s.visualRotY));
+    _hullScale.set(dims.beamM, dims.beamM, dims.lengthM);
+    _hullMat.compose(_hullPos, _hullQuat, _hullScale);
+    _hullColor.set(shipColor(s));
+    if (s.hasRealDims) { hullSolid.setMatrixAt(iSolid, _hullMat); hullSolid.setColorAt(iSolid, _hullColor); iSolid++; }
+    else { hullEst.setMatrixAt(iEst, _hullMat); hullEst.setColorAt(iEst, _hullColor); iEst++; }
+    // the pick copy is fatter, and its index is what instanceId maps back
+    // through hullDrawList
+    _hullScale.multiplyScalar(HULL_PICK_FATTEN);
+    _hullMat.compose(_hullPos, _hullQuat, _hullScale);
+    hullPick.setMatrixAt(iPick, _hullMat);
+    hullDrawList[iPick] = s;
+    iPick++;
+  }
+  hullSolid.count = iSolid; hullEst.count = iEst; hullPick.count = iPick;
+  hullDrawList.length = iPick;
+  hullSolid.instanceMatrix.needsUpdate = true;
+  hullEst.instanceMatrix.needsUpdate = true;
+  hullPick.instanceMatrix.needsUpdate = true;
+  if (hullSolid.instanceColor) hullSolid.instanceColor.needsUpdate = true;
+  if (hullEst.instanceColor) hullEst.instanceColor.needsUpdate = true;
+}
+
+/* Turning a hit on the fleet back into a vessel. An InstancedMesh reports which
+ * instance was hit rather than which object, and the id indexes the same list
+ * the matrices were written from. */
+function shipFromHullIntersection(it) {
+  if (!it || it.instanceId == null || it.object !== hullPick) return null;
+  return hullDrawList[it.instanceId] || null;
+}
+
+/* Pointing at a hull. Polled from the raycasters rather than driven by
+ * mouseenter/mouseleave, because those fire once per *element* and the whole
+ * fleet is now one element - the entity never changes as the pointer moves
+ * from ship to ship, so the events that would tell us never arrive. Same
+ * reasoning, and the same shape, as the globe dot cloud. */
+let hullHoverId = null;
+const _hullHoverPos = new THREE.Vector3();
+function updateHullHover() {
+  let found = null;
+  if (vrLod === 'flat' && !mapPanelActive && hullPick && hullPick.count && !hudUnderPointer()) {
+    let bestPerp = Infinity;
+    const rcs = document.querySelectorAll('[raycaster]');
+    for (let i = 0; i < rcs.length; i++) {
+      const comp = rcs[i].components && rcs[i].components.raycaster;
+      const hits = comp && comp.intersections;
+      if (!hits || !hits.length) continue;
+      const ray = comp.raycaster && comp.raycaster.ray;
+      for (let k = 0; k < hits.length; k++) {
+        const s = shipFromHullIntersection(hits[k]);
+        if (!s) continue;
+        if (!ray) { found = found || s; continue; }
+        // the pick hulls are fattened and overlap in traffic, so the nearest
+        // *surface* along the ray is often a neighbour - the one whose centre
+        // is nearest the ray axis is the one being aimed at
+        _hullHoverPos.set(s.visualX, 0, s.visualZ);
+        worldEl.object3D.localToWorld(_hullHoverPos);
+        const perp = ray.distanceToPoint(_hullHoverPos);
+        if (perp < bestPerp) { bestPerp = perp; found = s; }
+      }
+    }
+  }
+  const id = found ? found.id : null;
+  if (id === hullHoverId) return;
+  if (hullHoverId != null) unhoverShip(hullHoverId);
+  hullHoverId = id;
+  if (id != null) hoverShip(id);
+}
+
+function clickHoveredHull() {
+  if (hullHoverId == null) return false;
+  const s = Fleet.get(hullHoverId);
+  if (!s || s.lat == null) return false;
+  selectShip(s.id);
+  // same as clicking a vessel on the flat map: pin it and drop a rung. The
+  // card's own button is the shortcut that goes all the way to 1:1.
+  stepZoomInAt(s.lat, s.lon);
+  return true;
+}
+
+shipsRoot.addEventListener('click', (evt) => {
+  if (hudUnderPointer()) return;
+  if (clickHoveredHull()) evt.stopPropagation();
+});
 
 /* ============================================================ */
 /* ship position/rotation smoothing                              */
@@ -6853,6 +7012,7 @@ function lerpAngleDeg(a, b, t) {
 
 function snapShipVisual(s) {
   s.visualX = s.targetX; s.visualZ = s.targetZ; s.visualRotY = s.targetRotY;
+  s.hullDirty = true;
   if (!s.el) { s.hasVisualInit = true; return; }
   s.el.object3D.position.set(s.visualX, 0, s.visualZ);
   s.el.object3D.rotation.y = THREE.MathUtils.degToRad(s.visualRotY);
@@ -6925,6 +7085,9 @@ function updateShipSmoothing(dt) {
     s.el.object3D.position.set(s.visualX, 0, s.visualZ);
     s.el.object3D.rotation.y = THREE.MathUtils.degToRad(s.visualRotY);
   }
+  // the hulls are one mesh, so their transforms are instance matrices rather
+  // than object3Ds - same easing, written in one pass
+  writeHullInstances();
 }
 
 /* ============================================================ */
@@ -6950,6 +7113,35 @@ const KN_TO_MPS = 0.514444;
  * there for a quiet stretch of water where seeing every intent is useful. */
 const CONE_MODES = ['off', 'alerts', 'all'];
 let conesMode = 'alerts';
+/* How many cones may be on screen at once.
+ *
+ * Each one is its own translucent mesh, so they are draw calls in exactly the
+ * way the hulls used to be - a busy strait was putting five hundred of them up
+ * and they were the single largest remaining cost once the hulls were
+ * instanced. They are also unreadable at that density: the point of a cone is
+ * spotting one conflict, not drawing every intent at once. The nearest few to
+ * the viewer are the ones being looked at. */
+const CONE_MAX_VISIBLE = 60;
+const coneAllowed = new Set();     // ship ids whose cone may draw this pass
+const _conePos = new THREE.Vector3();
+
+function recomputeConeAllowance() {
+  coneAllowed.clear();
+  if (conesMode === 'off' || vrLod !== 'flat') return;
+  const camera = sceneEl.camera;
+  if (camera) { camera.getWorldPosition(_conePos); worldEl.object3D.worldToLocal(_conePos); }
+  else _conePos.set(0, 0, 0);
+  const cand = [];
+  for (const s of Fleet.list) {
+    if (!s._vrVisible || !(s.velX || s.velZ)) continue;
+    const wanted = conesMode === 'all' ||
+      s.coneConverging || s.id === selectedShipId || s.id === hoveredShipId;
+    if (!wanted) continue;
+    cand.push({ s, d: Math.hypot(s.sceneX - _conePos.x, s.sceneZ - _conePos.z) });
+  }
+  cand.sort((a, b) => a.d - b.d);
+  for (let i = 0; i < Math.min(CONE_MAX_VISIBLE, cand.length); i++) coneAllowed.add(cand[i].s.id);
+}
 let lookaheadMin = 10;
 const CONVERGE_CHECK_MS = 1500;
 let cpaEvents = [];   // filled by checkConvergence(), drawn by renderCpaMarkers()
@@ -6965,10 +7157,7 @@ function updateCourseCone(s, dims) {
   dims = dims || shipDims(s);
   const moving = s.hdgKnown && s.speedKnown && s.speed >= MIN_SOG_FOR_CONE_KN;
 
-  const hasCourse = moving && (
-    conesMode === 'all' ||
-    (conesMode === 'alerts' && (s.coneConverging || s.id === selectedShipId || s.id === hoveredShipId))
-  );
+  const hasCourse = moving && conesMode !== 'off' && coneAllowed.has(s.id);
 
   const lookaheadSec = Math.max(1, lookaheadMin) * 60;
   const length = hasCourse ? s.speed * KN_TO_MPS * lookaheadSec : 0;
@@ -7069,7 +7258,13 @@ function checkConvergence() {
     if (s.coneConverging !== was) updateCourseCone(s);
   }
 }
-setInterval(() => { if (conesMode !== 'off') { checkConvergence(); renderCpaMarkers(); } }, CONVERGE_CHECK_MS);
+setInterval(() => {
+  if (conesMode === 'off') return;
+  checkConvergence();
+  recomputeConeAllowance();
+  refreshAllCones();
+  renderCpaMarkers();
+}, CONVERGE_CHECK_MS);
 
 /* ============================================================ */
 /* closest point of approach, as a place rather than a number    */
@@ -7343,6 +7538,9 @@ function clearBeacons() {
  * are refreshed, not the whole fleet. */
 function refreshConesFor(prevSel, prevHover) {
   if (conesMode !== 'alerts') return;
+  // the vessel you just pointed at earns a cone immediately, without waiting
+  // for the next allowance pass
+  for (const id of [selectedShipId, hoveredShipId]) if (id != null) coneAllowed.add(id);
   for (const id of new Set([prevSel, prevHover, selectedShipId, hoveredShipId])) {
     if (id == null) continue;
     const s = Fleet.get(id);
@@ -8362,6 +8560,7 @@ function syncFinderPanel(force) {
 function setConesMode(mode) {
   conesMode = CONE_MODES.indexOf(mode) >= 0 ? mode : 'alerts';
   document.getElementById('cones-toggle').value = conesMode;
+  recomputeConeAllowance();
   refreshAllCones();
   renderCpaMarkers();
   syncWristMenu();
