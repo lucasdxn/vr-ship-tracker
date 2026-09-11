@@ -1238,6 +1238,8 @@ let activeView = '2d';       // '2d' | 'vr'   - see setView()
 let mapPanelActive = false;  // is the flat map being shown as a screen in the headset? - see setMapPanelActive()
 let playbackMode = false;    //               - see setPlaybackMode()
 let vrVisibilityDirty = true; // 3D twin of visibleShipsDirty, cleared on its own frame
+let preloadQueue = null;     // live messages held while startup history loads - see preloadHistory()
+let preloadReplaying = false; //              true only during its one synchronous bulk replay
 
 /* ============================================================ */
 /* Vessel taxonomy — AIS "type of ship and cargo" code → class  */
@@ -2992,10 +2994,13 @@ aisChannel.addEventListener('message', ev => {
   if (msg.type === 'position') {
     if (!aisStreamActive) { aisStreamActive = true; addLog('AIS stream connected'); setLiveBadge(true); }
     lastAisMsgTs = Date.now();
-    ingestAisShip(msg);
+    // held, with the time it arrived, until the preloaded routes are in place
+    if (preloadQueue) preloadQueue.push({ msg, ts: lastAisMsgTs });
+    else ingestAisShip(msg);
   } else if (msg.type === 'static') {
     lastAisMsgTs = Date.now();
-    ingestAisStatic(msg);
+    if (preloadQueue) preloadQueue.push({ msg, ts: lastAisMsgTs });
+    else ingestAisStatic(msg);
   } else if (msg.type === 'status') {
     if (msg.state === 'online' && !aisStreamActive) { aisStreamActive = true; addLog('AIS stream online'); setLiveBadge(true); }
     if (msg.state === 'offline' && aisStreamActive) { aisStreamActive = false; addLog('AIS stream offline'); setLiveBadge(false); }
@@ -4278,6 +4283,9 @@ function setPlaybackMode(on) {
   document.getElementById('timeline-rig').setAttribute('visible', on);
 
   if (on) {
+    // a startup preload still in flight gives way: the live traffic it was
+    // holding joins the fleet about to be parked, and the preload is dropped
+    releasePreloadQueue(-Infinity);
     parkedLiveFleet = { ships: Fleet.list.slice(), statics: new Map(pendingStatics) };
     Fleet.clear();
     pendingStatics.clear();
@@ -4314,6 +4322,116 @@ document.getElementById('pb-jump').addEventListener('change', e => loadWindow(Nu
 document.getElementById('pb-scrub').addEventListener('input', e => { setPlaying(false); seekTo(Number(e.target.value)); });
 document.getElementById('pb-speed').addEventListener('change', e => { playbackSpeed = Number(e.target.value); syncWristMenu(); });
 document.getElementById('pb-playpause').addEventListener('click', () => setPlaying(!playing));
+
+/* ============================================================ */
+/* Startup route preloading                                     */
+/* ============================================================ */
+/* Without this a route is only as long as the page has been open. On load the
+ * last HISTORY_PRELOAD_MS of the relay's message log is replayed through the
+ * same applyRawHistoryMessage() -> ingestAisShip() path playback uses, so a
+ * preloaded route is the same structure a live one is, and live traffic then
+ * simply carries on extending the same records.
+ *
+ * It is a bounded lookback, not every route ever logged: the relay caps a
+ * response at 200000 messages, and a window busier than that is narrowed (see
+ * below) rather than shown with its newest end missing.
+ *
+ * The seam with live traffic: messages that arrive while the log is being
+ * fetched are held and applied after the replay. Those that arrived before
+ * `until` are dropped - the relay logs a message as it forwards it, so they
+ * are already in the replayed window, and the trail dedup guard would not
+ * catch them: the same report carries the relay's log time in history and the
+ * later receipt time live, so the live copy looks newer. (Both clocks are this
+ * machine's; the relay is on localhost.) */
+const PRELOAD_LIMIT = 200000;   // the relay's own maximum for one response
+
+async function preloadHistory() {
+  const queue = preloadQueue = [];
+  const stillOurs = () => preloadQueue === queue;   // playback may take over while we wait
+  let covered = -Infinity;                           // live messages up to here are in the replay
+  try {
+    const range = await (await fetch('/api/history/range')).json();
+    if (!stillOurs() || !(range && range.count > 0)) return;
+    const until = Date.now();
+    const wanted = Math.max(range.firstTs, until - HISTORY_PRELOAD_MS);
+    let since = wanted, json = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      json = await (await fetch('/api/history?since=' + since + '&until=' + until + '&limit=' + PRELOAD_LIMIT)).json();
+      if (!stillOurs()) return;
+      if (!json.truncated) break;
+      // the relay returns the oldest messages first, so a truncated window is
+      // missing its newest end - the part that has to meet live traffic.
+      // Narrow it to the span the cap was seen to hold, with some margin.
+      const got = json.messages;
+      const held = got.length ? got[got.length - 1]._ts - got[0]._ts : 0;
+      since = Math.round(until - held * 0.9);
+    }
+    if (json.truncated) {
+      console.warn('[preload] history is over the relay\'s ' + PRELOAD_LIMIT + '-message cap even narrowed to ' +
+        fmtClock(since) + ' → ' + fmtClock(until) + '; no routes preloaded, starting live-only');
+      return;
+    }
+    const hours = ((until - since) / 3600000).toFixed(1);
+    const shortened = since > wanted;
+    if (shortened) {
+      console.warn('[preload] lookback shortened by the relay\'s ' + PRELOAD_LIMIT + '-message cap: routes start at ' +
+        fmtClock(since) + ' (' + hours + ' h back) instead of ' + fmtClock(wanted) +
+        ' - anything a vessel did before that is not shown');
+    }
+
+    const msgs = json.messages.sort((a, b) => a._ts - b._ts);
+    // A vessel restored from a saved snapshot arrives with a trail already.
+    // Where the log covers it, the log's copy replaces it: the dedup guard
+    // would otherwise turn away every logged point older than the snapshot's
+    // last one, cutting the route down to the few the snapshot kept.
+    const logged = new Set();
+    for (let i = 0; i < msgs.length; i++) {
+      const t = translateRawAisMessage(msgs[i]);
+      if (t && t.type === 'position') logged.add('ais-' + t.mmsi);
+    }
+    const keepBefore = buf => { let k = 0; while (k < buf.length && buf[k].ts < since) k++; buf.length = k; };
+    for (let i = 0; i < ships.length; i++) {
+      const s = ships[i];
+      if (!logged.has(s.id)) continue;
+      keepBefore(s.trail);
+      if (s.fullTrail) keepBefore(s.fullTrail);
+    }
+    pbStaticsCache.clear();
+    preloadReplaying = true;
+    try {
+      for (let i = 0; i < msgs.length; i++) applyRawHistoryMessage(msgs[i]);
+    } finally {
+      preloadReplaying = false;
+      pbStaticsCache.clear();
+    }
+    covered = until;
+    for (let i = 0; i < ships.length; i++) if (ships[i].el) refreshEntity(ships[i]);
+    markVisibleDirty();
+    if (msgs.length) {
+      addLog('Preloaded ' + msgs.length.toLocaleString() + ' logged message(s), last ' + hours + ' h' +
+        (shortened ? ' (shortened by server cap)' : ''));
+    }
+  } catch (err) {
+    // no relay, no log, or a response that isn't one: live-only, as before
+  } finally {
+    if (stillOurs()) releasePreloadQueue(covered);
+  }
+}
+
+// applies, in arrival order, the live messages held during a preload - except
+// positions that arrived by `covered`, which the replay already contained
+function releasePreloadQueue(covered) {
+  const queue = preloadQueue;
+  if (!queue) return;
+  preloadQueue = null;
+  for (let i = 0; i < queue.length; i++) {
+    const { msg, ts } = queue[i];
+    if (msg.type === 'static') ingestAisStatic(msg);
+    else if (ts > covered) ingestAisShip(msg, ts);
+  }
+}
+
+preloadHistory();
 
 // the in-scene "physical timeline": click anywhere along the bar to seek
 // there, same click-to-act pattern as click-teleport on the ocean plane, just
@@ -6725,7 +6843,9 @@ function updateShipTrack(s) {
 
 function refreshEntity(s) {
   updateShipTrack(s);
-  if (!s.el || s.lat == null) return;
+  // a bulk history replay moves a vessel hundreds of times in one go; its
+  // visuals are brought up to date once, at the end - see preloadHistory()
+  if (!s.el || s.lat == null || preloadReplaying) return;
   const dims = shipDims(s);
 
   if (!s.hasVisualInit) snapShipVisual(s); // first sighting: appear immediately, nothing to smooth from yet
