@@ -656,8 +656,12 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
       <a-entity id="ship-info-hud" class="hud" no-frustum-cull visible="false" position="0.45 0.12 -1.05" scale="0.2 0.2 0.2">
         <a-plane width="3" height="1.5" position="0 -0.14 -0.01"
                  material="color: #0d0f14; opacity: 0.9; shader: flat; side: double"></a-plane>
+        <!-- wrapCount 24 rather than 30: glyph size is width/wrapCount, and at
+             this panel's distance the smaller count is what makes the vessel
+             name (the task-critical line) readable in one glance without
+             growing the panel itself. Long names wrap instead of shrinking. -->
         <a-entity id="ship-info-hud-text" position="0 0.14 0"
-                  text="value: -; align: center; width: 2.8; color: #e2e6f0; baseline: center; wrapCount: 30"></a-entity>
+                  text="value: -; align: center; width: 2.8; color: #e2e6f0; baseline: center; wrapCount: 24"></a-entity>
         <a-box id="ship-zoom-btn" class="clickable" width="2.2" height="0.3" depth="0.01"
                position="0 -0.6 0.01" material="color: #102437; opacity: 0.96; shader: flat">
           <a-entity text="value: ZOOM TO REAL SCALE; align: center; baseline: center; width: 2; wrapCount: 22; color: #3ea8ff" position="0 0 0.008"></a-entity>
@@ -3983,6 +3987,10 @@ enterVrBtn.addEventListener('click', () => {
 });
 vrSceneEl.addEventListener('enter-vr', () => {
   syncEnterVrButton(); updateCameraTilt();
+  // every session starts in the comfortable default - no participant inherits
+  // a previous run's fly mode and gets smooth motion they did not ask for
+  locomotionMode = 'teleport';
+  syncWristMenu();
   // the standing pose only exists once a session does; put the screen where the
   // viewer actually is rather than where the flat preview guessed
   if (typeof placeMapPanel === 'function' && mapPanelActive) placeMapPanel();
@@ -4854,6 +4862,18 @@ function buttonPressed(gamepad, index) {
   return !!(b && b.pressed);
 }
 
+/* One short controller buzz, through the same polled gamepad the buttons come
+ * from. A silent no-op wherever there is no actuator - a desktop mouse
+ * session, or a controller without haptics - so callers never need a guard of
+ * their own. Fired on exactly three events (vessel select, teleport landing,
+ * snap-turn commit) and nowhere else: haptics that fire constantly stop
+ * meaning anything. */
+function pulseHaptic(handEl, intensity, ms) {
+  const gp = handGamepad(handEl);
+  const act = gp && gp.hapticActuators && gp.hapticActuators[0];
+  if (act && act.pulse) { try { act.pulse(intensity, ms); } catch (_) {} }
+}
+
 const handLeftEl = document.getElementById('hand-left');
 const handRightEl = document.getElementById('hand-right');
 
@@ -5032,6 +5052,9 @@ function updateSnapTurn(stickX) {
   if (!snapTurnArmed || Math.abs(stickX) < SNAP_TURN_ENGAGE) return;
   snapTurnArmed = false;
   rigEl.object3D.rotation.y -= Math.sign(stickX) * THREE.MathUtils.degToRad(SNAP_TURN_DEG);
+  // the world jumps 30 degrees with no motion cue at all; the buzz is what
+  // marks it as something you did rather than something that happened
+  pulseHaptic(handRightEl, 0.3, 40);
 }
 
 /* Comfort tunnelling, driven by whether the viewer is actually being moved by
@@ -5103,6 +5126,7 @@ function updateLocomotion(dt) {
     locomotionMode = locomotionMode === 'teleport' ? 'fly' : 'teleport';
     teleportAimPoint = null; teleportAimLatLon = null;
     hideTeleportMarker();
+    syncWristMenu();   // the wrist menu's MOVE row mirrors the live mode
   }
   prevLeftStickClick = leftStickClick;
 
@@ -5139,10 +5163,14 @@ function updateLocomotion(dt) {
         if (point) { teleportAimPoint = point; showTeleportMarker(point); }
       }
     } else {
-      if (teleportAimLatLon) travelToLatLon(teleportAimLatLon.lat, teleportAimLatLon.lon);
-      else if (teleportAimPoint) {
+      // the buzz fires only on an actual landing, not on every stick release
+      if (teleportAimLatLon) {
+        travelToLatLon(teleportAimLatLon.lat, teleportAimLatLon.lon);
+        pulseHaptic(handRightEl, 0.5, 50);
+      } else if (teleportAimPoint) {
         rigEl.object3D.position.x = teleportAimPoint.x;
         rigEl.object3D.position.z = teleportAimPoint.z;
+        pulseHaptic(handRightEl, 0.5, 50);
       }
       teleportAimPoint = null; teleportAimLatLon = null;
       hideTeleportMarker();
@@ -6549,7 +6577,13 @@ function ensureShipEntity(s) {
   el.setAttribute('course-cone', { length: 0 });
 
   const label = document.createElement('a-entity');
-  label.setAttribute('text', { value: '', align: 'center', width: 10, color: '#e2e6f0', baseline: 'bottom' });
+  // width/wrapCount fix the glyph size (same tuning idea as the compass at
+  // width:66/wrapCount:3). The old width:10 with a-frame's default wrapCount
+  // of 40 put a character at 0.25 world units - unreadable past a ship-length
+  // away, and these labels are kept up to 3200 scene units out. 26/20 puts a
+  // character at 1.3 units, legible at the distances the label cull allows
+  // without dwarfing the smaller hulls it floats over.
+  label.setAttribute('text', { value: '', align: 'center', width: 26, wrapCount: 20, color: '#e2e6f0', baseline: 'bottom' });
   label.setAttribute('billboard', '');
   // hidden until updateShipLabels() picks it as one of the nearest few. An
   // entity is visible by default, and _labelVisible starting false meant the
@@ -7550,6 +7584,10 @@ function refreshConesFor(prevSel, prevHover) {
 function selectShip(id) {
   const prev = selectedShipId;
   selectedShipId = String(id); sidebarDirty = true;
+  // selection is the one action whose success is otherwise only a panel
+  // appearing off to the side; the buzz confirms the hit at the hand that
+  // made it (right: the trigger that selects rides the right-hand ray)
+  pulseHaptic(handRightEl, 0.4, 60);
   refreshConesFor(prev, hoveredShipId); refreshInfoDisplay();
 }
 function clearSelection() {
@@ -7978,6 +8016,19 @@ function buildWristMenu() {
     text: () => 'COMPASS  ' + (compassEnabled ? 'ON' : 'OFF'),
     color: () => compassEnabled ? '#3eff9a' : '#7a8099',
     onClick: () => { compassEnabled = !compassEnabled; updateCompass(); }
+  });
+  makeWristRow(-1, l++, {
+    // the locomotion mode, readable without having to push the stick and find
+    // out - smooth motion arriving unannounced is a comfort problem. Same
+    // state the left-stick click toggles and the nav readout suffixes; this
+    // row is the persistent, clickable spelling of it.
+    text: () => 'MOVE  ' + locomotionMode.toUpperCase(),
+    color: () => locomotionMode === 'fly' ? '#ffb83e' : '#3eff9a',
+    onClick: () => {
+      locomotionMode = locomotionMode === 'teleport' ? 'fly' : 'teleport';
+      teleportAimPoint = null; teleportAimLatLon = null;
+      hideTeleportMarker();
+    }
   });
 
   makeWristRow(-1, l++, {
