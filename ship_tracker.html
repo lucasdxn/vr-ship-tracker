@@ -645,7 +645,7 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
            facing" and "how far out am I" answerable at all over a featureless
            ocean - see updateNavHud(). -->
       <a-entity id="nav-hud" no-frustum-cull position="0 0.34 -1.1" scale="0.2 0.2 0.2">
-        <a-entity id="nav-hud-text" text="value: HDG 000° · ALT 0 m; align: center; width: 3; color: #7a8099; baseline: center"></a-entity>
+        <a-entity id="nav-hud-text" text="value: HDG 000 deg | ALT 0 m; align: center; width: 3; color: #7a8099; baseline: center"></a-entity>
       </a-entity>
 
       <!-- in-scene ship detail card (see renderInfoPanel()) - previews the
@@ -3788,13 +3788,22 @@ document.getElementById('btn-add-random-10').addEventListener('click', () => {
 const STORAGE_KEY = 'shiptrack-globe-state';
 const STATE_VERSION = 1;
 
+// a restorable position: finite and on the planet
+function validLatLon(lat, lon) {
+  return Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
+}
+
 function serializeState(includeTrails) {
+  // never write a camera restoreState() would have to reject (JSON writes a
+  // NaN as null): a non-finite one is saved as the default view instead
+  const camOk = Number.isFinite(rot.x) && Number.isFinite(rot.y) && Number.isFinite(scale);
   return JSON.stringify({
     v: STATE_VERSION,
-    view: { rotX: rot.x, rotY: rot.y, scale, autoRotate, showTrails, colorMode,
+    view: { rotX: camOk ? rot.x : 15, rotY: camOk ? rot.y : 0, scale: camOk ? scale : 1,
+            autoRotate, showTrails, colorMode,
             legend: legendVisible, mapLayers: Object.assign({}, mapLayers),
             shipListCollapsed: document.getElementById('ship-list').classList.contains('collapsed') },
-    ships: ships.map(s => ({
+    ships: ships.filter(s => validLatLon(s.lat, s.lon)).map(s => ({
       id: s.id, mmsi: s.mmsi, isAis: !!s.isAis, name: s.name, country: s.country || '',
       lat: s.lat, lon: s.lon, speed: s.speed, hdg: s.hdg,
       speedKnown: s.speedKnown !== false, hdgKnown: s.hdgKnown !== false,
@@ -3844,18 +3853,32 @@ function syncControlButtons() {
   document.getElementById('btn-trails').style.color = showTrails ? 'var(--color-primary)' : '';
 }
 
+/* A snapshot is applied whole or not at all, and one that cannot be applied is
+ * deleted: it is read on every load, so leaving a bad one in place would put
+ * every later load into the same broken view until someone cleared storage by
+ * hand. Checked before anything is touched. */
+function discardSnapshot(why) {
+  try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+  addLog('Discarded saved view (' + why + ')');
+  return false;
+}
+
 function restoreState() {
   let raw = null;
   try { raw = localStorage.getItem(STORAGE_KEY); } catch (e) { return false; }
   if (!raw) return false;
   let st;
-  try { st = JSON.parse(raw); } catch (e) { return false; }
-  if (!st || st.v !== STATE_VERSION) return false;
+  try { st = JSON.parse(raw); } catch (e) { return discardSnapshot('unreadable'); }
+  if (!st || typeof st !== 'object') return discardSnapshot('unreadable');
+  if (st.v !== STATE_VERSION) return false;
+  if (st.view && ![st.view.rotX, st.view.rotY, st.view.scale].every(Number.isFinite)) {
+    return discardSnapshot('invalid camera');
+  }
 
   if (st.view) {
-    if (typeof st.view.rotX === 'number') rot.x = st.view.rotX;
-    if (typeof st.view.rotY === 'number') rot.y = st.view.rotY;
-    if (typeof st.view.scale === 'number') scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, st.view.scale));
+    rot.x = Math.max(-85, Math.min(85, st.view.rotX));
+    rot.y = st.view.rotY;
+    scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, st.view.scale));
     autoRotate = !!st.view.autoRotate;
     showTrails = st.view.showTrails !== false;
     colorMode = st.view.colorMode === 'speed' ? 'speed' : 'type';
@@ -3872,7 +3895,9 @@ function restoreState() {
   if (Array.isArray(st.ships)) {
     // Fleet.replaceAll(), not a reassignment: the 3D renderer subscribes to
     // reset/add and holds the same array (see the Fleet comment above).
-    Fleet.replaceAll(st.ships.map(s => ({
+    // a vessel with no usable position cannot be drawn anywhere; it is dropped
+    // rather than restored as garbage (a live one is back on its next report)
+    Fleet.replaceAll(st.ships.filter(s => s && validLatLon(s.lat, s.lon)).map(s => ({
       ...s,
       // snapshots written before the two pages were merged carry no mmsi of
       // their own - it is recoverable from the id AIS vessels were keyed by
@@ -3881,7 +3906,8 @@ function restoreState() {
       speedKnown: s.speedKnown !== false,
       hdgKnown: s.hdgKnown !== false,
       hasRealDims: !!(s.hasRealDims || (s.lengthM && s.beamM)),
-      trail: (Array.isArray(s.trail) && s.trail.length) ? s.trail : [{ lat: s.lat, lon: s.lon }]
+      trail: (Array.isArray(s.trail) && s.trail.some(p => p && validLatLon(p.lat, p.lon)))
+        ? s.trail.filter(p => p && validLatLon(p.lat, p.lon)) : [{ lat: s.lat, lon: s.lon }]
     })));
   }
   if (typeof st.nextId === 'number') nextId = st.nextId;
@@ -4779,6 +4805,12 @@ function clampAlt(alt) { return Math.max(MIN_ALT_M, Math.min(MAX_ALT_M, alt)); }
  * (at grab start, or the previous frame for stick/wheel zoom) rather than
  * chained through itself, which drifts. */
 function setViewAlt(altNew, anchor, base) {
+  // clampAlt passes NaN straight through (Math.max/min do), and one NaN here
+  // reaches the world scale, every position derived from it and - through the
+  // globe's motion absorber - the origin itself. A frame that cannot say where
+  // it is going changes nothing instead.
+  if (!Number.isFinite(altNew)) return;
+  if (anchor && !(Number.isFinite(anchor.x) && Number.isFinite(anchor.z))) anchor = null;
   viewAltM = clampAlt(altNew);
   const scaleNew = altToWorldScale(viewAltM);
   const b = base || { scale: worldScale, posX: worldEl.object3D.position.x, posZ: worldEl.object3D.position.z };
@@ -5136,6 +5168,7 @@ function beginTwoHandGrab(pl, pr) {
   const now = twoHandState(pl, pr);
   twoHandGrab = {
     dist0: now.dist, midX0: now.midX, midZ0: now.midZ,
+    lod: vrLod,
     alt0: viewAltM,
     rigX0: rigEl.object3D.position.x, rigZ0: rigEl.object3D.position.z,
     scale: worldScale,
@@ -5152,8 +5185,28 @@ function updateTwoHandGrab(pl, pr) {
   // state captured once at grab start, never chained frame to frame, which is
   // what stops a long gesture drifting.
   setViewAlt(g.alt0 * (g.dist0 / now.dist), g.anchor, g);
+  // Crossing between globe and sea re-frames the world (going up it moves the
+  // rig into the globe's frame too), so everything captured at grab start is
+  // now in the wrong frame: pivoting on it multiplied a stale offset by the
+  // whole zoom ratio and flung the world hundreds of kilometres, and the stale
+  // rig position became one big jump of the planet. Carry on as a fresh grab.
+  if (vrLod !== g.lod) { beginTwoHandGrab(pl, pr); return; }
   rigEl.object3D.position.x = g.rigX0 - (now.midX - g.midX0) * TWO_HAND_PAN_GAIN;
   rigEl.object3D.position.z = g.rigZ0 - (now.midZ - g.midZ0) * TWO_HAND_PAN_GAIN;
+}
+
+// A controller that is not tracked yet - a grip pressed as the session starts
+// - or has just lost tracking can report its position as NaN. Math.max(0.05,
+// NaN) is NaN, so the distance floors below do not catch it: such a frame is
+// skipped instead.
+function finitePos(v) { return Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z); }
+
+// the point a single-hand grab pivots on: where that hand's ray meets the sea
+function vrGrabStart(handEl, camPos) {
+  const { origin: o, dir } = controllerRay(handEl);
+  if (!finitePos(o) || !finitePos(dir)) return null;
+  const anchor = rayPlaneIntersect(o, dir, worldEl.object3D.position.y) || viewAnchor();
+  return beginGrab(anchor, { kind: 'vr', handEl, lod: vrLod, dist0: Math.max(0.05, camPos.distanceTo(o)) });
 }
 
 const _handL = new THREE.Vector3(), _handR = new THREE.Vector3();
@@ -5164,11 +5217,18 @@ function updateVrGrab() {
 
   // both hands takes precedence, and cancels any single-hand grab in progress
   if (gripL && gripR) {
-    handLeftEl.object3D.getWorldPosition(_handL);
-    handRightEl.object3D.getWorldPosition(_handR);
+    // Measured from the rig, not in world space. The hands are children of
+    // the rig and the pan moves the rig, so a world-space midpoint moves with
+    // it: each frame's pan came back as hand motion in the next, sixty-fold
+    // (TWO_HAND_PAN_GAIN). The slightest wobble diverged geometrically - the
+    // world flung off, then Infinity, then NaN through every position and,
+    // at globe zoom, into the origin and the flat map's camera.
+    handLeftEl.object3D.getWorldPosition(_handL).sub(rigEl.object3D.position);
+    handRightEl.object3D.getWorldPosition(_handR).sub(rigEl.object3D.position);
+    prevGrip.left = gripL; prevGrip.right = gripR;
+    if (!finitePos(_handL) || !finitePos(_handR)) return;   // starts once both hands are real
     if (!twoHandGrab) { grab = null; vrGrabHand = null; beginTwoHandGrab(_handL, _handR); }
     else updateTwoHandGrab(_handL, _handR);
-    prevGrip.left = gripL; prevGrip.right = gripR;
     return;
   }
   twoHandGrab = null;
@@ -5179,11 +5239,13 @@ function updateVrGrab() {
     if (pressed && !prevGrip[side] && !vrGrabHand) {
       const camera = sceneEl.camera;
       if (camera) {
-        const { origin: o, dir } = controllerRay(handEl);
-        const anchor = rayPlaneIntersect(o, dir, worldEl.object3D.position.y) || viewAnchor();
         const camPos = new THREE.Vector3();
         camera.getWorldPosition(camPos);
-        grab = beginGrab(anchor, { kind: 'vr', handEl, dist0: Math.max(0.05, camPos.distanceTo(o)) });
+        const g = finitePos(camPos) ? vrGrabStart(handEl, camPos) : null;
+        // not tracked yet: leave prevGrip unset so the held grip starts the
+        // grab on the first frame it is
+        if (!g) continue;
+        grab = g;
         vrGrabHand = side;
       }
     } else if (!pressed && vrGrabHand === side) {
@@ -5200,6 +5262,7 @@ function updateVrGrab() {
       grab.handEl.object3D.getWorldPosition(o);
       const camPos = new THREE.Vector3();
       camera.getWorldPosition(camPos);
+      if (!finitePos(o) || !finitePos(camPos)) return;   // tracking dropped out: hold still
       const distNow = Math.max(0.05, camPos.distanceTo(o));
       // hand pulled toward your head -> distNow shrinks -> altitude drops.
       // The exponent is what makes the full planet-to-1:1 range reachable:
@@ -5207,6 +5270,10 @@ function updateVrGrab() {
       // is a 125x change in altitude, so three gestures span the whole range
       // instead of nine. Raw 1:1 mapping felt precise but interminable.
       applyGrabAlt(grab.alt0 * Math.pow(distNow / grab.dist0, VR_GRAB_EXPONENT));
+      // the same re-framing hazard as the two-hand grab (see updateTwoHandGrab):
+      // past the globe/sea boundary, continue from here rather than pivot on
+      // state captured in the other frame
+      if (vrLod !== grab.lod) grab = vrGrabStart(grab.handEl, camPos) || grab;
     }
   }
 }
@@ -5476,19 +5543,21 @@ function updateNavHud() {
   // toward -X as it increases, the opposite sense of a compass bearing - same
   // sign flip as headingToYRotation, just inverted back
   const bearing = ((-THREE.MathUtils.radToDeg(navHudEuler.y)) % 360 + 360) % 360;
-  let text = 'HDG ' + String(Math.round(bearing)).padStart(3, '0') + '° · ' + fmtAltitude(viewAltM);
-  text += vrLod === 'globe' ? ' · GLOBE' : ' · ' + (worldScale >= 1 ? '1:1' : worldScale.toFixed(2) + '×');
+  // ASCII only: the in-scene font has no glyph past '~', and a '°', '·' or
+  // '×' is silently left out rather than drawn
+  let text = 'HDG ' + String(Math.round(bearing)).padStart(3, '0') + ' deg | ' + fmtAltitude(viewAltM);
+  text += vrLod === 'globe' ? ' | GLOBE' : ' | ' + (worldScale >= 1 ? '1:1' : worldScale.toFixed(2) + 'x');
   // the sea's grid is the only thing out there to judge a distance against,
   // and a square of unknown size is no help at all
-  if (vrLod === 'flat' && oceanCellM > 0 && viewAltM > GRID_FADE_LO_M) text += ' · GRID ' + fmtAltitude(oceanCellM);
+  if (vrLod === 'flat' && oceanCellM > 0 && viewAltM > GRID_FADE_LO_M) text += ' | GRID ' + fmtAltitude(oceanCellM);
   // the single most useful line down here: what is nearest, and which way
   if (nearestLandmark) {
     text += '\n' + nearestLandmark.c.name.toUpperCase() + ' ' +
             fmtRange(nearestLandmark.d) + ' ' +
             bearingLabel(sceneBearingDeg(nearestLandmark.dx, nearestLandmark.dz));
   }
-  if (cpaEvents.length && conesMode !== 'off' && vrLod === 'flat') text += ' · ' + cpaEvents.length + ' CPA';
-  if (sceneEl.is('vr-mode')) text += ' · ' + (locomotionMode === 'fly' ? 'FLY' : 'TELEPORT');
+  if (cpaEvents.length && conesMode !== 'off' && vrLod === 'flat') text += ' | ' + cpaEvents.length + ' CPA';
+  if (sceneEl.is('vr-mode')) text += ' | ' + (locomotionMode === 'fly' ? 'FLY' : 'TELEPORT');
   document.getElementById('nav-hud-text').setAttribute('text', 'value', text);
 }
 
@@ -6309,6 +6378,9 @@ function headingToYRotation(cog) { return -cog; }
  *   'none' - leave the world transform to the caller.
  */
 function setOrigin(lat, lon, place) {
+  // the flat map's camera is copied from the origin every frame
+  // (syncCanvasFromScene), so a NaN tangent point would take both views down
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
   // capture where that lat/lon currently appears, before anything moves
   const keep = place === 'keep' ? latLonScenePos(lat, lon) : null;
   origin = { lat, lon };
@@ -7902,12 +7974,14 @@ function renderInfoPanel(s) {
   const speedTxt = s.speedKnown ? s.speed.toFixed(1) + ' kn' : 'speed unknown';
   // hdg is the reported course over ground; unreported is stored as 0, which
   // must not be shown as due north
-  const courseTxt = s.hdgKnown ? 'course ' + (Math.round(s.hdg) % 360) + '°' : 'course unknown';
+  // ASCII only, like the compare columns below: the font would silently drop
+  // a '×' and show a 190x32 m vessel as "19032 m"
+  const courseTxt = s.hdgKnown ? 'course ' + (Math.round(s.hdg) % 360) + ' deg' : 'course unknown';
   const lines = [
     shipTitle(s),
-    typeLabel + ' · ' + Math.round(dims.lengthM) + '×' + Math.round(dims.beamM) + ' m' + (s.hasRealDims ? '' : ' (est.)'),
-    speedTxt + ' · ' + courseTxt + (s.destination ? ' · to ' + s.destination : ''),
-    (s.country ? s.country + ' · ' : '') + s.lat.toFixed(3) + ', ' + s.lon.toFixed(3)
+    typeLabel + ' | ' + Math.round(dims.lengthM) + 'x' + Math.round(dims.beamM) + ' m' + (s.hasRealDims ? '' : ' (est.)'),
+    speedTxt + ' | ' + courseTxt + (s.destination ? ' | to ' + s.destination : ''),
+    (s.country ? s.country + ' | ' : '') + s.lat.toFixed(3) + ', ' + s.lon.toFixed(3)
   ];
   document.getElementById('ship-info-hud-text').setAttribute('text', 'value', lines.join('\n'));
   document.getElementById('ship-info-hud').object3D.visible = true;
@@ -8443,7 +8517,7 @@ function buildWristMenu() {
     onClick: () => { if (playbackMode && windowMessages.length) setPlaying(!playing); }
   });
   makeWristRow(-1, l++, {
-    text: () => 'SPEED  ' + playbackSpeed + '×',
+    text: () => 'SPEED  ' + playbackSpeed + 'x',
     color: () => playbackMode ? '#e2e6f0' : '#3a3f52',
     onClick: () => {
       const i = PLAYBACK_SPEEDS.indexOf(playbackSpeed);
@@ -8473,7 +8547,8 @@ function buildWristMenu() {
       // the legend and the filter are the same control here: the swatch colour
       // is the colour that class is drawn in, and switching the row off hides
       // it in both the dot cloud and the hulls at once
-      text: () => (filters.types[key] ? '● ' : '○ ') + info.label + '  ' + typeCount(key),
+      // '+'/'-' rather than a dot: the in-scene font has no '●'/'○' at all
+      text: () => (filters.types[key] ? '+ ' : '- ') + info.label + '  ' + typeCount(key),
       color: () => filters.types[key] ? info.color : '#4a4f62',
       onClick: () => { filters.types[key] = !filters.types[key]; markVisibleDirty(); renderTypeFilters(); }
     });
@@ -8782,7 +8857,7 @@ function updateLandmarks(now) {
     rec.label.object3D.position.set(0, postH + drawnM * 0.012 + 20, 0);
     rec.label.setAttribute('text', 'value',
       n.c.name.toUpperCase() + '\n' + fmtRange(n.d) + ' ' + bearingLabel(sceneBearingDeg(n.dx, n.dz)) +
-      (pulledIn ? ' →' : ''));
+      (pulledIn ? ' ->' : ''));
   }
 }
 
@@ -9036,9 +9111,11 @@ function updateFinderScroll(dt) {
 function finderShipLine(s) {
   const info = SHIP_TYPES[s.typeKey] || SHIP_TYPES.other;
   let name = shipTitle(s);
-  if (name.length > 26) name = name.slice(0, 25) + '…';
-  const spd = s.speedKnown ? s.speed.toFixed(1) + ' kn' : '—';
-  return name + '   ' + info.label + ' · ' + spd;
+  // ASCII only (the in-scene font drops anything else); '...' is three
+  // characters where the ellipsis was one, so the cut is two earlier
+  if (name.length > 26) name = name.slice(0, 23) + '...';
+  const spd = s.speedKnown ? s.speed.toFixed(1) + ' kn' : '-';
+  return name + '   ' + info.label + ' | ' + spd;
 }
 
 /* Rebuilds the visible rows from the shared registry. `force` skips the
@@ -9059,7 +9136,7 @@ function syncFinderPanel(force) {
   if (finderPage > maxPage) finderPage = maxPage;
 
   finderQueryLabel.setAttribute('text', {
-    value: finderQuery ? finderQuery : 'search…',
+    value: finderQuery ? finderQuery : 'search...',
     color: finderQuery ? '#3eff9a' : '#4a4f62'
   });
   finderCountEl.setAttribute('text', 'value',
