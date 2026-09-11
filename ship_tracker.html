@@ -651,10 +651,23 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
       <!-- in-scene ship detail card (see renderInfoPanel()) - previews the
            ship you point at, and is pinned by selecting one. Display only: the
            fast-travel shortcut to true scale beside it is the right controller's
-           A button (see updateZoomButton()), not a button on the card. -->
+           A button (see updateZoomButton()), not a button on the card. With a
+           comparison vessel set (left trigger) the same card splits into two
+           columns - see renderComparePanel(). -->
       <a-entity id="ship-info-hud" class="hud" no-frustum-cull visible="false" position="0.45 0.12 -1.05" scale="0.2 0.2 0.2">
-        <a-plane width="3" height="1.5" position="0 -0.14 -0.01"
+        <a-plane id="ship-info-hud-bg" width="3" height="1.5" position="0 -0.14 -0.01"
                  material="color: #0d0f14; opacity: 0.9; shader: flat; side: double"></a-plane>
+        <!-- the comparison columns: half the text width at half the wrapCount
+             (less the 0.5 a-frame adds to it), so the glyphs are exactly the
+             single card's size; each in its vessel's route colour -->
+        <a-entity id="ship-info-hud-cmp" visible="false">
+          <a-entity id="ship-info-hud-cmp-a" position="-0.7 0 0"
+                    text="value: -; align: center; width: 1.4; color: #ffb83e; baseline: top; wrapCount: 11.75"></a-entity>
+          <a-entity id="ship-info-hud-cmp-b" position="0.7 0 0"
+                    text="value: -; align: center; width: 1.4; color: #3ea8ff; baseline: top; wrapCount: 11.75"></a-entity>
+          <a-entity id="ship-info-hud-cmp-foot"
+                    text="value: -; align: center; width: 2.8; color: #7a8099; baseline: top; wrapCount: 24"></a-entity>
+        </a-entity>
         <!-- wrapCount 24 rather than 30: glyph size is width/wrapCount, and at
              this panel's distance the smaller count is what makes the vessel
              name (the task-critical line) readable in one glance without
@@ -1081,7 +1094,8 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
       right-drag or scroll to zoom, click the water to jump there, click a ship for its card.<br><br>
       <b style="color:var(--color-text)">headset</b> &mdash; grip and pull your hand in to zoom,
       left stick up/down also zooms, right stick moves, left stick click switches fly/teleport,
-      trigger selects. The <b>M</b> button dead ahead opens the in-scene controls panel.<br><br>
+      right trigger selects, left trigger sets a second vessel beside it to compare, A zooms to the
+      selected vessel. The <b>M</b> button dead ahead opens the in-scene controls panel.<br><br>
       None of this sidebar renders inside a headset &mdash; that is what the
       wrist menu is for.
     </div>
@@ -1223,6 +1237,16 @@ let nextId = 1;
 let selectedShipId = null;   // String(id) of the singled-out ship, or null
 let hoveredShipId = null;    // 3D only: what a controller ray / mouse is pointing at right now
 let cardShipId = null;       // 3D only: what the detail card is about - stickier than hover, see refreshInfoDisplay()
+let compareShipId = null;    // the second vessel set beside the selected one (headset left trigger) - read it through comparisonId()
+
+/* The comparison vessel's id, or null. A comparison only exists beside a
+ * different selected vessel, so a selection that went away (open water, the
+ * flat map's own clicks, Reset) or landed on the comparison vessel itself ends
+ * it here, rather than leaving it to come back with the next selection. */
+function comparisonId() {
+  if (compareShipId != null && (selectedShipId == null || compareShipId === selectedShipId)) compareShipId = null;
+  return compareShipId;
+}
 
 // Declared up here, ahead of the sections that own them, because code in this
 // first script block reads them: the animate() loop skips painting the canvas
@@ -2246,6 +2270,10 @@ function drawTrail(ship) {
     // the vessel being asked about gets its whole route, heavier and in the
     // same amber as its 3D line
     drawTrailPoints(routePoints(ship), '#ffb83e', 0.85, 2.5 + curDetail * 1.5);
+  } else if (compareShipId != null && String(ship.id) === compareShipId) {
+    // the comparison vessel's whole route, in the blue of its 3D line and of
+    // its column on the card (draw() has already checked it is still live)
+    drawTrailPoints(routePoints(ship), '#3ea8ff', 0.85, 2.5 + curDetail * 1.5);
   } else {
     drawTrailPoints(ship.trail, shipColor(ship), 0.45, 1.5 + curDetail);
   }
@@ -2718,12 +2746,15 @@ function draw(tms) {
 
   const visible = getVisibleShips();
   // the selected route last, so the wakes of everything else in the same lane
-  // do not paint over it
-  let selTrail = null;
+  // do not paint over it - and the comparison vessel's just before it
+  const cmpId = comparisonId();
+  let selTrail = null, cmpTrail = null;
   for (let i = 0; i < visible.length; i++) {
     if (selectedShipId != null && String(visible[i].id) === selectedShipId) selTrail = visible[i];
+    else if (cmpId != null && String(visible[i].id) === cmpId) cmpTrail = visible[i];
     else drawTrail(visible[i]);
   }
+  if (cmpTrail) drawTrail(cmpTrail);
   if (selTrail) drawTrail(selTrail);
   // Draw the selected ship last so its highlight + label sit on top of any
   // other markers piled up at the same spot.
@@ -3881,6 +3912,7 @@ function clearEverything() {
   Fleet.clear();
   nextId = 1;
   selectedShipId = null;
+  compareShipId = null;
   hoveredShipId = null;
   cancelCameraFlight();
   pendingStatics.clear();
@@ -4584,7 +4616,7 @@ AFRAME.registerComponent('click-teleport', {
       // huge plane) - without this the last thing every zoom drag did was also
       // teleport you to wherever you let go
       if (suppressNextOceanClick) { suppressNextOceanClick = false; return; }
-      if (hudUnderPointer()) return;
+      if (hudUnderPointer() || fromLeftHand(evt)) return;
       const point = evt.detail && evt.detail.intersection && evt.detail.intersection.point;
       if (!point) return;
       const w = worldEl.object3D.position;
@@ -5043,9 +5075,9 @@ function buttonPressed(gamepad, index) {
 /* One short controller buzz, through the same polled gamepad the buttons come
  * from. A silent no-op wherever there is no actuator - a desktop mouse
  * session, or a controller without haptics - so callers never need a guard of
- * their own. Fired on exactly three events (vessel select, teleport landing,
- * snap-turn commit) and nowhere else: haptics that fire constantly stop
- * meaning anything. */
+ * their own. Fired on exactly four events (vessel select, compare-add,
+ * teleport landing, snap-turn commit) and nowhere else: haptics that fire
+ * constantly stop meaning anything. */
 function pulseHaptic(handEl, intensity, ms) {
   const gp = handGamepad(handEl);
   const act = gp && gp.hapticActuators && gp.hapticActuators[0];
@@ -5054,6 +5086,18 @@ function pulseHaptic(handEl, intensity, ms) {
 
 const handLeftEl = document.getElementById('hand-left');
 const handRightEl = document.getElementById('hand-right');
+
+/* The left trigger belongs to compare (see updateCompareTrigger), but
+ * laser-controls gives the left hand a cursor too, so the same pull also lands
+ * as a click on whatever that ray is on. On the world that click would select,
+ * descend, clear or jump to a traffic beacon as well - two actions on one
+ * button - so the world's click handlers drop clicks from the left hand. Panels
+ * (wrist menu, finder, timeline, the HUD buttons, the map screen) still take
+ * both hands: a ray on a panel resolves no vessel, so there compare does
+ * nothing and the click is the only action. */
+function fromLeftHand(evt) {
+  return !!(evt && evt.detail && evt.detail.cursorEl === handLeftEl);
+}
 
 // grip (xr-standard button 1) grabs the world, polled per-frame rather than
 // event-driven - see the gamepad-polling note above
@@ -5291,7 +5335,8 @@ function hideTeleportMarker() { teleportMarkerEl.object3D.visible = false; }
  *   left  stick  X  strafe
  *   left  stick  click   fly / teleport
  *   grip            grab the world and pull to zoom
- *   trigger         select
+ *   right trigger   select (cursor click)
+ *   left  trigger   compare - add or replace the second vessel
  *   X or Y          the wrist menu
  *   A               zoom to the vessel on the card
  *
@@ -6125,6 +6170,7 @@ function navTickFrame(now) {
   updateStickZoom(dt);
   updateWristMenuButton();
   updateZoomButton();
+  updateCompareTrigger();
   updateLocomotion(dt);
   absorbRigMotionIntoGlobe();
   updateShipSmoothing(dt);
@@ -6287,7 +6333,7 @@ function latLonScenePos(lat, lon) {
 
 function refreshAllShipPositions() {
   originDirty = false;
-  trailForId = null;   // its points are in the old local frame
+  selectedRoute.forId = compareRoute.forId = null;   // their points are in the old local frame
   for (const s of Fleet.list) {
     refreshEntity(s);
     // force an immediate snap rather than the usual ease: a changed origin can
@@ -6644,7 +6690,7 @@ function clickHoveredDot() {
 }
 
 globeDotsEl.addEventListener('click', (evt) => {
-  if (hudUnderPointer()) return;
+  if (hudUnderPointer() || fromLeftHand(evt)) return;
   // stop the globe underneath treating it as a click on open water as well
   if (clickHoveredDot()) evt.stopPropagation();
 });
@@ -6666,7 +6712,7 @@ AFRAME.registerComponent('globe-click', {
   init: function () {
     this.el.addEventListener('click', (evt) => {
       if (suppressNextOceanClick) { suppressNextOceanClick = false; return; }
-      if (hudUnderPointer()) return;
+      if (hudUnderPointer() || fromLeftHand(evt)) return;
       // a vessel under the pointer wins over the water behind it, whichever
       // element the cursor decided to send the click to
       if (clickHoveredDot()) return;
@@ -6790,6 +6836,7 @@ function vrRemoveShip(s) {
   if (hullHoverId === s.id) hullHoverId = null;
   if (selectedShipId === s.id) selectedShipId = null;
   if (cardShipId === s.id) cardShipId = null;
+  if (compareShipId === s.id) compareShipId = null;
   s._vrVisible = false;
   hullInstancesDirty = true;
   refreshInfoDisplay();
@@ -6863,7 +6910,8 @@ function refreshEntity(s) {
 
   updateCourseCone(s, dims);
 
-  if (s.id === hoveredShipId || s.id === selectedShipId) renderInfoPanel(s);
+  // either vessel on the card - a comparison shows both
+  if ((s.id === cardShipId || s.id === compareShipId) && !mapPanelActive) refreshInfoDisplay();
 }
 
 function vrUpdateShip(s) {
@@ -7207,7 +7255,7 @@ function clickHoveredHull() {
 }
 
 shipsRoot.addEventListener('click', (evt) => {
-  if (hudUnderPointer()) return;
+  if (hudUnderPointer() || fromLeftHand(evt)) return;
   if (clickHoveredHull()) evt.stopPropagation();
 });
 
@@ -7720,7 +7768,9 @@ function updateBeacons() {
     label.setAttribute('text', { value: 'TRAFFIC\nclick to jump', align: 'center', width: 60, color: '#ffb83e', baseline: 'bottom' });
     el.appendChild(label);
 
-    el.addEventListener('click', () => travelToSceneLocal(cell.gx * DENSITY_CELL_M, cell.gz * DENSITY_CELL_M, 600));
+    el.addEventListener('click', (evt) => {
+      if (!fromLeftHand(evt)) travelToSceneLocal(cell.gx * DENSITY_CELL_M, cell.gz * DENSITY_CELL_M, 600);
+    });
     beaconsRoot.appendChild(el);
     beaconEls.push({ el, gx: cell.gx, gz: cell.gz });
   }
@@ -7768,6 +7818,9 @@ function selectShip(id) {
   const prev = selectedShipId;
   selectedShipId = String(id); sidebarDirty = true;
   cardShipId = selectedShipId;   // a select pins the card - see refreshInfoDisplay()
+  // replacing the selected vessel keeps the comparison, unless it is the
+  // comparison vessel that was just selected - nothing is compared with itself
+  if (compareShipId === selectedShipId) compareShipId = null;
   // selection is the one action whose success is otherwise only a panel
   // appearing off to the side; the buzz confirms the hit at the hand that
   // made it (right: the trigger that selects rides the right-hand ray)
@@ -7778,10 +7831,11 @@ function clearSelection() {
   const prev = selectedShipId;
   selectedShipId = null;
   cardShipId = null;          // clicking open water dismisses the card outright
-  // the full route goes with the selection; the flat map reverts on its own
-  // next frame, this makes the 3D line match without waiting for one
-  if (trailObj) trailObj.visible = false;
-  trailForId = null;
+  compareShipId = null;       // ...and closes a comparison with it
+  // the full routes go with the selection; the flat map reverts on its own
+  // next frame, this makes the 3D lines match without waiting for one
+  hideRouteLine(selectedRoute);
+  hideRouteLine(compareRoute);
   refreshConesFor(prev, hoveredShipId); refreshInfoDisplay();
 }
 function hoverShip(id) {
@@ -7807,20 +7861,42 @@ function unhoverShip(id) {
  *
  * With nothing selected, pointing at a vessel previews it, pointing at another
  * replaces it, and the last preview stays up rather than blinking out as your
- * aim drifts - until water is clicked or a vessel is selected. */
+ * aim drifts - until water is clicked or a vessel is selected.
+ *
+ * With a comparison vessel set beside the selected one, the same card shows
+ * both (renderComparePanel). */
 function refreshInfoDisplay() {
   if (mapPanelActive) { hideInfoPanel(); return; }
   if (selectedShipId != null) cardShipId = selectedShipId;
   else if (hoveredShipId != null) cardShipId = hoveredShipId;
   const s = cardShipId != null ? Fleet.get(cardShipId) : null;
-  if (s) renderInfoPanel(s); else hideInfoPanel();
+  const cmpId = comparisonId();
+  const c = s && cmpId != null ? Fleet.get(cmpId) : null;
+  if (s && c) renderComparePanel(s, c);
+  else if (s) renderInfoPanel(s);
+  else hideInfoPanel();
 }
 
 function hideInfoPanel() {
   document.getElementById('ship-info-hud').object3D.visible = false;
 }
 
+/* One card, two layouts. The comparison grows the background downward from
+ * the single card's top edge rather than about its centre, so the vessel names
+ * stay where the eye already looks for them. Scaled rather than re-sized: a
+ * geometry rebuild on every position report of either vessel buys nothing. */
+const CARD_BG_H = 1.5, CARD_BG_Y = -0.14;          // the single card's plane, as authored
+const CARD_TOP_Y = CARD_BG_Y + CARD_BG_H / 2;
+function setCardLayout(compare, height) {
+  const bg = document.getElementById('ship-info-hud-bg').object3D;
+  bg.scale.y = compare ? height / CARD_BG_H : 1;
+  bg.position.y = compare ? CARD_TOP_Y - height / 2 : CARD_BG_Y;
+  document.getElementById('ship-info-hud-text').object3D.visible = !compare;
+  document.getElementById('ship-info-hud-cmp').object3D.visible = compare;
+}
+
 function renderInfoPanel(s) {
+  setCardLayout(false);
   const dims = shipDims(s);
   const typeLabel = (SHIP_TYPES[s.typeKey] || SHIP_TYPES.other).label;
   const speedTxt = s.speedKnown ? s.speed.toFixed(1) + ' kn' : 'speed unknown';
@@ -7837,62 +7913,173 @@ function renderInfoPanel(s) {
   document.getElementById('ship-info-hud').object3D.visible = true;
 }
 
-/* Where the selected vessel has been.
+/* Two vessels side by side: the same card, split into one column per vessel,
+ * each in the colour its route is drawn in - amber the selected vessel, blue
+ * the comparison - so which column is which vessel reads off the water too.
+ *
+ * Same fields and the same honesty rules as the single card, fitted to half
+ * its width at exactly its glyph size, and ASCII only: the card's font has no
+ * glyph past '~', so a '×' or '°' is not drawn at all. Two rows are left out to
+ * fit: the position (two lat/lons do not fit half a card, and the distance
+ * row below says what they would), and the underway/anchored status, which is
+ * derived from speed alone and would restate - or, unknown, misstate - it. */
+const CARD_LINE_H = 0.2137;      // one line at the card's glyph size: width / ((wrapCount + 0.5) digit widths) x the font's 44 px line
+const CARD_PAD = 0.14;
+const COMPARE_COL_FIT = 11.75;   // digit widths a column line may use; a-frame wraps past 12.25
+
+// char code -> advance in digit widths (what wrapCount counts), read from the
+// card's own loaded font so the fit is exact; before it has loaded, every
+// character is assumed as wide as the widest
+let cardGlyphW = null;
+function columnTextWidth(str) {
+  if (!cardGlyphW) {
+    const t = document.getElementById('ship-info-hud-cmp-a').components.text;
+    const font = t && t.currentFont;
+    if (font && font.chars) {
+      const digits = font.chars.filter(ch => ch.id >= 48 && ch.id <= 57);
+      const unit = digits.reduce((a, ch) => a + ch.xadvance, 0) / (digits.length || 1);
+      cardGlyphW = new Map(font.chars.map(ch => [ch.id, ch.xadvance / unit]));
+    }
+  }
+  let w = 0;
+  for (let i = 0; i < str.length; i++) w += cardGlyphW ? (cardGlyphW.get(str.charCodeAt(i)) || 0) : 1.6;
+  return w;
+}
+
+/* A value laid out for one compare column: whole words onto up to `maxLines`
+ * lines, the last one clipped with '...' if it still does not fit. Never left
+ * to a-frame to wrap - a wrapped value would push that column's remaining rows
+ * out of line with the other column's. */
+function fitColumn(str, maxLines) {
+  const words = String(str).trim().split(/\s+/);
+  const lines = [];
+  while (lines.length < maxLines - 1) {
+    let n = 0;
+    while (n < words.length && columnTextWidth(words.slice(0, n + 1).join(' ')) <= COMPARE_COL_FIT) n++;
+    if (n === 0 || n === words.length) break;   // one over-long word, or the rest fits: the last line takes it
+    lines.push(words.splice(0, n).join(' '));
+  }
+  let last = words.join(' ');
+  if (columnTextWidth(last) > COMPARE_COL_FIT) {
+    while (last.length > 1 && columnTextWidth(last + '...') > COMPARE_COL_FIT) last = last.slice(0, -1);
+    last = last.trimEnd() + '...';
+  }
+  lines.push(last);
+  return lines;
+}
+
+function compareRows(s) {
+  const dims = shipDims(s);
+  return [
+    (SHIP_TYPES[s.typeKey] || SHIP_TYPES.other).label.replace(' / ', '/'),
+    Math.round(dims.lengthM) + 'x' + Math.round(dims.beamM) + (s.hasRealDims ? ' m' : ' (est.)'),
+    s.speedKnown ? 'spd ' + s.speed.toFixed(1) + ' kn' : 'spd unknown',
+    // unreported course is stored as 0 - never shown as due north
+    s.hdgKnown ? 'crs ' + (Math.round(s.hdg) % 360) + ' deg' : 'crs unknown',
+    s.destination ? 'to ' + s.destination : 'to unknown',
+    s.country || 'flag unknown'
+  ].map(v => fitColumn(v, 1)[0]);
+}
+
+// great-circle distance between two reported positions, in metres
+function distanceM(lat1, lon1, lat2, lon2) {
+  const p1 = lat1 * DEG2RAD, p2 = lat2 * DEG2RAD;
+  const h = Math.sin((p2 - p1) / 2) ** 2 +
+            Math.cos(p1) * Math.cos(p2) * Math.sin((lon2 - lon1) * DEG2RAD / 2) ** 2;
+  return 2 * EARTH_R_M * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function renderComparePanel(a, b) {
+  // a name gets two lines before it is clipped - it is what the card is read
+  // for - and the shorter title is padded so the rows below stay in line
+  const ta = fitColumn(shipTitle(a), 2), tb = fitColumn(shipTitle(b), 2);
+  while (ta.length < tb.length) ta.push('');
+  while (tb.length < ta.length) tb.push('');
+  const colA = ta.concat(compareRows(a)), colB = tb.concat(compareRows(b));
+  const apart = a.lat != null && b.lat != null
+    ? fmtRange(distanceM(a.lat, a.lon, b.lat, b.lon)) + ' apart' : '';
+
+  const top = CARD_TOP_Y - CARD_PAD;
+  const foot = document.getElementById('ship-info-hud-cmp-foot');
+  document.getElementById('ship-info-hud-cmp-a').object3D.position.y = top;
+  document.getElementById('ship-info-hud-cmp-b').object3D.position.y = top;
+  foot.object3D.position.y = top - (colA.length + 0.4) * CARD_LINE_H;
+  document.getElementById('ship-info-hud-cmp-a').setAttribute('text', 'value', colA.join('\n'));
+  document.getElementById('ship-info-hud-cmp-b').setAttribute('text', 'value', colB.join('\n'));
+  foot.setAttribute('text', 'value', apart);
+  setCardLayout(true, CARD_PAD * 2 + (colA.length + (apart ? 1.4 : 0)) * CARD_LINE_H);
+  document.getElementById('ship-info-hud').object3D.visible = true;
+}
+
+/* Where the selected vessel has been - and, beside it, the comparison vessel.
  *
  * Every AIS vessel keeps its full route (see fullTrail in ingestAisShip) as
  * well as the short wake the flat map draws for everyone. Laid on the water
  * the route answers a question the flat map cannot: which side of the channel
  * did it come up, and was it already turning before it reached you. Only the
- * selected vessel gets one, because a route times a busy feed is a lot of
- * geometry for a question you are only asking about one ship - and one line of
- * a few thousand points is a single draw call, so it needs no decimation.
+ * selected vessel and the one it is being compared with get one, because a
+ * route times a busy feed is a lot of geometry for a question you are only
+ * asking about one or two ships - and one line of a few thousand points is a
+ * single draw call, so it needs no decimation.
  *
- * The line is rebuilt when the selection changes or the vessel reports a new
- * position - not per frame, and it lives inside #world so the zoom carries it
- * along with everything else. A new position is spotted by the last point
- * changing, not the count: a buffer at its cap stays the same length as it
- * rolls. */
-let trailObj = null;
-let trailForId = null, trailPoints = 0, trailSrc = null, trailLast = null;
+ * Each line is rebuilt when its vessel changes or reports a new position - not
+ * per frame, and it lives inside #world so the zoom carries it along with
+ * everything else. A new position is spotted by the last point changing, not
+ * the count: a buffer at its cap stays the same length as it rolls. */
+function makeRouteLine(color, y) {
+  return { color, y, obj: null, forId: null, points: 0, src: null, last: null };
+}
+// just clear of the water so neither z-fights it; the comparison a little
+// lower, so where the two share a lane the selected route stays on top
+const selectedRoute = makeRouteLine('#ffb83e', 1.5);
+const compareRoute = makeRouteLine('#3ea8ff', 1.0);
 
 function updateSelectedTrail() {
-  const id = selectedShipId;
+  updateRouteLine(selectedRoute, selectedShipId);
+  updateRouteLine(compareRoute, comparisonId());
+}
+
+function hideRouteLine(line) {
+  if (line.obj) line.obj.visible = false;
+  line.forId = null;
+}
+
+function updateRouteLine(line, id) {
   const s = id != null ? Fleet.get(id) : null;
   const trail = s && s.trail && routePoints(s);
   if (!s || !trail || trail.length < 2 || vrLod !== 'flat' || !s._vrVisible) {
-    if (trailObj) trailObj.visible = false;
-    trailForId = null;
+    hideRouteLine(line);
     return;
   }
   const last = trail[trail.length - 1];
-  if (trailForId === id && trailSrc === trail && trailPoints === trail.length && trailLast === last) {
-    trailObj.visible = true;
+  if (line.forId === id && line.src === trail && line.points === trail.length && line.last === last) {
+    line.obj.visible = true;
     return;   // nothing new to draw
   }
-  trailForId = id;
-  trailSrc = trail;
-  trailPoints = trail.length;
-  trailLast = last;
+  line.forId = id;
+  line.src = trail;
+  line.points = trail.length;
+  line.last = last;
 
   const pos = new Float32Array(trail.length * 3);
   for (let i = 0; i < trail.length; i++) {
     const q = llToScene(trail[i].lat, trail[i].lon);
     pos[i * 3] = q.x;
-    pos[i * 3 + 1] = 1.5;      // just clear of the water so it is not z-fighting it
+    pos[i * 3 + 1] = line.y;
     pos[i * 3 + 2] = q.z;
   }
-  if (!trailObj) {
-    trailObj = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({
-      color: '#ffb83e', transparent: true, opacity: 0.95, fog: false
+  if (!line.obj) {
+    line.obj = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({
+      color: line.color, transparent: true, opacity: 0.95, fog: false
     }));
-    trailObj.frustumCulled = false;
-    worldEl.object3D.add(trailObj);
+    line.obj.frustumCulled = false;
+    worldEl.object3D.add(line.obj);
   } else {
-    trailObj.geometry.dispose();
-    trailObj.geometry = new THREE.BufferGeometry();
+    line.obj.geometry.dispose();
+    line.obj.geometry = new THREE.BufferGeometry();
   }
-  trailObj.geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  trailObj.visible = true;
+  line.obj.geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  line.obj.visible = true;
 }
 
 /* A ring round whatever the pointer is on, positioned in scene coordinates so
@@ -7982,8 +8169,8 @@ window.focusShip = function (id) {
 };
 
 /* clicking empty water clears the pin, same as clicking away from anything */
-oceanEl.addEventListener('click', () => {
-  if (suppressNextOceanClick || hudUnderPointer()) return;
+oceanEl.addEventListener('click', (evt) => {
+  if (suppressNextOceanClick || hudUnderPointer() || fromLeftHand(evt)) return;
   clearSelection();
 });
 
@@ -8109,9 +8296,10 @@ const CONTROLS_HUD_TEXT =
   'L-stick click  fly / teleport\n' +
   'Grip + pull  grab and zoom\n' +
   'Both grips  drag and scale\n' +
-  'Trigger  select a vessel,\n  the sea, or the planet\n' +
-  'A  zoom to vessel\n\n' +
-  'M  this panel and filters\n' +
+  'R-trigger  select a vessel,\n  the sea, or the planet\n' +
+  'L-trigger  compare a vessel\n' +
+  'A  zoom to vessel\n' +
+  'M / X  menu and filters\n' +
   'R  recentre    2D  the map\n\n' +
   'desktop: WASD, right-drag or\nwheel to zoom, click to descend';
 document.getElementById('controls-hud-text').setAttribute('text', 'value', CONTROLS_HUD_TEXT);
@@ -8300,6 +8488,22 @@ function buildWristMenu() {
     }
   });
 
+  // under the type rows rather than with FIND: the right column is the
+  // shorter one, so the menu gets no taller
+  makeWristHeading(1, r++, 'COMPARE');
+  makeWristRow(1, r++, {
+    // display only - a comparison is started by aiming the left trigger at a
+    // second vessel, which a menu row has no way to do
+    text: () => 'COMPARE  ' + (comparisonId() != null ? 'ON' : 'OFF'),
+    color: () => comparisonId() != null ? '#3ea8ff' : '#7a8099',
+    onClick: () => {}
+  });
+  makeWristRow(1, r++, {
+    text: () => 'CLEAR COMPARE',
+    color: () => comparisonId() != null ? '#e2e6f0' : '#3a3f52',
+    onClick: () => { if (comparisonId() != null) clearCompare(); }
+  });
+
   const rows = Math.max(l, r);
   document.getElementById('wrist-menu-bg').setAttribute('height', rows * WRIST_ROW_H + 0.22);
   document.getElementById('wrist-menu-bg').setAttribute('width', WRIST_COL_X * 2 + WRIST_ROW_W + 0.16);
@@ -8363,6 +8567,74 @@ function updateZoomButton() {
   // change that without otherwise re-rendering the menu
   const enabled = zoomTargetShip() != null;
   if (enabled !== zoomRowEnabled) { zoomRowEnabled = enabled; if (wristMenuOpen) syncWristMenu(); }
+}
+
+/* The vessel one controller's ray is on: the hover authority's own pick rules
+ * - dot cloud at globe zoom, hull picks at true scale, and the vessel whose
+ * centre is nearest the ray's axis (see updateGlobeDotHover, updateHullHover) -
+ * run on that hand's raycaster alone. The shared dotHoverId / hoveredShipId
+ * merge every ray, so with the right ray still resting on the selected vessel
+ * they can name it while the left ray is on another, which would make compare
+ * a coin toss between the two hands. */
+const _rayShipPos = new THREE.Vector3();
+function shipUnderRay(handEl) {
+  const comp = handEl.components && handEl.components.raycaster;
+  const hits = comp && comp.intersections;
+  const ray = comp && comp.raycaster && comp.raycaster.ray;
+  if (!hits || !hits.length || !ray) return null;
+  // a panel nearest along this ray is what it is aimed at, whatever is behind
+  const first = hits[0].object && hits[0].object.el;
+  if (first && first.closest && first.closest('.hud')) return null;
+  const globe = vrLod === 'globe';
+  let best = null, bestPerp = Infinity;
+  for (let k = 0; k < hits.length; k++) {
+    const s = globe ? shipFromDotIntersection(hits[k]) : shipFromHullIntersection(hits[k]);
+    if (!s) continue;
+    if (globe) {
+      _rayShipPos.copy(latLonToGlobeVec(s.lat, s.lon, EARTH_R_M + DOT_SCENE_RADIUS / Math.max(1e-9, worldScale)));
+      globeDotsEl.object3D.localToWorld(_rayShipPos);
+    } else {
+      _rayShipPos.set(s.visualX, 0, s.visualZ);
+      worldEl.object3D.localToWorld(_rayShipPos);
+    }
+    const perp = ray.distanceToPoint(_rayShipPos);
+    if (perp < bestPerp) { bestPerp = perp; best = s; }
+  }
+  return best;
+}
+
+/* The left trigger (xr-standard button 0 on the left controller) sets the
+ * vessel the left ray is on beside the selected one for comparison, or
+ * replaces the one already there - two at a time, never a list. Polled on the
+ * rising edge, never 'triggerdown': named button events do not fire on the
+ * Quest 3S. The right trigger keeps selecting through the cursor's click.
+ * Nothing happens on open water, on a panel, on the selected vessel itself,
+ * with nothing selected to compare against, or while the flat map screen has
+ * the controls. */
+let prevLeftTrigger = false;
+let compareRowOn = false;   // what the wrist menu last showed - see below
+function updateCompareTrigger() {
+  const pressed = buttonPressed(handGamepad(handLeftEl), 0);
+  if (pressed && !prevLeftTrigger) compareUnderLeftRay();
+  prevLeftTrigger = pressed;
+  // the COMPARE rows follow the state however it changed - water clicked, a
+  // selection made on the flat map, the vessel gone
+  const on = comparisonId() != null;
+  if (on !== compareRowOn) { compareRowOn = on; if (wristMenuOpen) syncWristMenu(); }
+}
+
+function compareUnderLeftRay() {
+  if (mapPanelActive || selectedShipId == null) return;
+  const s = shipUnderRay(handLeftEl);
+  if (!s || String(s.id) === selectedShipId) return;
+  compareShipId = String(s.id);
+  pulseHaptic(handLeftEl, 0.4, 60);
+  refreshInfoDisplay();
+}
+
+function clearCompare() {
+  compareShipId = null;
+  refreshInfoDisplay();
 }
 
 
