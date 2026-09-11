@@ -2234,17 +2234,36 @@ function drawGlobe() {
   }
 }
 
+/* The route a selected vessel draws: its full trail, or the capped one where
+ * that reaches further back (manually added vessels have no full trail, and a
+ * slow reporter can outlast the age bound on eighty points). Shared by the
+ * flat canvas and the 3D line so the two always show the same route. */
+function routePoints(ship) {
+  const full = ship.fullTrail;
+  return full && full.length >= ship.trail.length ? full : ship.trail;
+}
+
 function drawTrail(ship) {
-  if (!showTrails || ship.trail.length < 2) return;
+  if (!showTrails) return;
+  if (selectedShipId != null && String(ship.id) === selectedShipId) {
+    // the vessel being asked about gets its whole route, heavier and in the
+    // same amber as its 3D line
+    drawTrailPoints(routePoints(ship), '#ffb83e', 0.85, 2.5 + curDetail * 1.5);
+  } else {
+    drawTrailPoints(ship.trail, shipColor(ship), 0.45, 1.5 + curDetail);
+  }
+}
+
+function drawTrailPoints(trail, color, alpha, width) {
+  if (!trail || trail.length < 2) return;
   // d3.geoOrthographic with clipAngle(90) returns null for points behind the
   // globe — so we can stroke each visible segment without invoking d3.geoPath
   // (which is ~10× heavier due to GeoJSON parsing and antimeridian handling).
-  ctx.strokeStyle = shipColor(ship);
-  ctx.globalAlpha = 0.45;
-  ctx.lineWidth = 1.5 + curDetail;
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = width;
   ctx.beginPath();
   let started = false;
-  const trail = ship.trail;
   for (let i = 0; i < trail.length; i++) {
     const pt = trail[i];
     const p = projection([pt.lon, pt.lat]);
@@ -2701,7 +2720,14 @@ function draw(tms) {
   cLatCos = Math.cos(cLat);
 
   const visible = getVisibleShips();
-  for (let i = 0; i < visible.length; i++) drawTrail(visible[i]);
+  // the selected route last, so the wakes of everything else in the same lane
+  // do not paint over it
+  let selTrail = null;
+  for (let i = 0; i < visible.length; i++) {
+    if (selectedShipId != null && String(visible[i].id) === selectedShipId) selTrail = visible[i];
+    else drawTrail(visible[i]);
+  }
+  if (selTrail) drawTrail(selTrail);
   // Draw the selected ship last so its highlight + label sit on top of any
   // other markers piled up at the same spot.
   let selShip = null;
@@ -2787,6 +2813,13 @@ function simulateShips(dt) {
  * age is visible in the sidebar's own timestamp, and staleness is a judgement
  * for whoever is reading the chart, not something to silently act on. */
 const AIS_RETENTION_MS = 48 * 60 * 60 * 1000;
+/* Every AIS vessel keeps two trails. `trail` is the short rolling wake every
+ * renderer draws for every vessel, capped at 80 points as it always was.
+ * `fullTrail` is the whole route, bounded by age and by a point backstop, and
+ * is only ever stroked for the selected vessel - one long line is cheap,
+ * thousands of them would not be. */
+const HISTORY_PRELOAD_MS = 6 * 60 * 60 * 1000; // 6h; also bounds fullTrail age
+const FULL_TRAIL_MAX_POINTS = 5000;
 let aisStreamActive = false;
 let lastAisMsgTs = 0;
 const AIS_LIVE_TIMEOUT_MS = 30 * 1000; // no msg for 30s => treat as offline
@@ -2851,6 +2884,31 @@ function ingestAisStatic(msg) {
  * during playback) - the density grid decays against it, so scrubbing history
  * at 600x still decays sensibly instead of applying a whole session's worth of
  * live-speed decay per frame. */
+/* The dedup guard for both trail buffers: a point is only appended if it is
+ * strictly newer than that buffer's last point. History replayed into a
+ * vessel that live traffic has already reached (or the same logged report
+ * replayed twice) would otherwise double back over the route. A last point with no
+ * timestamp - a trail restored from a snapshot written before points carried
+ * one - cannot be compared, so it never blocks. */
+function appendTrailPoint(buf, pt) {
+  const last = buf[buf.length - 1];
+  if (last && last.ts != null && !(pt.ts > last.ts)) return false;
+  buf.push(pt);
+  return true;
+}
+
+/* Age is measured back from the newest point rather than from the wall clock:
+ * live the two are the same thing, and during playback of an older log the
+ * wall clock would prune the whole route away the moment it was written. A
+ * point with no timestamp counts as expired. The newest point always stays. */
+function pruneFullTrail(buf, newestTs) {
+  const cutoff = newestTs - HISTORY_PRELOAD_MS;
+  let drop = 0;
+  while (drop < buf.length - 1 && !(buf[drop].ts >= cutoff)) drop++;
+  if (buf.length - drop > FULL_TRAIL_MAX_POINTS) drop = buf.length - FULL_TRAIL_MAX_POINTS;
+  if (drop) buf.splice(0, drop);
+}
+
 function ingestAisShip(msg, ts) {
   const id = 'ais-' + msg.mmsi;
   let ship = Fleet.get(id);
@@ -2864,6 +2922,10 @@ function ingestAisShip(msg, ts) {
   const hdg = hdgKnown ? msg.cog : 0;
   const status = speed > 0.5 ? 'underway' : 'anchored';
   const color = aisShipColor(speed);
+  const t = ts || Date.now();
+  // one object shared by both buffers - they never mutate a point, and a
+  // route of thousands is worth not storing twice
+  const pt = { lat: msg.lat, lon: msg.lon, ts: t };
   if (!ship) {
     ship = {
       id, mmsi: msg.mmsi, isAis: true,
@@ -2874,8 +2936,9 @@ function ingestAisShip(msg, ts) {
       lat: msg.lat, lon: msg.lon,
       speed, hdg, speedKnown, hdgKnown, status, color,
       typeKey: 'other', hasRealDims: false,
-      trail: [{ lat: msg.lat, lon: msg.lon }],
-      lastUpdate: ts || Date.now()
+      trail: [pt],
+      fullTrail: [pt],
+      lastUpdate: t
     };
     // Type/dimensions may have ridden along with this position, or have been
     // waiting in the pending map since before the vessel first reported.
@@ -2900,9 +2963,11 @@ function ingestAisShip(msg, ts) {
     ship.status = status;
     ship.color = color;
     if (msg.name) ship.name = msg.name;
-    ship.trail.push({ lat: msg.lat, lon: msg.lon });
-    if (ship.trail.length > 80) ship.trail.shift();
-    ship.lastUpdate = ts || Date.now();
+    // a record restored from a saved snapshot predates the second buffer
+    if (!ship.fullTrail) ship.fullTrail = ship.trail.slice();
+    if (appendTrailPoint(ship.trail, pt) && ship.trail.length > 80) ship.trail.shift();
+    if (appendTrailPoint(ship.fullTrail, pt)) pruneFullTrail(ship.fullTrail, t);
+    ship.lastUpdate = t;
     // Only invalidate the visible cache when something the filters look at
     // actually changed (status, speed). Position changes don't affect
     // filter membership, so they don't need to invalidate.
@@ -7594,6 +7659,10 @@ function clearSelection() {
   const prev = selectedShipId;
   selectedShipId = null;
   cardShipId = null;          // clicking open water dismisses the card outright
+  // the full route goes with the selection; the flat map reverts on its own
+  // next frame, this makes the 3D line match without waiting for one
+  if (trailObj) trailObj.visible = false;
+  trailForId = null;
   refreshConesFor(prev, hoveredShipId); refreshInfoDisplay();
 }
 function hoverShip(id) {
@@ -7655,35 +7724,40 @@ function renderInfoPanel(s) {
 
 /* Where the selected vessel has been.
  *
- * The shared registry already keeps a trail of the last eighty positions for
- * every vessel - the flat map draws it as a wake line, and until now the 3D
- * view threw it away. Laid on the water it answers a question the flat map
- * cannot: which side of the channel did it come up, and was it already turning
- * before it reached you. Only the selected vessel gets one, because eighty
- * points times a busy feed is a lot of geometry for a question you are only
- * asking about one ship.
+ * Every AIS vessel keeps its full route (see fullTrail in ingestAisShip) as
+ * well as the short wake the flat map draws for everyone. Laid on the water
+ * the route answers a question the flat map cannot: which side of the channel
+ * did it come up, and was it already turning before it reached you. Only the
+ * selected vessel gets one, because a route times a busy feed is a lot of
+ * geometry for a question you are only asking about one ship - and one line of
+ * a few thousand points is a single draw call, so it needs no decimation.
  *
  * The line is rebuilt when the selection changes or the vessel reports a new
  * position - not per frame, and it lives inside #world so the zoom carries it
- * along with everything else. */
+ * along with everything else. A new position is spotted by the last point
+ * changing, not the count: a buffer at its cap stays the same length as it
+ * rolls. */
 let trailObj = null;
-let trailForId = null, trailPoints = 0;
+let trailForId = null, trailPoints = 0, trailSrc = null, trailLast = null;
 
 function updateSelectedTrail() {
   const id = selectedShipId;
   const s = id != null ? Fleet.get(id) : null;
-  const trail = s && s.trail;
+  const trail = s && s.trail && routePoints(s);
   if (!s || !trail || trail.length < 2 || vrLod !== 'flat' || !s._vrVisible) {
     if (trailObj) trailObj.visible = false;
     trailForId = null;
     return;
   }
-  if (trailForId === id && trailPoints === trail.length) {
+  const last = trail[trail.length - 1];
+  if (trailForId === id && trailSrc === trail && trailPoints === trail.length && trailLast === last) {
     trailObj.visible = true;
     return;   // nothing new to draw
   }
   trailForId = id;
+  trailSrc = trail;
   trailPoints = trail.length;
+  trailLast = last;
 
   const pos = new Float32Array(trail.length * 3);
   for (let i = 0; i < trail.length; i++) {
@@ -7694,7 +7768,7 @@ function updateSelectedTrail() {
   }
   if (!trailObj) {
     trailObj = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({
-      color: '#ffb83e', transparent: true, opacity: 0.75, fog: false
+      color: '#ffb83e', transparent: true, opacity: 0.95, fog: false
     }));
     trailObj.frustumCulled = false;
     worldEl.object3D.add(trailObj);
