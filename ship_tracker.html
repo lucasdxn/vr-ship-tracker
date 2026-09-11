@@ -2879,7 +2879,8 @@ function draw(tms) {
   // the selected route last, so the wakes of everything else in the same lane
   // do not paint over it - and the comparison vessel's just before it. Under
   // blobs, only those two routes are drawn: they belong to the two vessels
-  // still drawn on their own.
+  // still drawn on their own, and they go over the blobs, so a busy lane
+  // cannot bury the route a task is asking about.
   const cmpId = comparisonId();
   let selShip = null, cmpShip = null;
   for (let i = 0; i < visible.length; i++) {
@@ -2887,10 +2888,10 @@ function draw(tms) {
     else if (cmpId != null && String(visible[i].id) === cmpId) cmpShip = visible[i];
     else if (!aggregatedFrame) drawTrail(visible[i]);
   }
+  if (aggregatedFrame) drawBlobs(inView);
   if (cmpShip) drawTrail(cmpShip);
   if (selShip) drawTrail(selShip);
   if (aggregatedFrame) {
-    drawBlobs(inView);
     if (cmpShip) drawShip(cmpShip, tms);
   } else {
     for (let i = 0; i < inView; i++) {
@@ -8123,6 +8124,22 @@ function setCardLayout(compare, height) {
   document.getElementById('ship-info-hud-cmp').object3D.visible = compare;
 }
 
+/* A place or country name as in-scene text can show it. The a-frame font has
+ * no glyph past '~' and silently drops the letter, so "Curaçao" would read
+ * "Curaao". Display only: the stored name stays as reported, which is what
+ * the filters match and what the flat map, in a browser font, shows. */
+const ASCII_LETTER = {
+  'ø': 'o', 'Ø': 'O', 'æ': 'ae', 'Æ': 'AE', 'œ': 'oe', 'Œ': 'OE', 'ß': 'ss',
+  'ł': 'l', 'Ł': 'L', 'đ': 'd', 'Đ': 'D', 'ð': 'd', 'Ð': 'D', 'þ': 'th', 'Þ': 'TH',
+  'ı': 'i', '‘': "'", '’': "'", '“': '"', '”': '"', '–': '-', '—': '-'
+};
+function toAsciiLabel(str) {
+  if (!str || /^[\x20-\x7e]*$/.test(str)) return str;
+  // decomposed, an accented letter is its base letter plus a combining mark
+  return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\x20-\x7e]/g, ch => ASCII_LETTER[ch] || '');
+}
+
 function renderInfoPanel(s) {
   setCardLayout(false);
   const dims = shipDims(s);
@@ -8137,7 +8154,7 @@ function renderInfoPanel(s) {
     shipTitle(s),
     typeLabel + ' | ' + Math.round(dims.lengthM) + 'x' + Math.round(dims.beamM) + ' m' + (s.hasRealDims ? '' : ' (est.)'),
     speedTxt + ' | ' + courseTxt + (s.destination ? ' | to ' + s.destination : ''),
-    (s.country ? s.country + ' | ' : '') + s.lat.toFixed(3) + ', ' + s.lon.toFixed(3)
+    (s.country ? toAsciiLabel(s.country) + ' | ' : '') + s.lat.toFixed(3) + ', ' + s.lon.toFixed(3)
   ];
   document.getElementById('ship-info-hud-text').setAttribute('text', 'value', lines.join('\n'));
   document.getElementById('ship-info-hud').object3D.visible = true;
@@ -8207,7 +8224,7 @@ function compareRows(s) {
     // unreported course is stored as 0 - never shown as due north
     s.hdgKnown ? 'crs ' + (Math.round(s.hdg) % 360) + ' deg' : 'crs unknown',
     s.destination ? 'to ' + s.destination : 'to unknown',
-    s.country || 'flag unknown'
+    toAsciiLabel(s.country) || 'flag unknown'
   ].map(v => fitColumn(v, 1)[0]);
 }
 
@@ -8784,14 +8801,24 @@ function updateWristMenuButton() {
   prevMenuButton = pressed;
 }
 
-// A (xr-standard button 4) on the right controller: fast travel to true scale
-// beside the vessel on the card. Polled, never 'abuttondown' - named button
-// events do not fire on the Quest 3S. A press, not a hold. The confirming buzz
-// comes from selectShip(), which zoomToRealScale ends in on a successful jump.
+// A on the right controller: fast travel to true scale beside the vessel on
+// the card. Polled, never 'abuttondown' - named button events do not fire on
+// the Quest 3S. Either right face button (xr-standard 4 or 5) counts: which of
+// the two the 3S reports for A is not confirmed on the device, and nothing
+// else is bound to either, so the first press logs its index once to settle
+// it. A press, not a hold. The confirming buzz comes from selectShip(), which
+// zoomToRealScale ends in on a successful jump.
 let prevZoomBtn = false;
+let zoomBtnIndexLogged = false;
 let zoomRowEnabled = false;   // what the wrist row last showed - see below
 function updateZoomButton() {
-  const pressed = buttonPressed(handGamepad(handRightEl), 4);
+  const gp = handGamepad(handRightEl);
+  const down4 = buttonPressed(gp, 4), down5 = buttonPressed(gp, 5);
+  const pressed = down4 || down5;
+  if (pressed && !zoomBtnIndexLogged) {
+    zoomBtnIndexLogged = true;
+    console.debug('[zoom] right face button seen at xr-standard index ' + (down4 ? (down5 ? '4 and 5' : '4') : '5'));
+  }
   if (pressed && !prevZoomBtn) { const s = zoomTargetShip(); if (s) zoomToRealScale(s); }
   prevZoomBtn = pressed;
   // the wrist row greys when there is nothing to zoom to; hover and select
@@ -9012,7 +9039,7 @@ function updateLandmarks(now) {
     rec.label.object3D.scale.setScalar(Math.max(1, drawnM * LANDMARK_LABEL_ANGLE));
     rec.label.object3D.position.set(0, postH + drawnM * 0.012 + 20, 0);
     rec.label.setAttribute('text', 'value',
-      n.c.name.toUpperCase() + '\n' + fmtRange(n.d) + ' ' + bearingLabel(sceneBearingDeg(n.dx, n.dz)) +
+      toAsciiLabel(n.c.name).toUpperCase() + '\n' + fmtRange(n.d) + ' ' + bearingLabel(sceneBearingDeg(n.dx, n.dz)) +
       (pulledIn ? ' ->' : ''));
   }
 }
