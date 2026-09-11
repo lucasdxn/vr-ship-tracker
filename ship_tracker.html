@@ -1475,6 +1475,9 @@ function resize() {
   canvas.style.width = w + 'px';
   canvas.style.height = h + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // reallocating the backing store cleared it; repaint on the next tick rather
+  // than showing it blank until the frame cap comes round
+  canvasPaintClock = -Infinity;
 }
 
 const LAND = [
@@ -2328,17 +2331,27 @@ function rgbaOf(color, a) {
   return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')';
 }
 
-function drawShip(ship, tms) {
-  if (!isOnFrontHemisphereFast(ship.lat, ship.lon)) return;
+/* Is this vessel in the frame? Leaves its projected point in cullX/cullY, so
+ * draw() can count what is in view in one pass and then draw from the stored
+ * points instead of projecting every vessel twice. */
+let cullX = 0, cullY = 0;
+function shipInView(ship) {
+  if (!isOnFrontHemisphereFast(ship.lat, ship.lon)) return false;
   const p = projection([ship.lon, ship.lat]);
-  if (!p) return;
+  if (!p) return false;
   const x = p[0], y = p[1];
+  cullX = x; cullY = y;
   // Off-viewport cull. Cheap at globe scale, essential at region scale where
   // most of the fleet sits outside the frame but still passes the hemisphere
   // test — drawing their hulls and wakes would be pure waste.
-  const pad = 80 + 120 * curDetail;
-  if (x < -pad || y < -pad || x > viewW + pad || y > viewH + pad) return;
+  return !(x < -viewPad || y < -viewPad || x > viewW + viewPad || y > viewH + viewPad);
+}
 
+function drawShip(ship, tms) {
+  if (shipInView(ship)) drawShipAt(ship, cullX, cullY, tms);
+}
+
+function drawShipAt(ship, x, y, tms) {
   const selected = selectedShipId != null && String(ship.id) === selectedShipId;
   if (curDetail < 0.02) drawShipGlyph(ship, x, y, selected);
   else drawShipDetailed(ship, x, y, selected, tms);
@@ -2713,8 +2726,79 @@ function drawShipLabel(x, y, ship) {
 
 /* Per-frame constants shared with the ship renderers, so that zoom-dependent
  * values aren't recomputed once per vessel. */
-let viewW = 0, viewH = 0, curDetail = 0, curKmPerPx = 1, labelBudget = 0;
+let viewW = 0, viewH = 0, viewPad = 80, curDetail = 0, curKmPerPx = 1, labelBudget = 0;
 const MAX_REGION_LABELS = 55;
+
+/* ---- Aggregated rendering ----------------------------------------------
+ * At globe and sea-area zoom over busy water, thousands of vessels are
+ * genuinely in view, and drawing each one buys nothing: the glyphs pile into
+ * noise and every one is still a draw call. So once a frame has more than
+ * AGGREGATE_ABOVE vessels in view, it bins all of them into a screen-space
+ * grid and paints one blob per occupied cell instead - the draw cost is then
+ * bounded by the screen area, not the fleet. A harbour, with few vessels in
+ * view, always draws each one in full.
+ *
+ * Every vessel that passed the cull lands in exactly one cell, so the counts
+ * are the real distribution rather than a sample. Size carries the count, and
+ * the density overlay's ramp is the secondary cue, as it is there. Blobs are
+ * not interactive; the selected and comparison vessels are drawn individually
+ * on top, and everything is pickable again once you zoom in below the
+ * threshold. */
+const AGGREGATE_ABOVE = 400;    // vessels in view before a frame switches to blobs
+const AGGREGATE_BELOW = 340;    // ...and back under this before it switches back, so the edge doesn't flicker as the globe turns
+const AGGREGATE_CELL_PX = 24;
+let aggregatedFrame = false;    // what the last paint showed - picking reads it
+const inViewShips = [], inViewX = [], inViewY = [];   // this frame's cull survivors and their projected points
+const blobIndex = new Map(), blobN = [], blobX = [], blobY = [];
+
+// Bin the first n in-view points into cells of AGGREGATE_CELL_PX, measured
+// from (x0, y0), which must not be right or below any point. Returns the
+// number of occupied cells; blobN/blobX/blobY hold each cell's count and the
+// sums of its members' positions.
+function binInView(n, x0, y0) {
+  blobIndex.clear();
+  blobN.length = 0; blobX.length = 0; blobY.length = 0;
+  for (let i = 0; i < n; i++) {
+    const x = inViewX[i], y = inViewY[i];
+    const key = Math.floor((y - y0) / AGGREGATE_CELL_PX) * 65536 + Math.floor((x - x0) / AGGREGATE_CELL_PX);
+    let c = blobIndex.get(key);
+    if (c === undefined) {
+      c = blobN.length;
+      blobIndex.set(key, c);
+      blobN.push(0); blobX.push(0); blobY.push(0);
+    }
+    blobN[c]++; blobX[c] += x; blobY[c] += y;
+  }
+  return blobN.length;
+}
+
+function drawBlobs(n) {
+  const cells = binInView(n, -viewPad, -viewPad);
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(13,15,20,0.55)';   // keeps neighbouring blobs apart where they touch
+  for (let c = 0; c < cells; c++) {
+    const k = blobN[c];
+    // at the centroid of the cell's vessels, so a busy strait stays in the
+    // strait rather than snapping to the grid
+    const r = Math.min(AGGREGATE_CELL_PX * 0.75, 2.5 + 2.2 * Math.log1p(k));
+    ctx.beginPath();
+    ctx.arc(blobX[c] / k, blobY[c] / k, r, 0, Math.PI * 2);
+    ctx.fillStyle = colorForWeight(k);
+    ctx.globalAlpha = 0.8;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.stroke();
+  }
+}
+
+// While a frame is aggregated, only the vessels drawn on their own answer the
+// pointer - a click on a blob falls through to open water, which descends a
+// rung on that spot.
+function shipPickable(ship) {
+  if (!aggregatedFrame) return true;
+  const id = String(ship.id);
+  return id === selectedShipId || id === compareShipId;
+}
 // Unselected vessel names, deferred until the place names have been placed.
 const pendingShipLabels = [];
 function flushShipLabels() {
@@ -2729,6 +2813,7 @@ function draw(tms) {
   viewW = surfaceW();
   viewH = surfaceH();
   curDetail = detailLevel();
+  viewPad = 80 + 120 * curDetail;
   curKmPerPx = kmPerPixel();
   labelBudget = MAX_REGION_LABELS;
   placedLabels.length = 0;
@@ -2745,25 +2830,40 @@ function draw(tms) {
   cLatCos = Math.cos(cLat);
 
   const visible = getVisibleShips();
-  // the selected route last, so the wakes of everything else in the same lane
-  // do not paint over it - and the comparison vessel's just before it
-  const cmpId = comparisonId();
-  let selTrail = null, cmpTrail = null;
+  // One cull pass first, so the frame knows how many vessels are in view
+  // before it decides whether to draw them one by one or as blobs.
+  inViewShips.length = 0; inViewX.length = 0; inViewY.length = 0;
   for (let i = 0; i < visible.length; i++) {
-    if (selectedShipId != null && String(visible[i].id) === selectedShipId) selTrail = visible[i];
-    else if (cmpId != null && String(visible[i].id) === cmpId) cmpTrail = visible[i];
-    else drawTrail(visible[i]);
+    if (shipInView(visible[i])) { inViewShips.push(visible[i]); inViewX.push(cullX); inViewY.push(cullY); }
   }
-  if (cmpTrail) drawTrail(cmpTrail);
-  if (selTrail) drawTrail(selTrail);
+  const inView = inViewShips.length;
+  aggregatedFrame = inView > (aggregatedFrame ? AGGREGATE_BELOW : AGGREGATE_ABOVE);
+
+  // the selected route last, so the wakes of everything else in the same lane
+  // do not paint over it - and the comparison vessel's just before it. Under
+  // blobs, only those two routes are drawn: they belong to the two vessels
+  // still drawn on their own.
+  const cmpId = comparisonId();
+  let selShip = null, cmpShip = null;
+  for (let i = 0; i < visible.length; i++) {
+    if (selectedShipId != null && String(visible[i].id) === selectedShipId) selShip = visible[i];
+    else if (cmpId != null && String(visible[i].id) === cmpId) cmpShip = visible[i];
+    else if (!aggregatedFrame) drawTrail(visible[i]);
+  }
+  if (cmpShip) drawTrail(cmpShip);
+  if (selShip) drawTrail(selShip);
+  if (aggregatedFrame) {
+    drawBlobs(inView);
+    if (cmpShip) drawShip(cmpShip, tms);
+  } else {
+    for (let i = 0; i < inView; i++) {
+      const s = inViewShips[i];
+      if (s === selShip) continue;
+      drawShipAt(s, inViewX[i], inViewY[i], tms);
+    }
+  }
   // Draw the selected ship last so its highlight + label sit on top of any
   // other markers piled up at the same spot.
-  let selShip = null;
-  for (let i = 0; i < visible.length; i++) {
-    const s = visible[i];
-    if (selectedShipId != null && String(s.id) === selectedShipId) { selShip = s; continue; }
-    drawShip(s, tms);
-  }
   if (selShip) drawShip(selShip, tms);
 
   // Place names first, then the queued vessel names into whatever space is
@@ -3056,7 +3156,7 @@ function selectShipAtClient(clientX, clientY) {
   const [mx, my] = canvasXY(clientX, clientY);
   let best = null, bestD = 18;   // px hit radius
   for (const ship of ships) {
-    if (!passesFilters(ship)) continue;
+    if (!passesFilters(ship) || !shipPickable(ship)) continue;
     const p = projection([ship.lon, ship.lat]);
     if (!p) continue;
     const dd = Math.hypot(p[0] - mx, p[1] - my);
@@ -3172,6 +3272,7 @@ function checkHover(e) {
   const visible = getVisibleShips();
   const hitR = 14 + 10 * curDetail;   // silhouettes are bigger than glyphs
   for (const ship of visible) {
+    if (!shipPickable(ship)) continue;
     const p = projection([ship.lon, ship.lat]);
     if (!p) continue;
     if (Math.hypot(p[0] - mx, p[1] - my) < hitR) {
@@ -3375,6 +3476,14 @@ function addLog(msg) {
 
 let last = 0;
 let chipAccum = 0;
+/* The canvas repaints at most this often. Only the paint is capped: the camera
+ * step, auto-rotate and simulation below, and everything in navTickFrame, stay
+ * on the full frame rate. 30 rather than 24, which reads as choppy while you
+ * drag the globe round. */
+const CANVAS_FPS_CAP = 30;
+const CANVAS_FRAME_MS = 1000 / CANVAS_FPS_CAP;
+let canvasPaintClock = -Infinity;
+let canvasRepainted = false;   // set on a paint, cleared by the map panel once it has uploaded it
 /* One frame of the flat renderer.
  *
  * Not self-scheduling, and deliberately not driven by window.requestAnimation-
@@ -3405,7 +3514,17 @@ function animateFrame(ts) {
   // the map panel in the headset is this same canvas, so the flat renderer
   // keeps running whenever either of them is on screen
   if (activeView === '2d' || mapPanelActive) {
-    draw(ts);
+    // The clock steps by whole periods rather than jumping to `ts`, so a 72 Hz
+    // headset averages 30 paints a second instead of rounding down to every
+    // third frame (24). The 1 ms slack keeps a 60 Hz display, whose frames land
+    // a hair either side of 33.3 ms, on every second frame. A clock that went
+    // backwards re-seats rather than holding the canvas frozen until it catches up.
+    const sincePaint = ts - canvasPaintClock;
+    if (sincePaint < 0 || sincePaint >= CANVAS_FRAME_MS - 1) {
+      canvasPaintClock = sincePaint < 0 || sincePaint > 2 * CANVAS_FRAME_MS ? ts : canvasPaintClock + CANVAS_FRAME_MS;
+      draw(ts);
+      canvasRepainted = true;
+    }
     // The chip only has to keep up with the eye, not the frame rate.
     chipAccum += dt;
     if (chipAccum > 0.12) { chipAccum = 0; updateViewChip(); }
@@ -9395,8 +9514,11 @@ function updateMapPanelFollow(dt) {
 
 function updateMapPanelTexture(now) {
   if (!mapPanelActive || !mapPanelTex) return;
-  if (now - mapPanelUploadedAt < MAP_PANEL_UPLOAD_MS) return;
+  // the canvas paints at CANVAS_FPS_CAP; re-uploading a frame it skipped
+  // would only send the same 6.4 MB again
+  if (!canvasRepainted || now - mapPanelUploadedAt < MAP_PANEL_UPLOAD_MS) return;
   mapPanelUploadedAt = now;
+  canvasRepainted = false;
   mapPanelTex.needsUpdate = true;
 }
 
