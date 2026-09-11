@@ -648,11 +648,10 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
         <a-entity id="nav-hud-text" text="value: HDG 000° · ALT 0 m; align: center; width: 3; color: #7a8099; baseline: center"></a-entity>
       </a-entity>
 
-      <!-- in-scene ship detail card (see renderInfoPanel()) - shown on
-           pointing at a ship (hover) and pinned by clicking one. The 1:1
-           button under it is the fast-travel shortcut required alongside
-           manual zoom: it re-anchors the tangent-plane origin on that ship and
-           drops the world scale straight to true size. -->
+      <!-- in-scene ship detail card (see renderInfoPanel()) - previews the
+           ship you point at, and is pinned by selecting one. Display only: the
+           fast-travel shortcut to true scale beside it is the right controller's
+           A button (see updateZoomButton()), not a button on the card. -->
       <a-entity id="ship-info-hud" class="hud" no-frustum-cull visible="false" position="0.45 0.12 -1.05" scale="0.2 0.2 0.2">
         <a-plane width="3" height="1.5" position="0 -0.14 -0.01"
                  material="color: #0d0f14; opacity: 0.9; shader: flat; side: double"></a-plane>
@@ -660,12 +659,8 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
              this panel's distance the smaller count is what makes the vessel
              name (the task-critical line) readable in one glance without
              growing the panel itself. Long names wrap instead of shrinking. -->
-        <a-entity id="ship-info-hud-text" position="0 0.14 0"
+        <a-entity id="ship-info-hud-text" position="0 -0.14 0"
                   text="value: -; align: center; width: 2.8; color: #e2e6f0; baseline: center; wrapCount: 24"></a-entity>
-        <a-box id="ship-zoom-btn" class="clickable" width="2.2" height="0.3" depth="0.01"
-               position="0 -0.6 0.01" material="color: #102437; opacity: 0.96; shader: flat">
-          <a-entity text="value: ZOOM TO REAL SCALE; align: center; baseline: center; width: 2; wrapCount: 22; color: #3ea8ff" position="0 0 0.008"></a-entity>
-        </a-box>
       </a-entity>
 
       <!-- always-on toggles, sitting on the vertical centreline just above
@@ -5297,7 +5292,8 @@ function hideTeleportMarker() { teleportMarkerEl.object3D.visible = false; }
  *   left  stick  click   fly / teleport
  *   grip            grab the world and pull to zoom
  *   trigger         select
- *   X or A          the wrist menu
+ *   X or Y          the wrist menu
+ *   A               zoom to the vessel on the card
  *
  * Turning used to live on the right stick's X alongside strafing, which meant
  * there was no snap turn at all - the one control a seated headset user cannot
@@ -6128,6 +6124,7 @@ function navTickFrame(now) {
   updateVrGrab();
   updateStickZoom(dt);
   updateWristMenuButton();
+  updateZoomButton();
   updateLocomotion(dt);
   absorbRigMotionIntoGlobe();
   updateShipSmoothing(dt);
@@ -7747,10 +7744,11 @@ function clearBeacons() {
  * other way round.
  *
  * "Selected" (click, sticky) and "hovered" (point, live) are separate so that
- * looking away from a pinned ship doesn't blank the card: hover wins while it
- * is live, falling back to the selection once the pointer moves off. The
- * selection is the same `selectedShipId` the 2D renderer highlights, so
- * picking a ship in one view has it singled out in the other. */
+ * looking away from a pinned ship doesn't blank the card: the selection owns
+ * the card and hover only previews when nothing is selected (see
+ * refreshInfoDisplay). The selection is the same `selectedShipId` the 2D
+ * renderer highlights, so picking a ship in one view has it singled out in the
+ * other. */
 /* Selection and hover both feed the cone rules (see updateCourseCone), so the
  * vessel you are asking about always projects its track even when the rest are
  * turned down - which is most of why you asked. Only the two vessels involved
@@ -7769,6 +7767,7 @@ function refreshConesFor(prevSel, prevHover) {
 function selectShip(id) {
   const prev = selectedShipId;
   selectedShipId = String(id); sidebarDirty = true;
+  cardShipId = selectedShipId;   // a select pins the card - see refreshInfoDisplay()
   // selection is the one action whose success is otherwise only a panel
   // appearing off to the side; the buzz confirms the hit at the hand that
   // made it (right: the trigger that selects rides the right-hand ray)
@@ -7797,49 +7796,45 @@ function unhoverShip(id) {
   refreshConesFor(selectedShipId, prev); refreshInfoDisplay();
 }
 
-/* Which vessel the card is about, which is deliberately stickier than what the
- * pointer is on this instant.
+/* Which vessel the card is about: the selection owns it, hover only previews.
  *
- * The card carries a button, and reaching for that button means pointing away
- * from the ship - at which point a card driven by live hover has no subject
- * any more, and pressing it does nothing at all. That is not a race to be
- * tightened up; it happens every single time, because the button is never
- * where the ship is.
+ * With a vessel selected, the card is that vessel and nothing else - pointing
+ * at other ships, at the water, or at a panel never replaces or dismisses it.
+ * Letting live hover drive it made the subject shift under you the moment the
+ * ray left the hull, so the card blinked or re-targeted whatever the ray
+ * crossed next. Only selecting another vessel, clicking open water
+ * (clearSelection) or losing the vessel changes it.
  *
- * So the card remembers. Pointing at a vessel makes it the subject, pointing
- * at another replaces it, and only dismissing it (clicking open water) or
- * losing the vessel clears it. The button then always has something to act on,
- * and the card stays readable while you look at it rather than blinking out
- * the moment your aim drifts. */
+ * With nothing selected, pointing at a vessel previews it, pointing at another
+ * replaces it, and the last preview stays up rather than blinking out as your
+ * aim drifts - until water is clicked or a vessel is selected. */
 function refreshInfoDisplay() {
   if (mapPanelActive) { hideInfoPanel(); return; }
-  const live = hoveredShipId != null ? hoveredShipId : selectedShipId;
-  if (live != null) cardShipId = live;
+  if (selectedShipId != null) cardShipId = selectedShipId;
+  else if (hoveredShipId != null) cardShipId = hoveredShipId;
   const s = cardShipId != null ? Fleet.get(cardShipId) : null;
   if (s) renderInfoPanel(s); else hideInfoPanel();
 }
 
 function hideInfoPanel() {
   document.getElementById('ship-info-hud').object3D.visible = false;
-  // an invisible button is still a raycast target - three tests layers, not
-  // visibility - so a dismissed card left one floating a metre in front of
-  // your face, quietly swallowing anything aimed through it
-  if (setRaycastable(document.getElementById('ship-zoom-btn'), false)) refreshRaycasters();
 }
 
 function renderInfoPanel(s) {
   const dims = shipDims(s);
   const typeLabel = (SHIP_TYPES[s.typeKey] || SHIP_TYPES.other).label;
   const speedTxt = s.speedKnown ? s.speed.toFixed(1) + ' kn' : 'speed unknown';
+  // hdg is the reported course over ground; unreported is stored as 0, which
+  // must not be shown as due north
+  const courseTxt = s.hdgKnown ? 'course ' + (Math.round(s.hdg) % 360) + '°' : 'course unknown';
   const lines = [
     shipTitle(s),
     typeLabel + ' · ' + Math.round(dims.lengthM) + '×' + Math.round(dims.beamM) + ' m' + (s.hasRealDims ? '' : ' (est.)'),
-    speedTxt + (s.destination ? ' · to ' + s.destination : ''),
+    speedTxt + ' · ' + courseTxt + (s.destination ? ' · to ' + s.destination : ''),
     (s.country ? s.country + ' · ' : '') + s.lat.toFixed(3) + ', ' + s.lon.toFixed(3)
   ];
   document.getElementById('ship-info-hud-text').setAttribute('text', 'value', lines.join('\n'));
   document.getElementById('ship-info-hud').object3D.visible = true;
-  if (setRaycastable(document.getElementById('ship-zoom-btn'), true)) refreshRaycasters();
 }
 
 /* Where the selected vessel has been.
@@ -7966,10 +7961,14 @@ function zoomToRealScale(s) {
   selectShip(s.id);
   addLog('Zoomed to ' + (s.name || s.id) + ' at real scale');
 }
-document.getElementById('ship-zoom-btn').addEventListener('click', (evt) => {
-  evt.stopPropagation();   // never let it reach the world behind the card
-  if (cardShipId != null) zoomToRealScale(Fleet.get(cardShipId));
-});
+
+// The vessel the card is showing, i.e. what "zoom to vessel" acts on - or null
+// when there is no card to read (nothing pinned, or the flat map is up and the
+// card with it hidden).
+function zoomTargetShip() {
+  if (mapPanelActive || cardShipId == null) return null;
+  return Fleet.get(cardShipId) || null;
+}
 
 // the 2D sidebar's "focus" action, but in 3D: clicking a vessel card while the
 // 3D view is up should take you there rather than fly a globe you cannot see
@@ -8111,7 +8110,7 @@ const CONTROLS_HUD_TEXT =
   'Grip + pull  grab and zoom\n' +
   'Both grips  drag and scale\n' +
   'Trigger  select a vessel,\n  the sea, or the planet\n' +
-  '  then ZOOM TO REAL SCALE\n\n' +
+  'A  zoom to vessel\n\n' +
   'M  this panel and filters\n' +
   'R  recentre    2D  the map\n\n' +
   'desktop: WASD, right-drag or\nwheel to zoom, click to descend';
@@ -8237,6 +8236,12 @@ function buildWristMenu() {
     color: () => finderOpen ? '#ffb83e' : '#3eff9a',
     onClick: () => setFinderOpen(!finderOpen)
   });
+  makeWristRow(-1, l++, {
+    // the clickable spelling of right-A; greyed with no vessel on the card
+    text: () => 'ZOOM TO VESSEL',
+    color: () => zoomTargetShip() ? '#3ea8ff' : '#3a3f52',
+    onClick: () => { const s = zoomTargetShip(); if (s) zoomToRealScale(s); }
+  });
 
   makeWristHeading(-1, l++, 'TIME');
   makeWristRow(-1, l++, {
@@ -8334,7 +8339,7 @@ function setWristMenuOpen(open) {
 }
 document.getElementById('wrist-menu-toggle').addEventListener('click', () => setWristMenuOpen(!wristMenuOpen));
 
-// X / A (xr-standard buttons 4 and 5) on the left controller, polled rather
+// X / Y (xr-standard buttons 4 and 5) on the left controller, polled rather
 // than event-driven for the same reason as everything else here
 let prevMenuButton = false;
 function updateWristMenuButton() {
@@ -8342,6 +8347,22 @@ function updateWristMenuButton() {
   const pressed = buttonPressed(gp, 4) || buttonPressed(gp, 5);
   if (pressed && !prevMenuButton) setWristMenuOpen(!wristMenuOpen);
   prevMenuButton = pressed;
+}
+
+// A (xr-standard button 4) on the right controller: fast travel to true scale
+// beside the vessel on the card. Polled, never 'abuttondown' - named button
+// events do not fire on the Quest 3S. A press, not a hold. The confirming buzz
+// comes from selectShip(), which zoomToRealScale ends in on a successful jump.
+let prevZoomBtn = false;
+let zoomRowEnabled = false;   // what the wrist row last showed - see below
+function updateZoomButton() {
+  const pressed = buttonPressed(handGamepad(handRightEl), 4);
+  if (pressed && !prevZoomBtn) { const s = zoomTargetShip(); if (s) zoomToRealScale(s); }
+  prevZoomBtn = pressed;
+  // the wrist row greys when there is nothing to zoom to; hover and select
+  // change that without otherwise re-rendering the menu
+  const enabled = zoomTargetShip() != null;
+  if (enabled !== zoomRowEnabled) { zoomRowEnabled = enabled; if (wristMenuOpen) syncWristMenu(); }
 }
 
 
