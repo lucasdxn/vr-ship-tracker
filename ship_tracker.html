@@ -1726,16 +1726,17 @@ function prepareLandPolys(features) {
     for (let i = 0; i < list.length; i++) {
       const rings = list[i], outer = rings[0];
       if (!outer || outer.length < 4) continue;
-      let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity;
+      let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity, crosses = false;
       for (let k = 0; k < outer.length; k++) {
         const p = outer[k];
         if (p[0] < w) w = p[0];
         if (p[0] > e) e = p[0];
         if (p[1] < s) s = p[1];
         if (p[1] > n) n = p[1];
+        if (k && Math.abs(p[0] - outer[k - 1][0]) > 180) crosses = true;   // steps over the antimeridian - see antimeridianCut()
       }
       out.push({
-        rings, w, s, e, n,
+        rings, w, s, e, n, crosses,
         feature: { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: rings } }
       });
     }
@@ -1768,6 +1769,32 @@ function makeRingRecorder() {
   };
 }
 
+/* world-atlas stitches its polygons back together across the antimeridian,
+ * which is right on a sphere and wrong on a plane: an edge from 179.9° to
+ * -179.9° is a short hop over the date line to d3's spherical code, but a line
+ * straight across the map to the planar clipper, which then fills the wrong
+ * side of it - a band of false land along 71°N wherever the 1:50m Eurasia is
+ * in the window, and the Russian Arctic coast turned inside out. So the few
+ * polygons that cross are cut at the antimeridian by d3's own spherical
+ * clipper, once, the first time they are needed. (Natural Earth's 1:10m files
+ * come already cut there.) An equirectangular projection in plain degrees
+ * with resampling off leaves every other point exactly where it was. */
+let antimeridianProjection = null;
+function antimeridianCut(P) {
+  if (!P.cut) {
+    if (!antimeridianProjection) {
+      antimeridianProjection = d3.geoEquirectangular().scale(180 / Math.PI).translate([0, 0])
+                                 .reflectY(true).precision(0);
+    }
+    const rec = makeRingRecorder();
+    d3.geoPath(antimeridianProjection, rec.ctx)(P.feature);
+    // flattened like the clip output, holes included, so wound the same way
+    P.cut = { type: 'Feature', properties: {},
+              geometry: { type: 'MultiPolygon', coordinates: rec.rings.map(r => [asOuterRing(r)]) } };
+  }
+  return P.cut;
+}
+
 let clipCache = null, clipRect = null, clipTag = '';
 
 function clippedLandFor(win, polys, tag) {
@@ -1795,12 +1822,20 @@ function clippedLandFor(win, polys, tag) {
   for (let i = 0; i < polys.length; i++) {
     const P = polys[i];
     if (P.e < w || P.w > e || P.n < s || P.s > n) continue;
-    gen(P.feature);
+    gen(P.crosses ? antimeridianCut(P) : P.feature);
   }
   // Each clipped ring becomes its own polygon. Holes therefore fill as land,
   // which is what we want here — inland water is drawn by the lakes layer.
+  //
+  // The clipper is planar, so the winding it hands back means nothing on the
+  // sphere the result is drawn on - and two kinds of ring come back wound
+  // backwards: a hole (the Caspian) on its own, and, whenever the window lies
+  // wholly inside one landmass, the window itself. Drawn as they are, each
+  // fills everything *but* itself, so zooming
+  // in over land turned the view to sea until the next re-clip touched a coast.
+  // Same cure as the built-in outline.
   clipCache = { type: 'Feature', properties: {},
-                geometry: { type: 'MultiPolygon', coordinates: rec.rings.map(r => [r]) } };
+                geometry: { type: 'MultiPolygon', coordinates: rec.rings.map(r => [asOuterRing(r)]) } };
   clipRect = [w, s, e, n];
   clipTag = tag;
   return clipCache;
@@ -1847,16 +1882,18 @@ function getFallbackLand() {
   if (!fallbackLand) {
     fallbackLand = {
       type: 'Feature', properties: {},
-      geometry: {
-        type: 'MultiPolygon',
-        coordinates: LAND.map(ring => {
-          const a = d3.geoArea({ type: 'Polygon', coordinates: [ring] });
-          return [a > 2 * Math.PI ? ring.slice().reverse() : ring];
-        })
-      }
+      geometry: { type: 'MultiPolygon', coordinates: LAND.map(ring => [asOuterRing(ring)]) }
     };
   }
   return fallbackLand;
+}
+
+// A ring as an outer boundary, wound the way d3 reads as "inside". No piece of
+// land is bigger than a hemisphere, so a ring that measures more than one is
+// backwards. Returns a reversed copy, never mutating the ring it was given.
+function asOuterRing(ring) {
+  const a = d3.geoArea({ type: 'Polygon', coordinates: [ring] });
+  return a > 2 * Math.PI ? ring.slice().reverse() : ring;
 }
 
 // Last-resort outline, used only until the first layer arrives or if the
