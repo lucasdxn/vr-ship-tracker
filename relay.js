@@ -50,6 +50,12 @@ const WebSocket = require('ws');
 
 const PORT = Number(process.env.PORT) || 3333;
 const UPSTREAM = 'wss://stream.aisstream.io/v0/stream';
+// aisstream upstream keepalive + reconnect
+const UPSTREAM_PING_MS = 30000;            // ping interval; keeps NAT/proxy idle timeouts from dropping the socket
+const UPSTREAM_RECONNECT_BASE_MS = 1000;   // first reconnect delay, doubled per failed attempt
+const UPSTREAM_RECONNECT_MAX_MS = 10000;   // backoff cap
+const UPSTREAM_STABLE_MS = 30000;          // an upstream open at least this long resets the backoff
+const UPSTREAM_MAX_RECONNECTS = 10;        // consecutive short-lived attempts before giving up
 const BW_TOKEN_URL = 'https://id.barentswatch.no/connect/token';
 const BW_STREAM_URL = 'https://live.ais.barentswatch.no/live/v1/combined?modelType=Full';
 const DT_LOCATIONS_URL = 'https://meri.digitraffic.fi/api/ais/v1/locations';
@@ -512,63 +518,136 @@ wss.on('connection', (client, req) => {
     return;
   }
 
-  const upstream = new WebSocket(UPSTREAM, INSECURE_TLS ? { rejectUnauthorized: false } : undefined);
-  const pending = [];
+  let upstream = null;
+  let upstreamPing = null;
+  let reconnectTimer = null;
+  let reconnectAttempts = 0;
+  let clientClosed = false;
+  let upstreamFatal = null;   // reason text once aisstream reported an error a retry won't fix
+  let lastSubscribe = null;   // latest subscribe from the browser, replayed after a reconnect
+  let pending = [];
   let bytesUp = 0, bytesDown = 0;
   let upMsgCount = 0;
 
-  upstream.on('open', () => {
-    console.log('[' + ts() + '] upstream open; flushing ' + pending.length + ' queued message(s)');
-    fileLog('UPSTREAM OPEN (handshake to aisstream.io succeeded)');
-    while (pending.length && upstream.readyState === WebSocket.OPEN) {
-      const msg = pending.shift();
-      upstream.send(msg);
-      bytesUp += msg.length || 0;
-    }
-  });
+  // closes a retry can't fix: protocol/policy errors and the 4000 range (auth)
+  const isFatalClose = (code) => code === 1002 || code === 1003 || code === 1007 || code === 1008 ||
+    (code >= 4000 && code <= 4999);
+  // ws refuses to send reserved codes like 1005/1006
+  const sendableCode = (code) => ((code >= 1000 && code <= 1003) || (code >= 1007 && code <= 1014) ||
+    (code >= 3000 && code <= 4999)) ? code : 1011;
 
-  upstream.on('message', (data) => {
-    upMsgCount++;
-    // Force a text frame: aisstream sends JSON as text, `ws` decodes it
-    // into a Buffer, and forwarding the Buffer would emit a binary frame
-    // which the browser surfaces as a Blob (not a string). JSON.parse on
-    // a Blob fails silently and the browser sees "no messages".
-    const text = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(text);
-      bytesDown += text.length;
-    }
-    try { logAisMessage(JSON.parse(text)); } catch (_) { /* not JSON - nothing to log, already forwarded above regardless */ }
-    console.log('[' + ts() + '] UP #' + upMsgCount + ' ' + text);
-  });
+  function sendUpstream(text) {
+    upstream.send(text);
+    bytesUp += text.length || 0;
+  }
 
-  upstream.on('close', (code, reason) => {
-    const r = reason.toString();
-    console.log('[' + ts() + '] upstream closed code=' + code + ' reason="' + r + '"');
-    fileLog('UPSTREAM CLOSED code=' + code + ' reason="' + r + '" (received ' + upMsgCount + ' message(s))');
-    try { client.close(code <= 4999 ? code : 1011, r.slice(0, 120)); } catch (_) {}
-  });
+  function connectUpstream(isReconnect) {
+    const ws = new WebSocket(UPSTREAM, INSECURE_TLS ? { rejectUnauthorized: false } : undefined);
+    upstream = ws;
+    let openedAt = 0;
 
-  upstream.on('error', (err) => {
-    console.error('[' + ts() + '] upstream error: ' + err.message);
-    fileLog('UPSTREAM ERROR: ' + err.message);
-  });
+    clearInterval(upstreamPing);
+    upstreamPing = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.ping();
+    }, UPSTREAM_PING_MS);
+
+    ws.on('open', () => {
+      openedAt = Date.now();
+      if (isReconnect) {
+        console.log('[' + ts() + '] upstream reconnected');
+        fileLog('UPSTREAM RECONNECTED');
+        // queued messages are newer than the stored subscribe; otherwise replay it
+        if (!pending.length && lastSubscribe) {
+          console.log('[' + ts() + '] replaying subscribe to new upstream');
+          sendUpstream(lastSubscribe);
+        }
+      } else {
+        fileLog('UPSTREAM OPEN (handshake to aisstream.io succeeded)');
+      }
+      console.log('[' + ts() + '] upstream open; flushing ' + pending.length + ' queued message(s)');
+      while (pending.length && ws.readyState === WebSocket.OPEN) sendUpstream(pending.shift());
+    });
+
+    ws.on('message', (data) => {
+      upMsgCount++;
+      // Force a text frame: aisstream sends JSON as text, `ws` decodes it
+      // into a Buffer, and forwarding the Buffer would emit a binary frame
+      // which the browser surfaces as a Blob (not a string). JSON.parse on
+      // a Blob fails silently and the browser sees "no messages".
+      const text = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(text);
+        bytesDown += text.length;
+      }
+      let parsed = null;
+      try { parsed = JSON.parse(text); } catch (_) { /* not JSON - nothing to log, already forwarded above regardless */ }
+      if (parsed) {
+        // aisstream reports a bad key / subscription as {"error": "..."} and then closes
+        if (typeof parsed.error === 'string') upstreamFatal = parsed.error;
+        else logAisMessage(parsed);
+      }
+      console.log('[' + ts() + '] UP #' + upMsgCount + ' ' + text);
+    });
+
+    ws.on('close', (code, reason) => {
+      clearInterval(upstreamPing);
+      const r = reason.toString();
+      console.log('[' + ts() + '] upstream closed code=' + code + ' reason="' + r + '"');
+      fileLog('UPSTREAM CLOSED code=' + code + ' reason="' + r + '" (received ' + upMsgCount + ' message(s))');
+      if (clientClosed || ws !== upstream) return;
+
+      if (upstreamFatal || isFatalClose(code)) {
+        fileLog('UPSTREAM NOT RECONNECTING: ' + (upstreamFatal || 'close code ' + code));
+        try { client.close(sendableCode(code), (upstreamFatal || r).slice(0, 120)); } catch (_) {}
+        return;
+      }
+
+      if (openedAt && Date.now() - openedAt >= UPSTREAM_STABLE_MS) reconnectAttempts = 0;
+      if (reconnectAttempts >= UPSTREAM_MAX_RECONNECTS) {
+        console.error('[' + ts() + '] upstream reconnect abandoned after ' + reconnectAttempts + ' attempt(s)');
+        fileLog('UPSTREAM RECONNECT ABANDONED after ' + reconnectAttempts + ' attempt(s)');
+        try { client.close(1011, 'upstream unavailable'); } catch (_) {}
+        return;
+      }
+      const delay = Math.min(UPSTREAM_RECONNECT_MAX_MS, UPSTREAM_RECONNECT_BASE_MS * Math.pow(2, reconnectAttempts));
+      reconnectAttempts++;
+      console.log('[' + ts() + '] upstream reconnect #' + reconnectAttempts + ' in ' + delay + 'ms');
+      fileLog('UPSTREAM RECONNECT #' + reconnectAttempts + ' in ' + delay + 'ms (after code=' + code + ')');
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (!clientClosed) connectUpstream(true);
+      }, delay);
+    });
+
+    ws.on('error', (err) => {
+      console.error('[' + ts() + '] upstream error: ' + err.message);
+      fileLog('UPSTREAM ERROR: ' + err.message);
+    });
+  }
+
+  connectUpstream(false);
 
   client.on('message', (data) => {
     // Same treatment in this direction: send as text frame upstream.
     const text = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
     console.log('[' + ts() + '] CLIENT->UP ' + text);
+    lastSubscribe = text;
     if (upstream.readyState === WebSocket.OPEN) {
-      upstream.send(text);
-      bytesUp += text.length;
+      sendUpstream(text);
     } else if (upstream.readyState === WebSocket.CONNECTING) {
       pending.push(text);
+    } else if (reconnectTimer) {
+      console.log('[' + ts() + '] upstream reconnecting; subscribe held for replay');
     } else {
       console.warn('[' + ts() + '] dropping client message; upstream not open');
     }
   });
 
   client.on('close', () => {
+    clientClosed = true;
+    clearInterval(upstreamPing);
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
     console.log('[' + ts() + '] client closed (up=' + bytesUp + 'B, down=' + bytesDown + 'B)');
     fileLog('client closed (up=' + bytesUp + 'B, down=' + bytesDown + 'B, upMsgs=' + upMsgCount + ')');
     try { upstream.close(); } catch (_) {}
