@@ -1326,6 +1326,7 @@ let activeView = '2d';       // '2d' | 'vr'   - see setView()
 let mapPanelActive = false;  // is the flat map being shown as a screen in the headset? - see setMapPanelActive()
 let playbackMode = false;    //               - see setPlaybackMode()
 let vrVisibilityDirty = true; // 3D twin of visibleShipsDirty, cleared on its own frame
+let vrFeedDirty = false;      // the same, raised by incoming traffic - honoured at most every FEED_REFILTER_MS
 let preloadQueue = null;     // live messages held while startup history loads - see preloadHistory()
 let preloadReplaying = false; //              true only during its one synchronous bulk replay
 
@@ -1393,13 +1394,27 @@ function phaseOf(ship) {
 // Cache filtered ships so we don't re-run passesFilters() across every ship
 // every animation frame. Anything that mutates `ships` or `filters` must call
 // markVisibleDirty().
+//
+// Incoming traffic calls markFeedDirty() instead. A busy feed adds a vessel or
+// changes a speed many times a second, and when each of those re-filtered the
+// whole registry on the next frame, a live feed meant a full-fleet pass every
+// frame in both views. Traffic re-filters at most every FEED_REFILTER_MS - a
+// new vessel appears up to a quarter of a second later, which is far inside a
+// position report's own interval. Anything the user does (filters, removals,
+// restores, playback seeks) still marks immediately.
+const FEED_REFILTER_MS = 250;
 let visibleShipsCache = [];
 let visibleShipsDirty = true;
+let visibleShipsFeedDirty = false;
+let visibleShipsBuiltAt = 0;
 function markVisibleDirty() { visibleShipsDirty = true; sidebarDirty = true; vrVisibilityDirty = true; }
+function markFeedDirty() { visibleShipsFeedDirty = true; sidebarDirty = true; vrFeedDirty = true; }
 function getVisibleShips() {
-  if (visibleShipsDirty) {
+  const now = performance.now();
+  if (visibleShipsDirty || (visibleShipsFeedDirty && now - visibleShipsBuiltAt >= FEED_REFILTER_MS)) {
     visibleShipsCache = ships.filter(passesFilters);
-    visibleShipsDirty = false;
+    visibleShipsDirty = visibleShipsFeedDirty = false;
+    visibleShipsBuiltAt = now;
   }
   return visibleShipsCache;
 }
@@ -3041,19 +3056,31 @@ function simulateShips(dt) {
  * Reconnecting did not bring it back, because the vessels had been deleted
  * rather than merely gone quiet.
  *
- * Forty-eight hours instead. Everything seen in the last two days stays
- * visible, a disconnection costs nothing at all, and the only thing that
- * removes a vessel from the registry is the user pressing Clear (see
- * clearEverything). A vessel that has stopped reporting is still shown - its
- * age is visible in the sidebar's own timestamp, and staleness is a judgement
- * for whoever is reading the chart, not something to silently act on. */
-const AIS_RETENTION_MS = 48 * 60 * 60 * 1000;
+ * Forty-eight hours replaced that, and fixed the disconnection problem, but on a
+ * global feed two days of traffic is tens of thousands of vessels - far more
+ * than are ever on screen, and enough that the per-frame work still sized by
+ * the registry stalled both views. So retention is now the preload window
+ * (AIS_RETENTION_MS, below): a vessel stays as long as its route does, which
+ * covers a study session with hours of margin, a dropped connection still
+ * costs nothing, and a preloaded route is never pruned while it is inside the
+ * window it was loaded for. MAX_FLEET is the ceiling on top of that, so a dense
+ * feed cannot grow the registry without bound inside the window either.
+ * A vessel that has stopped reporting is still shown until then - its age is
+ * visible in the sidebar's own timestamp. */
 /* Every AIS vessel keeps two trails. `trail` is the short rolling wake every
  * renderer draws for every vessel, capped at 80 points as it always was.
  * `fullTrail` is the whole route, bounded by age and by a point backstop, and
  * is only ever stroked for the selected vessel - one long line is cheap,
  * thousands of them would not be. */
 const HISTORY_PRELOAD_MS = 6 * 60 * 60 * 1000; // 6h; also bounds fullTrail age
+// how long a vessel that has stopped reporting stays in the registry. Must stay
+// >= HISTORY_PRELOAD_MS, or preloaded vessels are pruned as soon as they load.
+const AIS_RETENTION_MS = HISTORY_PRELOAD_MS;
+// hard ceiling on retained vessels, whatever their age: past it the
+// least-recently-reported AIS vessels are evicted, trimmed in batches of
+// FLEET_CAP_SLACK so a feed at the cap does not sort the fleet per message
+const MAX_FLEET = 20000;
+const FLEET_CAP_SLACK = 500;
 const FULL_TRAIL_MAX_POINTS = 5000;
 let aisStreamActive = false;
 let lastAisMsgTs = 0;
@@ -3106,7 +3133,7 @@ function ingestAisStatic(msg) {
   const ship = Fleet.get(id);
   if (ship) {
     applyStatic(ship, msg);
-    markVisibleDirty();     // type is a filter dimension, so membership may change
+    markFeedDirty();        // type is a filter dimension, so membership may change
     Fleet.touch(ship);
   } else {
     if (pendingStatics.size > 8000) pendingStatics.clear();   // keep it bounded
@@ -3181,11 +3208,12 @@ function ingestAisShip(msg, ts) {
     const pending = pendingStatics.get(id);
     if (pending) { applyStatic(ship, pending); pendingStatics.delete(id); }
     Fleet.add(ship);
-    markVisibleDirty();
+    markFeedDirty();
+    if (Fleet.list.length > MAX_FLEET + FLEET_CAP_SLACK) enforceFleetCap();
   } else {
     if (ship.aisType == null && msg.shipType != null) {
       applyStatic(ship, msg);
-      markVisibleDirty();
+      markFeedDirty();
     }
     const speedChanged = ship.speed !== speed;
     const statusChanged = ship.status !== status;
@@ -3206,7 +3234,7 @@ function ingestAisShip(msg, ts) {
     // Only invalidate the visible cache when something the filters look at
     // actually changed (status, speed). Position changes don't affect
     // filter membership, so they don't need to invalidate.
-    if (speedChanged || statusChanged) markVisibleDirty();
+    if (speedChanged || statusChanged) markFeedDirty();
     sidebarDirty = true;
     Fleet.touch(ship);
   }
@@ -3214,9 +3242,25 @@ function ingestAisShip(msg, ts) {
 }
 
 function pruneAisShips() {
+  // playback owns the registry while it runs, and its vessels carry the logged
+  // times of a window that may be days old - measured against the wall clock
+  // every one of them would be aged out mid-replay
+  if (playbackMode) return;
   const now = Date.now();
   const gone = Fleet.removeWhere(s => s.isAis && (now - (s.lastUpdate || 0)) > AIS_RETENTION_MS);
-  if (gone) { addLog('Aged out ' + gone + ' vessel(s) past 48 h'); markVisibleDirty(); }
+  if (gone) { addLog('Aged out ' + gone + ' vessel(s) past ' + (AIS_RETENTION_MS / 3600000) + ' h'); markVisibleDirty(); }
+}
+
+// Down to MAX_FLEET by evicting the vessels that reported longest ago. Never
+// the selected or comparison vessel, and never a manually added one.
+function enforceFleetCap() {
+  const over = Fleet.list.length - MAX_FLEET;
+  if (over <= 0) return;
+  const cand = Fleet.list.filter(s => s.isAis && s.id !== selectedShipId && s.id !== compareShipId);
+  cand.sort((a, b) => (a.lastUpdate || 0) - (b.lastUpdate || 0));
+  const doomed = new Set(cand.slice(0, over));
+  const gone = Fleet.removeWhere(s => doomed.has(s));
+  if (gone) { addLog('Fleet over ' + MAX_FLEET.toLocaleString() + ': dropped the ' + gone + ' least recently seen'); markVisibleDirty(); }
 }
 
 const aisChannel = new BroadcastChannel('ais-stream');
@@ -3239,7 +3283,7 @@ aisChannel.addEventListener('message', ev => {
     if (msg.state === 'offline' && aisStreamActive) { aisStreamActive = false; addLog('AIS stream offline'); setLiveBadge(false); }
   }
 });
-setInterval(pruneAisShips, 5 * 60 * 1000);   // a 48-hour boundary does not need checking every minute
+setInterval(pruneAisShips, 5 * 60 * 1000);   // an hours-long boundary does not need checking every minute
 
 // Interaction — supports mouse drag + wheel, and touch drag + pinch-zoom.
 const pointers = new Map();   // active pointerId -> {x, y}
@@ -4550,7 +4594,7 @@ function playbackFrame(now) {
  * top, so it must start from an empty scene - but that is a reason to set the
  * live vessels aside, not to destroy them. Switching to playback and back used
  * to cost you everything you had collected, which is exactly the kind of
- * silent loss the 48-hour retention window exists to prevent. Records are
+ * silent loss the retention window (AIS_RETENTION_MS) exists to prevent. Records are
  * handed back intact, so a vessel keeps its trail, its dimensions and its
  * timestamps across the excursion. */
 let parkedLiveFleet = null;
@@ -6504,6 +6548,7 @@ function updateOceanTiling() {
 
 let lastNavFrameTime = null;
 let lastCullAt = 0;
+let lastFeedCullAt = 0;
 function navTickFrame(now) {
   const dt = lastNavFrameTime != null ? Math.min(0.1, (now - lastNavFrameTime) / 1000) : 0;
   lastNavFrameTime = now;
@@ -6528,8 +6573,11 @@ function navTickFrame(now) {
   updateMapPanelZoom(dt);
   updateMapPanelTexture(now);
   // the distance cull is only as current as the last pass, and the viewer is
-  // free to fly away from what it decided; re-run it on a slow tick
+  // free to fly away from what it decided; re-run it on a slow tick. Incoming
+  // traffic asks for a pass too, but no more often than FEED_REFILTER_MS - see
+  // markFeedDirty()
   if (now - lastCullAt > CULL_REFRESH_MS) { lastCullAt = now; vrVisibilityDirty = true; }
+  else if (vrFeedDirty && now - lastFeedCullAt >= FEED_REFILTER_MS) { lastFeedCullAt = now; vrVisibilityDirty = true; }
   if (activeView === 'vr') {
     // Whichever renderer is on screen owns the camera, and the other one is
     // brought into step when you switch (see setMapPanelActive). Syncing every
@@ -6566,7 +6614,7 @@ function navTickFrame(now) {
     updateLandmarks(now);
     updateSelectedTrail();
   }
-  if (vrVisibilityDirty) { applyVrVisibility(); vrVisibilityDirty = false; }
+  if (vrVisibilityDirty) { applyVrVisibility(); vrVisibilityDirty = vrFeedDirty = false; }
   else if (hullInstancesDirty) rebuildHullInstances();
 }
 
@@ -7115,7 +7163,7 @@ function shipDims(s) {
 
 /* A new vessel costs almost nothing until it is looked at.
  *
- * The registry keeps two days of traffic, which on a wide bounding box is tens
+ * The registry keeps hours of traffic, which on a wide bounding box is tens
  * of thousands of vessels - and a hull entity is 23 KB of the 29 KB each one
  * used to cost, four-fifths of it geometry that had never been on screen and
  * mostly never would be. The flat map, the globe dots, the sidebar and the
@@ -7135,7 +7183,8 @@ function vrAddShip(s) {
   s._vrVisible = null;
   s._labelVisible = false;
   updateShipTrack(s);   // position and velocity are needed immediately; the hull is not
-  vrVisibilityDirty = true;
+  // a new arrival is traffic; restores and resets mark the full pass themselves
+  vrFeedDirty = true;
 }
 
 function ensureShipEntity(s) {
@@ -7192,6 +7241,10 @@ function vrRemoveShip(s) {
 
 function vrResetShips() {
   while (shipsRoot.firstChild) shipsRoot.removeChild(shipsRoot.firstChild);
+  activeShips.length = 0;
+  labelledShips.clear();
+  conedShips.clear();
+  convergingShips.clear();
   hullCandidates.length = 0;
   hullDrawList.length = 0;
   hullHoverId = null;
@@ -7287,8 +7340,21 @@ Fleet.on('reset', vrResetShips);
  *
  * Runs at most once a frame off a dirty flag rather than on every incoming
  * message, so a burst of AIS traffic costs one pass rather than one per
- * message; and it only writes to an entity whose answer actually changed. */
+ * message; and it only writes to an entity whose answer actually changed.
+ *
+ * This is the one per-view pass over the whole registry, and it writes down
+ * its answer as `activeShips`: exactly the vessels it made visible, in registry
+ * order. Everything that runs per frame or on a short timer - smoothing, the
+ * hull instance list, labels, cones, the convergence check - walks that list
+ * instead of the registry, so their cost is the few hundred on screen rather
+ * than every vessel retained. `_vrVisible` is only ever set true here, in the
+ * same pass that lists it, so the list can never miss a visible vessel; a
+ * vessel removed or re-added in between is still listed until the next pass,
+ * which is why every consumer keeps its own `_vrVisible` / `el` guard. A vessel
+ * leaving view simply is not listed (its record keeps updating as before), and
+ * one entering view is listed and snapped to its true position. */
 const _cullCam = new THREE.Vector3();
+const activeShips = [];
 function applyVrVisibility() {
   const flat = vrLod === 'flat';
   // the viewer's own position in world-local metres, so every vessel can be
@@ -7301,12 +7367,14 @@ function applyVrVisibility() {
     _cullCam.set(0, 0, 0);
   }
   const maxLocal = HULL_MAX_DIST_SCENE / Math.max(1e-9, worldScale);
+  activeShips.length = 0;
   for (const s of Fleet.list) {
     const vis = flat && passesFilters(s) &&
       (s.sceneX == null || Math.hypot(s.sceneX - _cullCam.x, s.sceneZ - _cullCam.z) < maxLocal);
     // a vessel earns its hull the first time it is about to be drawn
     if (vis && !s.el) ensureShipEntity(s);
     if (!s.el) continue;
+    if (vis) activeShips.push(s);
     if (s._vrVisible !== vis) {
       // straight to object3D, not setAttribute: this can touch thousands of
       // entities and a-frame's attribute path re-parses and diffs a string
@@ -7470,7 +7538,7 @@ function rebuildHullInstances() {
   ensureHullMeshes();
   hullInstancesDirty = false;
   hullCandidates.length = 0;
-  for (const s of Fleet.list) {
+  for (const s of activeShips) {
     if (!s._vrVisible) continue;
     hullCandidates.push(s);
     if (hullCandidates.length >= HULL_INSTANCE_CAP) break;
@@ -7649,6 +7717,7 @@ let labelsBuiltAt = 0;
 const _labelCam = new THREE.Vector3();
 const _labelPos = new THREE.Vector3();
 const labelKeep = new Set();
+const labelledShips = new Set();   // every vessel whose label is currently showing
 
 function updateShipLabels(now) {
   if (now - labelsBuiltAt < LABEL_REFRESH_MS) return;
@@ -7659,7 +7728,7 @@ function updateShipLabels(now) {
 
   const near = [];
   if (vrLod === 'flat') {
-    for (const s of Fleet.list) {
+    for (const s of activeShips) {
       if (!s._vrVisible || !s.label || !s.hasVisualInit) continue;
       _labelPos.set(s.visualX, 0, s.visualZ);
       worldEl.object3D.localToWorld(_labelPos);
@@ -7671,10 +7740,16 @@ function updateShipLabels(now) {
   labelKeep.clear();
   for (let i = 0; i < Math.min(LABEL_MAX_COUNT, near.length); i++) labelKeep.add(near[i].s);
 
-  for (const s of Fleet.list) {
-    if (!s.label) continue;
-    const on = labelKeep.has(s);
-    if (s._labelVisible !== on) { s.label.object3D.visible = on; s._labelVisible = on; }
+  // only a showing label can need hiding and only a kept one showing, so the
+  // two sets are the whole of what can change - not the registry
+  for (const s of labelledShips) {
+    if (labelKeep.has(s)) continue;
+    labelledShips.delete(s);
+    if (s.label && s._labelVisible) { s.label.object3D.visible = false; s._labelVisible = false; }
+  }
+  for (const s of labelKeep) {
+    if (!s._labelVisible) { s.label.object3D.visible = true; s._labelVisible = true; }
+    labelledShips.add(s);
   }
 }
 
@@ -7689,7 +7764,7 @@ function updateShipLabels(now) {
 function updateShipSmoothing(dt) {
   if (dt <= 0) return;
   const t = 1 - Math.exp(-dt / POSITION_SMOOTH_TAU);
-  for (const s of Fleet.list) {
+  for (const s of activeShips) {
     if (!s.hasVisualInit || !s.el || !s._vrVisible) continue;
     s.visualX += (s.targetX - s.visualX) * t;
     s.visualZ += (s.targetZ - s.visualZ) * t;
@@ -7744,7 +7819,7 @@ function recomputeConeAllowance() {
   if (camera) { camera.getWorldPosition(_conePos); worldEl.object3D.worldToLocal(_conePos); }
   else _conePos.set(0, 0, 0);
   const cand = [];
-  for (const s of Fleet.list) {
+  for (const s of activeShips) {
     if (!s._vrVisible || !(s.velX || s.velZ)) continue;
     const wanted = conesMode === 'all' ||
       s.coneConverging || s.id === selectedShipId || s.id === hoveredShipId;
@@ -7773,6 +7848,7 @@ function updateCourseCone(s, dims) {
 
   const lookaheadSec = Math.max(1, lookaheadMin) * 60;
   const length = hasCourse ? s.speed * KN_TO_MPS * lookaheadSec : 0;
+  if (length > 0) conedShips.add(s); else conedShips.delete(s);
   s.el.setAttribute('course-cone', {
     length,
     radius: Math.max(2, dims.beamM * 0.5),
@@ -7782,8 +7858,18 @@ function updateCourseCone(s, dims) {
   });
 }
 
+/* Every cone that can change: the ones on screen, and any still drawn on a
+ * vessel that has since left view (so it is taken down, as before). A hidden
+ * vessel with no cone has nothing to refresh - updateCourseCone() also runs on
+ * each of its position reports, and its cone is decided afresh once it is
+ * back on screen. */
+const conedShips = new Set();   // vessels whose cone currently has a length
 function refreshAllCones() {
-  for (const s of Fleet.list) { updateCourseCone(s); }   // no-ops for vessels with no hull yet
+  for (const s of conedShips) {
+    if (!s.el) conedShips.delete(s);          // removed from the registry since
+    else if (!s._vrVisible) updateCourseCone(s);
+  }
+  for (const s of activeShips) { updateCourseCone(s); }   // no-ops for vessels with no hull
 }
 
 // Runs on a timer rather than per frame (O(n^2) pairs isn't free) and rather
@@ -7797,7 +7883,7 @@ function refreshAllCones() {
  *
  * It compares every moving pair, so its cost is quadratic - fine at the few
  * hundred vessels a ten-minute window ever held, ruinous now that the registry
- * keeps two days of traffic: six thousand vessels measured at 123 ms a pass,
+ * keeps hours of traffic: six thousand vessels measured at 123 ms a pass,
  * every 1.5 s, which in a headset is a visible hitch rather than a slow frame.
  *
  * Two bounds fix it without changing what the feature means. Only vessels that
@@ -7811,9 +7897,10 @@ function refreshAllCones() {
 const CPA_MAX_CANDIDATES = 600;   // 180k pairs, ~4 ms - comfortably inside a frame budget
 const _cpaCam = new THREE.Vector3();
 
+let convergingShips = new Set();   // every vessel with coneConverging set
 function checkConvergence() {
   let list = [];
-  for (const s of Fleet.list) { if (s.el && s._vrVisible && (s.velX || s.velZ)) list.push(s); }
+  for (const s of activeShips) { if (s.el && s._vrVisible && (s.velX || s.velZ)) list.push(s); }
   if (list.length > CPA_MAX_CANDIDATES) {
     // nearest to the viewer wins - those are the ones being looked at
     const camera = sceneEl.camera;
@@ -7861,14 +7948,20 @@ function checkConvergence() {
   cpaEvents.sort((p, q) => p.t - q.t);
   if (cpaEvents.length > CPA_MAX_MARKERS) cpaEvents.length = CPA_MAX_MARKERS;
 
-  // every vessel is reconsidered, not just the candidates - one that has left
-  // the set has by definition no known conflict any more, and must not keep a
-  // red cone from a check that no longer covers it
-  for (const s of Fleet.list) {
-    const was = s.coneConverging;
-    s.coneConverging = stillConverging.has(s.id);
-    if (s.coneConverging !== was) updateCourseCone(s);
+  // every flagged vessel is reconsidered, not just the candidates - one that
+  // has left the set has by definition no known conflict any more, and must
+  // not keep a red cone from a check that no longer covers it. Only a vessel
+  // already flagged can be cleared and only a candidate newly flagged, so those
+  // two are all that is walked.
+  const next = new Set();
+  for (const s of list) if (stillConverging.has(s.id)) next.add(s);
+  for (const s of convergingShips) {
+    if (!next.has(s) && s.coneConverging) { s.coneConverging = false; updateCourseCone(s); }
   }
+  for (const s of next) {
+    if (!s.coneConverging) { s.coneConverging = true; updateCourseCone(s); }
+  }
+  convergingShips = next;
 }
 setInterval(() => {
   if (conesMode === 'off') return;
