@@ -1,5 +1,16 @@
 node_modules/
-stream_log.txt
 .DS_Store
-.mcp.json
+
+# local logs: raw AIS data from the providers, not ours to redistribute
+stream_log.txt
+ais_message_log.jsonl
+*.jsonl
+
+# IDE settings
+.idea/
+
+# private working material (thesis, papers, notes)
 thesis/
+Literature/
+briefs/
+PHASE_A_SUMMARY.md

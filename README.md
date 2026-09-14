@@ -1,66 +1,95 @@
 # VR Ship Tracker
 
-Live AIS ship tracking, visualized on a 3D globe and in VR (WebXR/A-Frame),
-fed by a small local relay that bridges the browser to any of four AIS data
-providers.
+Live AIS ship tracking on a 2D globe and in virtual reality (WebXR / A-Frame),
+fed by a small local relay that bridges the browser to an AIS data provider.
+The same view can be explored on a desktop screen or in a headset (built and
+tested for Meta Quest 3S).
+
+## Features
+
+- **One continuous map.** Zoom from the whole planet down to standing on the
+  water beside a vessel at true 1:1 scale. The globe turns into a flat sea
+  automatically once the earth's curvature stops being visible.
+- **Enter VR from the map.** **ENTER VR** takes the view you are looking at into
+  the headset, at the same place and zoom, and brings you back where you left.
+- **Shared vessel registry.** The flat map, the globe's dot cloud and the
+  true-scale 3D hulls all draw from one registry, one set of filters and one
+  playback clock, so switching views is instant.
+- **Vessel details and comparison.** Detail card per vessel, a comparison set
+  shown side by side in a dash, and a close-up view that cycles through the
+  selected vessels.
+- **Traffic analysis.** Vessel routes, course projection cones with
+  closest-point-of-approach markers, traffic density columns and busiest-area
+  beacons.
+- **History playback.** The relay logs incoming messages locally; any window of
+  that log can be replayed through the same pipeline, and the last six hours of
+  routes are preloaded on start.
+- **Scales to busy feeds.** Dense views are aggregated into count blobs, and
+  per-frame work is limited to the vessels actually on screen.
 
 ## Setup
+
+Requires Node.js 18 or newer.
 
 ```
 npm install
 node relay.js
 ```
 
-Then open `http://localhost:3333/`. Pick a data source in the connect modal —
-see [Data sources](#data-sources) below for what each one needs.
+Open `http://localhost:3333/`, pick a data source in the connect dialog, then
+open the tracker:
 
-- `ais_data_stream.html` — connection manager + live event log
-- `ship_tracker.html` — the tracker
+- `ais_data_stream.html` — connection manager and live event log
+- `ship_tracker.html` — the tracker (2D map and VR)
 
-Both run on the same origin (served by `relay.js`) and share live data over a
-`BroadcastChannel`. (The old `globe_ship_tracker.html` and
-`vr_ship_tracker.html` were merged into the tracker; those URLs still serve it.)
+Both pages run on the same origin (served by `relay.js`) and share live data
+over a `BroadcastChannel`.
 
-### The tracker
+A `Dockerfile` is included; the container serves everything on port 8080.
 
-There is one map. **ENTER VR** puts the view you are already looking at into a
-headset, at the same place and the same zoom, and brings it back where you left
-it — there is no separate "3D mode" to find first, and no second page.
+## Controls
 
-Clicking is how you go deeper: click a vessel or a patch of sea and the view
-descends a rung, on the flat map and in the headset alike. The zoom is one
-continuous range from the whole planet down to standing on the water beside a
-hull. The sphere becomes a flat sea automatically once the earth's curvature
-stops being visible, and the sea is re-centred under you every frame, so there
-is no edge to reach at any zoom or distance.
+**Desktop:** drag to rotate, mouse wheel to zoom, click a vessel or the sea to
+descend one zoom step. In the 3D view: WASD to move, right-drag or wheel to
+zoom.
 
-Everything is drawn from one shared vessel registry: one `BroadcastChannel`
-listener, one set of filters, one playback clock, painted by three renderers
-(the flat canvas, the globe's dot cloud, and true-scale 3D hulls). Whichever is
-off screen keeps its state current, so switching is instant rather than a
-reload. The coastline is the same `world-atlas` / Natural Earth data in both,
-at the same detail tier.
+**VR (Quest controllers):**
 
-Inside a headset no DOM renders at all, so the controls that matter there are
-built as in-scene panels: a wrist menu (the **M** button, or X on the left
-controller) carrying the vessel-type filters and legend, course cones, density
-columns, live/playback and save/restore view; a ship card with a
-"zoom to real scale" jump; a controls reference; and a recentre button.
+| Input | Action |
+|---|---|
+| Left stick | Move and strafe (click: toggle fly / teleport) |
+| Right stick | Turn left/right, look up/down |
+| Grip + pull | Grab the world and zoom |
+| Both grips | Drag and scale the world |
+| Right trigger | Select a vessel, the sea or the planet |
+| A | Vessel details; on a selected vessel, open the close-up |
+| B | Back (close-up, then selection) |
+| X | Add the vessel under the left pointer to the comparison |
+| Y / **M** button | Menu: filters, cones, density, playback, comfort settings |
+
+A **LOOK SNAP** comfort setting in the menu switches to snap turning without
+pitch. Head-up panel positions and sizes can be tuned in the `HUD` block at the
+top of the script in `ship_tracker.html`.
 
 ## Data sources
 
 You bring your own credentials — this project never stores or ships anyone's
-API key. Each provider is governed by its own terms of use:
+API key. Each provider is governed by its own terms of use.
 
 | Provider | Credentials needed | Coverage |
 |---|---|---|
 | [aisstream.io](https://aisstream.io) | Your own API key | Global |
-| [BarentsWatch](https://developer.barentswatch.no) | Your own OAuth client id/secret | Norway / Barents Sea (free tier) |
-| [Kpler](https://developers.kpler.com/spec/ais) | Your own bearer token (commercial account) | Global |
+| [BarentsWatch](https://developer.barentswatch.no) | Your own OAuth client id/secret | Norway / Barents Sea |
 | [Digitraffic](https://www.digitraffic.fi/en/marine-traffic/) | None | Finland / Baltic Sea |
 
-Full attribution and license details for each source, plus every third-party
-library this project loads, are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The relay writes received messages to local log files for playback. These
+contain provider data and are excluded from version control; do not publish
+them.
+
+Map data: [Natural Earth](https://www.naturalearthdata.com) (public domain), via
+[world-atlas](https://github.com/topojson/world-atlas). Full attribution and
+license details for every data source and third-party library are in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## License
 

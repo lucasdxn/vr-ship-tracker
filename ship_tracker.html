@@ -566,22 +566,29 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
         <a-entity id="nav-hud-text" text="value: HDG 000 deg | ALT 0 m; align: center; width: 3; color: #7a8099; baseline: center"></a-entity>
       </a-entity>
 
-      <!-- Ship detail card (single or compare) -->
+      <!-- Ship detail card -->
       <a-entity id="ship-info-hud" class="hud" no-frustum-cull visible="false">
         <a-plane id="ship-info-hud-bg" width="3" height="1.5" position="0 -0.14 -0.01"
                  material="shader: flat; side: double"></a-plane>
-        <!-- Compare columns, one per vessel -->
-        <a-entity id="ship-info-hud-cmp" visible="false">
-          <a-entity id="ship-info-hud-cmp-a" position="-0.7 0 0"
-                    text="value: -; align: center; width: 1.4; color: #ffb83e; baseline: top; wrapCount: 11.75"></a-entity>
-          <a-entity id="ship-info-hud-cmp-b" position="0.7 0 0"
-                    text="value: -; align: center; width: 1.4; color: #3ea8ff; baseline: top; wrapCount: 11.75"></a-entity>
-          <a-entity id="ship-info-hud-cmp-foot"
-                    text="value: -; align: center; width: 2.8; color: #7a8099; baseline: top; wrapCount: 24"></a-entity>
-        </a-entity>
-        <!-- Single-card text -->
         <a-entity id="ship-info-hud-text" position="0 -0.14 0"
                   text="value: -; align: center; width: 2.8; color: #e2e6f0; baseline: center; wrapCount: 24"></a-entity>
+        <!-- Closeup arrows: cycle through the compare set (see updateCloseupArrows()) -->
+        <a-box id="closeup-prev" class="hud" visible="false" width="0.4" height="0.8" depth="0.02"
+               position="-1.78 -0.14 0" material="color: #131720; opacity: 0.96; shader: flat">
+          <a-entity text="value: <; align: center; baseline: center; width: 1.2; wrapCount: 3; color: #3ea8ff"
+                    position="0 0 0.011"></a-entity>
+        </a-box>
+        <a-box id="closeup-next" class="hud" visible="false" width="0.4" height="0.8" depth="0.02"
+               position="1.78 -0.14 0" material="color: #131720; opacity: 0.96; shader: flat">
+          <a-entity text="value: >; align: center; baseline: center; width: 1.2; wrapCount: 3; color: #3ea8ff"
+                    position="0 0 0.011"></a-entity>
+        </a-box>
+      </a-entity>
+
+      <!-- Compare dash: stats for every vessel in the compare set (see renderCompareDash()) -->
+      <a-entity id="compare-dash" class="hud" no-frustum-cull visible="false">
+        <a-plane id="compare-dash-bg" width="4.3" height="1" material="shader: flat; side: double"></a-plane>
+        <a-entity id="compare-dash-rows"></a-entity>
       </a-entity>
 
       <!-- HUD button bar: ? controls, M menu, R recenter, MAP/3D, 2D. Layout from HUD.buttonBar -->
@@ -647,9 +654,10 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
         <a-entity id="finder-rows"></a-entity>
       </a-entity>
     </a-camera>
-    </a-entity>
+    <!-- controllers sit beside the camera so right-stick pitch moves them together -->
     <a-entity id="hand-left" laser-controls="hand: left" raycaster="objects: .clickable; far: 20000" line="color: #3ea8ff; opacity: 0.6"></a-entity>
     <a-entity id="hand-right" laser-controls="hand: right" raycaster="objects: .clickable; far: 20000" line="color: #3ea8ff; opacity: 0.6"></a-entity>
+    </a-entity>
   </a-entity>
 
   <!-- Mouse cursor for clicking outside XR -->
@@ -986,6 +994,9 @@ const HUD = {
   // the ship card
   card:       { pos: [0.45, 0.02, -HUD_DIST], scale: 0.16, bgOpacity: 0.96 },
 
+  // the compare dash; pos is its top-centre, it grows downward with each vessel
+  dash:       { pos: [-0.5, 0.12, -HUD_DIST], scale: 0.14, bgOpacity: 0.96 },
+
   // the "?" controls reference
   controlsPanel: { pos: [-0.34, -0.13, -HUD_DIST], scale: 0.18, bgOpacity: 0.96 },
 
@@ -1071,12 +1082,29 @@ let nextId = 1;
 let selectedShipId = null;   // String(id) of the singled-out ship, or null
 let hoveredShipId = null;    // 3D only: what a controller ray / mouse is pointing at right now
 let cardShipId = null;       // 3D only: vessel shown on the card
-let compareShipId = null;    // comparison vessel (read it through comparisonId())
+let compareShipIds = [];     // vessels added beside the selected one with X, oldest first
+let compareShipId = null;    // cache of comparisonId(): the latest added, drawn with the blue route
+const MAX_COMPARE_SET = 4;   // selected vessel included
+let closeupShipId = null;    // vessel of the open closeup (A), or null
+let closeupReturn = null;    // view to go back to when the closeup is left with B
 
-/* The comparison vessel's id, or null if there is no valid comparison */
+/* The latest comparison vessel's id, or null. Drops ids that no longer apply
+ * (no selection, or the selected vessel itself). */
 function comparisonId() {
-  if (compareShipId != null && (selectedShipId == null || compareShipId === selectedShipId)) compareShipId = null;
+  if (compareShipIds.length) {
+    if (selectedShipId == null) compareShipIds.length = 0;
+    else {
+      const i = compareShipIds.indexOf(selectedShipId);
+      if (i >= 0) compareShipIds.splice(i, 1);
+    }
+  }
+  compareShipId = compareShipIds.length ? compareShipIds[compareShipIds.length - 1] : null;
   return compareShipId;
+}
+/* The compare set: selected vessel first, then the comparison vessels */
+function compareSet() {
+  comparisonId();
+  return selectedShipId == null ? [] : [selectedShipId].concat(compareShipIds);
 }
 
 // Declared early because the first script block reads them
@@ -2723,7 +2751,7 @@ function pruneAisShips() {
 function enforceFleetCap() {
   const over = Fleet.list.length - MAX_FLEET;
   if (over <= 0) return;
-  const cand = Fleet.list.filter(s => s.isAis && s.id !== selectedShipId && s.id !== compareShipId);
+  const cand = Fleet.list.filter(s => s.isAis && s.id !== selectedShipId && !compareShipIds.includes(s.id));
   cand.sort((a, b) => (a.lastUpdate || 0) - (b.lastUpdate || 0));
   const doomed = new Set(cand.slice(0, over));
   const gone = Fleet.removeWhere(s => doomed.has(s));
@@ -3610,6 +3638,7 @@ function clearEverything() {
   Fleet.clear();
   nextId = 1;
   selectedShipId = null;
+  compareShipIds = [];
   compareShipId = null;
   hoveredShipId = null;
   cancelCameraFlight();
@@ -3687,10 +3716,17 @@ function syncSceneFromCanvas() {
   setViewAlt(altForCanvasScale(scale));
   travelToLatLon(rot.x, -rot.y);
 }
-// scene -> canvas
+// scene -> canvas, centred on the ground under the viewer (at sea level the
+// rig can be far from the tangent origin)
 function syncCanvasFromScene() {
-  rot.x = Math.max(-85, Math.min(85, origin.lat));
-  rot.y = -origin.lon;
+  let lat = origin.lat, lon = origin.lon;
+  if (vrLod === 'flat' && worldScale > 0) {
+    const w = worldEl.object3D.position, r = rigEl.object3D.position;
+    const ll = sceneToLatLon((r.x - w.x) / worldScale, (r.z - w.z) / worldScale);
+    if (Number.isFinite(ll.lat) && Number.isFinite(ll.lon)) { lat = ll.lat; lon = ll.lon; }
+  }
+  rot.x = Math.max(-85, Math.min(85, lat));
+  rot.y = -(((lon + 540) % 360) - 180);
   scale = canvasScaleForAlt(viewAltM);
 }
 
@@ -3737,8 +3773,9 @@ enterVrBtn.addEventListener('click', () => {
 });
 vrSceneEl.addEventListener('enter-vr', () => {
   syncEnterVrButton(); updateCameraTilt();
-  // each session starts in teleport mode
-  locomotionMode = 'teleport';
+  // each session starts with smooth movement on the left stick and a level view
+  locomotionMode = 'fly';
+  lookPitchDeg = 0;
   syncWristMenu();
   // place the map panel at the viewer
   if (typeof placeMapPanel === 'function' && mapPanelActive) placeMapPanel();
@@ -4176,6 +4213,8 @@ function applyHudLayout() {
   placeHudPanel('nav-hud', HUD.navHud);
   placeHudPanel('ship-info-hud', HUD.card);
   setHudBg('ship-info-hud-bg', HUD.card);
+  placeHudPanel('compare-dash', HUD.dash);
+  setHudBg('compare-dash-bg', HUD.dash);
   placeHudPanel('controls-hud', HUD.controlsPanel);
   setHudBg('controls-hud-bg', HUD.controlsPanel);
   placeHudPanel('wrist-menu', HUD.wristMenu);
@@ -4266,7 +4305,6 @@ let mouseGrabMoved = 0;
 
 const MOUSE_ZOOM_SENSITIVITY = 0.012; // altitude multiplies by exp(-dy * this) per pixel of vertical drag
 const VR_GRAB_EXPONENT = 3;           // how much of the range one grab-and-pull gesture covers
-const STICK_ZOOM_RATE = 2.2;          // e-folds per second at full stick deflection
 
 function altToWorldScale(alt) {
   return Math.min(MAX_WORLD_SCALE, RIG_SCENE_Y / Math.max(MIN_ALT_M, alt));
@@ -4380,12 +4418,13 @@ function applyLodVisibility() {
   vrVisibilityDirty = true;   // hulls vs. dots is decided in applyVrVisibility()
 }
 
-/* Desktop camera pitch (zero in VR) */
+/* Desktop camera pitch; in VR the right stick's pitch (see applyLookPitch()) */
 const TILT_DEG = -27;
 function updateCameraTilt() {
-  // no pitch in VR or on the map panel
-  const deg = (sceneEl.is('vr-mode') || mapPanelActive) ? 0 : TILT_DEG;
-  document.getElementById('camera-tilt').setAttribute('rotation', { x: deg, y: 0, z: 0 });
+  if (sceneEl.is('vr-mode')) { applyLookPitch(); return; }
+  const tilt = document.getElementById('camera-tilt').object3D;
+  tilt.position.set(0, 0, 0);
+  tilt.rotation.set((mapPanelActive ? 0 : TILT_DEG) * DEG2RAD, 0, 0);
 }
 
 function setRaycastable(el, on) {
@@ -4616,29 +4655,71 @@ function updateVrGrab() {
   }
 }
 
-// Left stick vertical: zoom
-function updateStickZoom(dt) {
-  if (dt <= 0 || vrGrabHand || mapPanelActive || finderOpen) return;
-  const stick = thumbstickAxes(handGamepad(handLeftEl));
-  if (Math.abs(stick.y) < STICK_DEADZONE) return;
-  setViewAlt(viewAltM * Math.exp(stick.y * STICK_ZOOM_RATE * dt), viewAnchor());
-}
 
 
 /* ============================================================ */
 /* VR thumbstick locomotion                                      */
 /* ============================================================ */
-/* Right stick locomotion: teleport arc or smooth fly (left stick click toggles) */
+/* Left stick locomotion: smooth fly or teleport arc (left stick click toggles) */
 const FLY_SPEED_MPS = 70;
 const STICK_DEADZONE = 0.2;
 const TELEPORT_ENGAGE_DEADZONE = 0.35;
-let locomotionMode = 'teleport'; // 'teleport' | 'fly'
+let locomotionMode = 'fly';      // 'fly' | 'teleport'
 let teleportAimPoint = null;     // last computed landing point while the stick is held past the deadzone
 let teleportAimLatLon = null;    // globe-zoom equivalent: where on the planet that ray landed
 let prevLeftStickClick = false;
 const teleportMarkerEl = document.getElementById('teleport-marker');
 
-/* Snap turn */
+/* Right stick look: smooth yaw + pitch, or snap turn with no pitch in comfort mode */
+const COMFORT_MODE = false;            // default for the LOOK row: true = snap turn, no pitch
+const TURN_SPEED_DEG_PER_S = 90;       // smooth yaw at full stick
+const PITCH_SPEED_DEG_PER_S = 60;      // smooth pitch at full stick
+const PITCH_LIMIT_DEG = 80;            // pitch clamp, up and down
+let comfortMode = COMFORT_MODE;
+let lookPitchDeg = 0;
+
+function updateLook(dt) {
+  const stick = thumbstickAxes(handGamepad(handRightEl));
+  if (comfortMode) {
+    updateSnapTurn(stick.x);
+    lookPitchDeg = 0;
+  } else if (dt > 0) {
+    if (Math.abs(stick.x) > STICK_DEADZONE) {
+      rigEl.object3D.rotation.y -= stick.x * TURN_SPEED_DEG_PER_S * DEG2RAD * dt;
+      smoothMotionActive = true;
+    }
+    // stick forward (negative y) looks up; no pitch while the map panel is up
+    if (!mapPanelActive && Math.abs(stick.y) > STICK_DEADZONE) {
+      lookPitchDeg = Math.max(-PITCH_LIMIT_DEG, Math.min(PITCH_LIMIT_DEG,
+        lookPitchDeg - stick.y * PITCH_SPEED_DEG_PER_S * dt));
+      smoothMotionActive = true;
+    }
+  }
+  if (sceneEl.is('vr-mode')) applyLookPitch();
+}
+
+/* Pitch #camera-tilt about the eye, not the floor. Yaw lives on the rig and
+ * pitch on its child, so no roll can build up. */
+const _lookHead = new THREE.Vector3();
+const _lookRot = new THREE.Vector3();
+function applyLookPitch() {
+  const tilt = document.getElementById('camera-tilt').object3D;
+  const pitch = (mapPanelActive || comfortMode) ? 0 : lookPitchDeg * DEG2RAD;
+  const camera = sceneEl.camera;
+  if (camera) {
+    // head position in the tilt's own frame, then offset so it stays put
+    camera.getWorldPosition(_lookHead);
+    tilt.worldToLocal(_lookHead);
+    _lookRot.copy(_lookHead).applyAxisAngle(AXIS_X, pitch);
+    tilt.position.set(0, _lookHead.y - _lookRot.y, _lookHead.z - _lookRot.z);
+  } else {
+    tilt.position.set(0, 0, 0);
+  }
+  tilt.rotation.set(pitch, 0, 0);
+}
+const AXIS_X = new THREE.Vector3(1, 0, 0);
+
+/* Snap turn (comfort mode) */
 const SNAP_TURN_DEG = 30;
 const SNAP_TURN_ENGAGE = 0.6;    // push this far to turn...
 const SNAP_TURN_RELEASE = 0.3;   // ...and back inside this before it will turn again
@@ -4698,7 +4779,7 @@ function showTeleportMarker(point) {
 }
 function hideTeleportMarker() { teleportMarkerEl.object3D.visible = false; }
 
-/* Controller mapping (see CONTROLS_HUD_TEXT for the full list) */
+/* Left stick movement (see CONTROLS_HUD_TEXT for the full mapping) */
 function updateLocomotion(dt) {
   const leftStickClick = buttonPressed(handGamepad(handLeftEl), 3) || buttonPressed(handGamepad(handLeftEl), 2);
   if (leftStickClick && !prevLeftStickClick) {
@@ -4709,11 +4790,9 @@ function updateLocomotion(dt) {
   }
   prevLeftStickClick = leftStickClick;
 
-  const rStick = thumbstickAxes(handGamepad(handRightEl));
-  const lStick = thumbstickAxes(handGamepad(handLeftEl));
-  updateSnapTurn(rStick.x);
-
-  const forwardAxis = Math.abs(rStick.y) > STICK_DEADZONE ? rStick.y : 0;
+  // the map panel and the finder use the left stick themselves
+  const lStick = (mapPanelActive || finderOpen) ? { x: 0, y: 0 } : thumbstickAxes(handGamepad(handLeftEl));
+  const forwardAxis = Math.abs(lStick.y) > STICK_DEADZONE ? lStick.y : 0;
   const strafeAxis = Math.abs(lStick.x) > STICK_DEADZONE ? lStick.x : 0;
   smoothMotionActive = false;
 
@@ -4723,7 +4802,10 @@ function updateLocomotion(dt) {
       if (camera) {
         const forward = new THREE.Vector3();
         camera.getWorldDirection(forward);
-        forward.y = 0; forward.normalize(); // stay level - tilting your head shouldn't dive/climb
+        forward.y = 0; // stay level - tilting your head shouldn't dive/climb
+        // looking straight up/down: fall back to the rig's heading
+        if (forward.lengthSq() < 1e-6) forward.set(Math.sin(rigEl.object3D.rotation.y), 0, Math.cos(rigEl.object3D.rotation.y));
+        forward.normalize();
         const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).negate();
         const step = FLY_SPEED_MPS * dt;
         rigEl.object3D.position.addScaledVector(forward, -forwardAxis * step);
@@ -4732,8 +4814,8 @@ function updateLocomotion(dt) {
       }
     }
   } else { // 'teleport'
-    if (Math.abs(rStick.y) > TELEPORT_ENGAGE_DEADZONE) {
-      const { origin: o, dir } = controllerRay(handRightEl);
+    if (Math.abs(lStick.y) > TELEPORT_ENGAGE_DEADZONE) {
+      const { origin: o, dir } = controllerRay(handLeftEl);
       if (vrLod === 'globe') {
         const hit = globeRayHit(o, dir);
         if (hit) { teleportAimLatLon = hit.latLon; showTeleportMarker(hit.point); }
@@ -4745,11 +4827,11 @@ function updateLocomotion(dt) {
       // haptic only on an actual landing
       if (teleportAimLatLon) {
         travelToLatLon(teleportAimLatLon.lat, teleportAimLatLon.lon);
-        pulseHaptic(handRightEl, 0.5, 50);
+        pulseHaptic(handLeftEl, 0.5, 50);
       } else if (teleportAimPoint) {
         rigEl.object3D.position.x = teleportAimPoint.x;
         rigEl.object3D.position.z = teleportAimPoint.z;
-        pulseHaptic(handRightEl, 0.5, 50);
+        pulseHaptic(handLeftEl, 0.5, 50);
       }
       teleportAimPoint = null; teleportAimLatLon = null;
       hideTeleportMarker();
@@ -5350,11 +5432,9 @@ function navTickFrame(now) {
 
   // keeps running in the 2D view so 3D state stays current
   updateVrGrab();
-  updateStickZoom(dt);
-  updateWristMenuButton();
-  updateZoomButton();
-  updateCompareTrigger();
+  updateFaceButtons();
   updateLocomotion(dt);
+  updateLook(dt);
   absorbRigMotionIntoGlobe();
   updateShipSmoothing(dt);
   updateVignette(dt);
@@ -5391,6 +5471,7 @@ function navTickFrame(now) {
     updateHullHover();
     updateShipMarker();
     updateShipLabels(now);
+    updateLabelScale();
     updateLandmarks(now);
     updateSelectedTrail();
   }
@@ -5764,6 +5845,7 @@ function vrAddShip(s) {
   s.coneConverging = false;
   s._vrVisible = null;
   s._labelVisible = false;
+  s._labelTxt = null;   // a re-added record gets a new label entity, which needs its text
   updateShipTrack(s);   // position and velocity are needed immediately; the hull is not
   // new arrivals use the throttled cull
   vrFeedDirty = true;
@@ -5801,7 +5883,9 @@ function vrRemoveShip(s) {
   if (hullHoverId === s.id) hullHoverId = null;
   if (selectedShipId === s.id) selectedShipId = null;
   if (cardShipId === s.id) cardShipId = null;
-  if (compareShipId === s.id) compareShipId = null;
+  const ci = compareShipIds.indexOf(s.id);
+  if (ci >= 0) compareShipIds.splice(ci, 1);
+  if (closeupShipId === s.id) endCloseup(false);
   s._vrVisible = false;
   hullInstancesDirty = true;
   refreshInfoDisplay();
@@ -5866,7 +5950,7 @@ function refreshEntity(s) {
   updateCourseCone(s, dims);
 
   // either vessel on the card - a comparison shows both
-  if ((s.id === cardShipId || s.id === compareShipId) && !mapPanelActive) refreshInfoDisplay();
+  if ((s.id === cardShipId || compareShipIds.includes(s.id)) && !mapPanelActive) refreshInfoDisplay();
 }
 
 function vrUpdateShip(s) {
@@ -6162,6 +6246,23 @@ const _labelCam = new THREE.Vector3();
 const _labelPos = new THREE.Vector3();
 const labelKeep = new Set();
 const labelledShips = new Set();   // every vessel whose label is currently showing
+
+/* Grow distant labels so a name stays readable (closeup views sit hundreds of metres back) */
+const SHIP_LABEL_ANGLE = 1 / 90;        // minimum glyph height as a fraction of distance (~0.6 deg)
+const SHIP_LABEL_GLYPH_UNITS = 1.3;     // glyph height at scale 1 (text width 26 / wrapCount 20)
+function updateLabelScale() {
+  const camera = sceneEl.camera;
+  if (!camera || !labelledShips.size) return;
+  camera.getWorldPosition(_labelCam);
+  for (const s of labelledShips) {
+    if (!s.label || !s._labelVisible) continue;
+    _labelPos.set(s.visualX, 0, s.visualZ);
+    worldEl.object3D.localToWorld(_labelPos);
+    const d = _labelPos.distanceTo(_labelCam);
+    const k = d * SHIP_LABEL_ANGLE / (SHIP_LABEL_GLYPH_UNITS * Math.max(1e-9, worldScale));
+    s.label.object3D.scale.setScalar(Math.max(1, k));
+  }
+}
 
 function updateShipLabels(now) {
   if (now - labelsBuiltAt < LABEL_REFRESH_MS) return;
@@ -6581,11 +6682,11 @@ function refreshConesFor(prevSel, prevHover) {
   }
 }
 function selectShip(id) {
+  if (closeupShipId != null && closeupShipId !== String(id)) endCloseup(false);
   const prev = selectedShipId;
   selectedShipId = String(id); sidebarDirty = true;
   cardShipId = selectedShipId;   // a select pins the card - see refreshInfoDisplay()
-  // a vessel is never compared with itself
-  if (compareShipId === selectedShipId) compareShipId = null;
+  comparisonId();                // a vessel is never compared with itself
   // haptic confirmation on select
   pulseHaptic(handRightEl, 0.4, 60);
   refreshConesFor(prev, hoveredShipId); refreshInfoDisplay();
@@ -6594,7 +6695,9 @@ function clearSelection() {
   const prev = selectedShipId;
   selectedShipId = null;
   cardShipId = null;          // clicking open water dismisses the card outright
-  compareShipId = null;       // ...and closes a comparison with it
+  compareShipIds = [];        // ...and closes a comparison with it
+  compareShipId = null;
+  endCloseup(false);
   // hide the 3D route lines
   hideRouteLine(selectedRoute);
   hideRouteLine(compareRoute);
@@ -6612,32 +6715,24 @@ function unhoverShip(id) {
   refreshConesFor(selectedShipId, prev); refreshInfoDisplay();
 }
 
-/* Decide which vessel the card shows: selection first, otherwise the last hovered vessel */
+/* Card vessel: closeup first, then selection, otherwise the last hovered vessel.
+ * Also refreshes the compare dash and the closeup arrows. */
 function refreshInfoDisplay() {
   if (mapPanelActive) { hideInfoPanel(); return; }
-  if (selectedShipId != null) cardShipId = selectedShipId;
+  if (closeupShipId != null) cardShipId = closeupShipId;
+  else if (selectedShipId != null) cardShipId = selectedShipId;
   else if (hoveredShipId != null) cardShipId = hoveredShipId;
   const s = cardShipId != null ? Fleet.get(cardShipId) : null;
-  const cmpId = comparisonId();
-  const c = s && cmpId != null ? Fleet.get(cmpId) : null;
-  if (s && c) renderComparePanel(s, c);
-  else if (s) renderInfoPanel(s);
-  else hideInfoPanel();
+  if (s) renderInfoPanel(s);
+  else document.getElementById('ship-info-hud').object3D.visible = false;
+  renderCompareDash();
+  updateCloseupArrows();
 }
 
 function hideInfoPanel() {
   document.getElementById('ship-info-hud').object3D.visible = false;
-}
-
-/* Card background for single and compare layouts */
-const CARD_BG_H = 1.5, CARD_BG_Y = -0.14;          // the single card's plane, as authored
-const CARD_TOP_Y = CARD_BG_Y + CARD_BG_H / 2;
-function setCardLayout(compare, height) {
-  const bg = document.getElementById('ship-info-hud-bg').object3D;
-  bg.scale.y = compare ? height / CARD_BG_H : 1;
-  bg.position.y = compare ? CARD_TOP_Y - height / 2 : CARD_BG_Y;
-  document.getElementById('ship-info-hud-text').object3D.visible = !compare;
-  document.getElementById('ship-info-hud-cmp').object3D.visible = compare;
+  document.getElementById('compare-dash').object3D.visible = false;
+  updateCloseupArrows();
 }
 
 /* Convert a name to ASCII for in-scene text */
@@ -6654,7 +6749,6 @@ function toAsciiLabel(str) {
 }
 
 function renderInfoPanel(s) {
-  setCardLayout(false);
   const dims = shipDims(s);
   const typeLabel = (SHIP_TYPES[s.typeKey] || SHIP_TYPES.other).label;
   const speedTxt = s.speedKnown ? s.speed.toFixed(1) + ' kn' : 'speed unknown';
@@ -6666,20 +6760,34 @@ function renderInfoPanel(s) {
     speedTxt + ' | ' + courseTxt + (s.destination ? ' | to ' + s.destination : ''),
     (s.country ? toAsciiLabel(s.country) + ' | ' : '') + s.lat.toFixed(3) + ', ' + s.lon.toFixed(3)
   ];
+  const set = closeupShipId === s.id ? compareSet() : [];
+  if (set.length > 1) lines.push('closeup ' + (set.indexOf(s.id) + 1) + ' / ' + set.length);
   document.getElementById('ship-info-hud-text').setAttribute('text', 'value', lines.join('\n'));
   document.getElementById('ship-info-hud').object3D.visible = true;
 }
 
-/* Compare card: one column per vessel in its route colour */
+/* Compare dash: one block per vessel in the set, same glyph size as the card */
 const CARD_LINE_H = 0.2137;      // height of one card text line
 const CARD_PAD = 0.14;
-const COMPARE_COL_FIT = 11.75;   // digit widths a column line may use; a-frame wraps past 12.25
+const DASH_TEXT_W = 4.0;         // dash text width, panel units
+const DASH_FIT = 34;             // digit widths a dash line may use (wrapCount 34.5 keeps the card's glyph size)
+const DASH_LINES = 5;            // lines per vessel
+const DASH_BLOCK_LINES = DASH_LINES + 0.6;   // plus a gap
+const dashRows = [];
+for (let i = 0; i < MAX_COMPARE_SET; i++) {
+  const el = document.createElement('a-entity');
+  el.setAttribute('text', { value: '', align: 'left', anchor: 'left', baseline: 'top',
+    width: DASH_TEXT_W, wrapCount: DASH_FIT + 0.5, color: '#e2e6f0' });
+  el.setAttribute('position', { x: -DASH_TEXT_W / 2, y: -CARD_PAD - i * DASH_BLOCK_LINES * CARD_LINE_H, z: 0.01 });
+  document.getElementById('compare-dash-rows').appendChild(el);
+  dashRows.push({ el, text: null, color: null });
+}
 
 // character widths from the card font, for fitting columns
 let cardGlyphW = null;
 function columnTextWidth(str) {
   if (!cardGlyphW) {
-    const t = document.getElementById('ship-info-hud-cmp-a').components.text;
+    const t = dashRows[0].el.components.text;
     const font = t && t.currentFont;
     if (font && font.chars) {
       const digits = font.chars.filter(ch => ch.id >= 48 && ch.id <= 57);
@@ -6692,35 +6800,40 @@ function columnTextWidth(str) {
   return w;
 }
 
-/* Fit a value into a compare column on up to maxLines lines, clipping with '...' */
-function fitColumn(str, maxLines) {
+/* Fit a value into `fit` digit widths on up to maxLines lines, clipping with '...' */
+function fitColumn(str, maxLines, fit = DASH_FIT) {
   const words = String(str).trim().split(/\s+/);
   const lines = [];
   while (lines.length < maxLines - 1) {
     let n = 0;
-    while (n < words.length && columnTextWidth(words.slice(0, n + 1).join(' ')) <= COMPARE_COL_FIT) n++;
+    while (n < words.length && columnTextWidth(words.slice(0, n + 1).join(' ')) <= fit) n++;
     if (n === 0 || n === words.length) break;   // one over-long word, or the rest fits: the last line takes it
     lines.push(words.splice(0, n).join(' '));
   }
   let last = words.join(' ');
-  if (columnTextWidth(last) > COMPARE_COL_FIT) {
-    while (last.length > 1 && columnTextWidth(last + '...') > COMPARE_COL_FIT) last = last.slice(0, -1);
+  if (columnTextWidth(last) > fit) {
+    while (last.length > 1 && columnTextWidth(last + '...') > fit) last = last.slice(0, -1);
     last = last.trimEnd() + '...';
   }
   lines.push(last);
   return lines;
 }
 
-function compareRows(s) {
+function compareRows(s, from) {
   const dims = shipDims(s);
+  const type = (SHIP_TYPES[s.typeKey] || SHIP_TYPES.other).label.replace(' / ', '/');
+  const size = Math.round(dims.lengthM) + 'x' + Math.round(dims.beamM) + (s.hasRealDims ? ' m' : ' m (est.)');
+  const spd = s.speedKnown ? s.speed.toFixed(1) + ' kn' : 'spd unknown';
+  // unreported course is stored as 0 - never shown as due north
+  const crs = s.hdgKnown ? 'crs ' + (Math.round(s.hdg) % 360) + ' deg' : 'crs unknown';
+  const pos = s.lat != null ? s.lat.toFixed(3) + ', ' + s.lon.toFixed(3) : 'position unknown';
+  const apart = from && from !== s && from.lat != null && s.lat != null
+    ? ' | ' + fmtRange(distanceM(from.lat, from.lon, s.lat, s.lon)) + ' away' : '';
   return [
-    (SHIP_TYPES[s.typeKey] || SHIP_TYPES.other).label.replace(' / ', '/'),
-    Math.round(dims.lengthM) + 'x' + Math.round(dims.beamM) + (s.hasRealDims ? ' m' : ' (est.)'),
-    s.speedKnown ? 'spd ' + s.speed.toFixed(1) + ' kn' : 'spd unknown',
-    // unreported course is stored as 0 - never shown as due north
-    s.hdgKnown ? 'crs ' + (Math.round(s.hdg) % 360) + ' deg' : 'crs unknown',
-    s.destination ? 'to ' + s.destination : 'to unknown',
-    toAsciiLabel(s.country) || 'flag unknown'
+    type + ' | ' + size,
+    spd + ' | ' + crs,
+    (toAsciiLabel(s.country) || 'flag unknown') + apart,
+    pos
   ].map(v => fitColumn(v, 1)[0]);
 }
 
@@ -6732,26 +6845,101 @@ function distanceM(lat1, lon1, lat2, lon2) {
   return 2 * EARTH_R_M * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-function renderComparePanel(a, b) {
-  // names get two lines; pad so rows stay aligned
-  const ta = fitColumn(shipTitle(a), 2), tb = fitColumn(shipTitle(b), 2);
-  while (ta.length < tb.length) ta.push('');
-  while (tb.length < ta.length) tb.push('');
-  const colA = ta.concat(compareRows(a)), colB = tb.concat(compareRows(b));
-  const apart = a.lat != null && b.lat != null
-    ? fmtRange(distanceM(a.lat, a.lon, b.lat, b.lon)) + ' apart' : '';
-
-  const top = CARD_TOP_Y - CARD_PAD;
-  const foot = document.getElementById('ship-info-hud-cmp-foot');
-  document.getElementById('ship-info-hud-cmp-a').object3D.position.y = top;
-  document.getElementById('ship-info-hud-cmp-b').object3D.position.y = top;
-  foot.object3D.position.y = top - (colA.length + 0.4) * CARD_LINE_H;
-  document.getElementById('ship-info-hud-cmp-a').setAttribute('text', 'value', colA.join('\n'));
-  document.getElementById('ship-info-hud-cmp-b').setAttribute('text', 'value', colB.join('\n'));
-  foot.setAttribute('text', 'value', apart);
-  setCardLayout(true, CARD_PAD * 2 + (colA.length + (apart ? 1.4 : 0)) * CARD_LINE_H);
-  document.getElementById('ship-info-hud').object3D.visible = true;
+/* Side dash: every vessel in the compare set at once, shown while the set has
+ * two or more. Selected vessel amber, latest comparison blue (their route
+ * colours), the rest white; '>' marks the closeup vessel. */
+function renderCompareDash() {
+  const dash = document.getElementById('compare-dash');
+  const set = mapPanelActive ? [] : compareSet().map(id => Fleet.get(id)).filter(Boolean);
+  if (set.length < 2) { dash.object3D.visible = false; return; }
+  const sel = set[0], cmpId = comparisonId();
+  for (let i = 0; i < dashRows.length; i++) {
+    const row = dashRows[i], v = set[i];
+    const text = v ? [fitColumn((v.id === closeupShipId ? '> ' : '') + shipTitle(v), 1)[0]].concat(compareRows(v, sel)).join('\n') : '';
+    const color = !v ? '#e2e6f0' : v === sel ? '#ffb83e' : v.id === cmpId ? '#3ea8ff' : '#e2e6f0';
+    if (row.text !== text || row.color !== color) {
+      row.text = text; row.color = color;
+      row.el.setAttribute('text', { value: text, color });
+    }
+    row.el.object3D.visible = !!v;
+  }
+  const h = CARD_PAD * 2 + (set.length * DASH_BLOCK_LINES - (DASH_BLOCK_LINES - DASH_LINES)) * CARD_LINE_H;
+  const bg = document.getElementById('compare-dash-bg');
+  bg.setAttribute('height', h);
+  bg.setAttribute('position', { x: 0, y: -h / 2, z: 0 });
+  dash.object3D.visible = true;
 }
+
+/* X: add the vessel under the left ray to the compare set (selects it if nothing is) */
+function addToCompareUnderLeftRay() {
+  if (mapPanelActive) return;
+  const s = shipUnderRay(handLeftEl);
+  if (!s) return;
+  const id = String(s.id);
+  if (selectedShipId == null) { selectShip(id); return; }
+  const set = compareSet();
+  if (set.includes(id) || set.length >= MAX_COMPARE_SET) { pulseHaptic(handLeftEl, 0.15, 30); return; }
+  compareShipIds.push(id);
+  pulseHaptic(handLeftEl, 0.4, 60);
+  refreshInfoDisplay();
+  if (wristMenuOpen) syncWristMenu();
+}
+
+function clearCompare() {
+  compareShipIds = [];
+  compareShipId = null;
+  if (closeupShipId != null && closeupShipId !== selectedShipId) endCloseup(false);
+  refreshInfoDisplay();
+}
+
+/* Closeup: true scale beside a vessel of the compare set, arrows cycle the set,
+ * B returns to the view from before the closeup */
+function openCloseup(s) {
+  if (!s || s.lat == null) return;
+  if (closeupShipId == null) {
+    const w = worldEl.object3D.position, r = rigEl.object3D.position;
+    closeupReturn = { lat: origin.lat, lon: origin.lon, alt: viewAltM, wx: w.x, wy: w.y, wz: w.z, rx: r.x, ry: r.y, rz: r.z };
+  }
+  closeupShipId = String(s.id);
+  zoomToRealScale(s, false);
+  pulseHaptic(handRightEl, 0.4, 60);
+  refreshInfoDisplay();
+}
+
+function cycleCloseup(dir) {
+  const set = compareSet();
+  if (closeupShipId == null || set.length < 2) return;
+  const i = Math.max(0, set.indexOf(closeupShipId));
+  openCloseup(Fleet.get(set[(i + dir + set.length) % set.length]));
+}
+
+// restore: go back to the view saved when the closeup opened
+function endCloseup(restore) {
+  if (closeupShipId == null) return;
+  const back = closeupReturn;
+  closeupShipId = null;
+  closeupReturn = null;
+  if (restore && back) {
+    setViewAlt(back.alt);
+    setOrigin(back.lat, back.lon, 'none');
+    worldEl.object3D.position.set(back.wx, back.wy, back.wz);
+    rigEl.object3D.position.set(back.rx, back.ry, back.rz);
+  }
+  if (restore) refreshInfoDisplay();
+}
+
+function updateCloseupArrows() {
+  const on = closeupShipId != null && !mapPanelActive && compareSet().length > 1;
+  let changed = false;
+  for (const id of ['closeup-prev', 'closeup-next']) {
+    const el = document.getElementById(id);
+    el.object3D.visible = on;
+    changed = setRaycastable(el, on) || changed;
+  }
+  if (changed) refreshRaycasters();
+}
+document.getElementById('closeup-prev').addEventListener('click', (e) => { e.stopPropagation(); cycleCloseup(-1); });
+document.getElementById('closeup-next').addEventListener('click', (e) => { e.stopPropagation(); cycleCloseup(1); });
 
 /* 3D route lines for the selected and comparison vessels */
 function makeRouteLine(color, y) {
@@ -6846,8 +7034,8 @@ function updateShipMarker() {
   shipMarkerEl.object3D.visible = true;
 }
 
-/* Jump to true scale beside a vessel */
-function zoomToRealScale(s) {
+/* Jump to true scale beside a vessel (select = false keeps the current selection) */
+function zoomToRealScale(s, select = true) {
   if (!s || s.lat == null) return;
   // set altitude first (it decides the level of detail)
   const dims = shipDims(s);
@@ -6857,7 +7045,7 @@ function zoomToRealScale(s) {
   worldEl.object3D.position.set(0, 0, 0);
   rigEl.object3D.position.x = 0;
   rigEl.object3D.position.z = backOff;
-  selectShip(s.id);
+  if (select) selectShip(s.id);
   addLog('Zoomed to ' + (s.name || s.id) + ' at real scale');
 }
 
@@ -6918,8 +7106,10 @@ function fitViewToShips() {
 }
 
 function recenterView() {
-  // reset snap-turn rotation
+  // reset turn and pitch
   rigEl.object3D.rotation.y = 0;
+  lookPitchDeg = 0;
+  updateCameraTilt();
   if (mapPanelActive) { placeMapPanel(); return; }
   worldEl.object3D.position.set(0, 0, 0);
   // no offset at globe zoom
@@ -6981,18 +7171,18 @@ sceneEl.addEventListener('loaded', () => {
 /* In-scene controls reference text */
 const CONTROLS_HUD_TEXT =
   'CONTROLS\n\n' +
-  'R-stick up/down  move\n' +
-  'R-stick left/right  turn\n' +
-  'L-stick up/down  zoom\n' +
-  '  one range, planet to 1:1\n' +
-  'L-stick left/right  strafe\n' +
+  'L-stick  move and strafe\n' +
   'L-stick click  fly / teleport\n' +
+  'R-stick left/right  turn\n' +
+  'R-stick up/down  look up/down\n' +
   'Grip + pull  grab and zoom\n' +
   'Both grips  drag and scale\n' +
-  'R-trigger  select a vessel,\n  the sea, or the planet\n' +
-  'L-trigger  compare a vessel\n' +
-  'A  zoom to vessel\n' +
-  'M / X  menu and filters\n' +
+  'R-trigger  select, sea, planet\n' +
+  'A  details, then closeup\n' +
+  'B  back\n' +
+  'X  add vessel to compare\n' +
+  '< >  cycle closeup vessels\n' +
+  'Y / M  menu (LOOK SNAP = comfort)\n' +
   'R  recentre    2D  the map\n\n' +
   'desktop: WASD, right-drag or\nwheel to zoom, click to descend';
 document.getElementById('controls-hud-text').setAttribute('text', 'value', CONTROLS_HUD_TEXT);
@@ -7087,6 +7277,13 @@ function buildWristMenu() {
   });
 
   makeWristRow(-1, l++, {
+    // comfort toggle: snap turn and no pitch
+    text: () => comfortMode ? 'LOOK  SNAP' : 'LOOK  SMOOTH',
+    color: () => comfortMode ? '#3eff9a' : '#ffb83e',
+    onClick: () => { comfortMode = !comfortMode; lookPitchDeg = 0; updateCameraTilt(); }
+  });
+
+  makeWristRow(-1, l++, {
     text: () => mapPanelWanted ? 'VIEW  FLAT MAP' : 'VIEW  TRUE SCALE',
     color: () => mapPanelWanted ? '#3eff9a' : '#3ea8ff',
     onClick: toggleMapPanel
@@ -7099,7 +7296,7 @@ function buildWristMenu() {
     onClick: () => setFinderOpen(!finderOpen)
   });
   makeWristRow(-1, l++, {
-    // zoom to vessel (right A); greyed without a vessel
+    // zoom to the card's vessel; greyed without one
     text: () => 'ZOOM TO VESSEL',
     color: () => zoomTargetShip() ? '#3ea8ff' : '#3a3f52',
     onClick: () => { const s = zoomTargetShip(); if (s) zoomToRealScale(s); }
@@ -7163,8 +7360,8 @@ function buildWristMenu() {
   // in the right column to keep the menu short
   makeWristHeading(1, r++, 'COMPARE');
   makeWristRow(1, r++, {
-    // display only; compare is set with the left trigger
-    text: () => 'COMPARE  ' + (comparisonId() != null ? 'ON' : 'OFF'),
+    // display only; vessels are added with X
+    text: () => 'COMPARE  ' + (comparisonId() != null ? compareSet().length + ' VESSELS' : 'OFF'),
     color: () => comparisonId() != null ? '#3ea8ff' : '#7a8099',
     onClick: () => {}
   });
@@ -7208,32 +7405,58 @@ function setWristMenuOpen(open) {
 }
 document.getElementById('wrist-menu-toggle').addEventListener('click', () => setWristMenuOpen(!wristMenuOpen));
 
-// left X / Y opens the menu (polled)
-let prevMenuButton = false;
-function updateWristMenuButton() {
-  const gp = handGamepad(handLeftEl);
-  const pressed = buttonPressed(gp, 4) || buttonPressed(gp, 5);
-  if (pressed && !prevMenuButton) setWristMenuOpen(!wristMenuOpen);
-  prevMenuButton = pressed;
+/* Face buttons, polled on the rising edge (named button events don't fire on Quest 3S):
+ * right A (4) details / closeup, right B (5) back, left X (4) add to compare, left Y (5) menu */
+const prevFace = { a: false, b: false, x: false, y: false };
+let faceIndexLogged = false;
+let zoomRowEnabled = false;   // what the wrist row last showed
+let compareRowCount = 0;      // what the COMPARE row last showed
+function updateFaceButtons() {
+  const gpR = handGamepad(handRightEl), gpL = handGamepad(handLeftEl);
+  const now = { a: buttonPressed(gpR, 4), b: buttonPressed(gpR, 5), x: buttonPressed(gpL, 4), y: buttonPressed(gpL, 5) };
+  if (!faceIndexLogged && (now.a || now.b || now.x || now.y)) {
+    faceIndexLogged = true;
+    console.debug('[buttons] first face press: A=4 ' + now.a + ', B=5 ' + now.b + ', X=4 ' + now.x + ', Y=5 ' + now.y);
+  }
+  if (now.a && !prevFace.a) detailsButton();
+  if (now.b && !prevFace.b) backButton();
+  if (now.x && !prevFace.x) addToCompareUnderLeftRay();
+  if (now.y && !prevFace.y) setWristMenuOpen(!wristMenuOpen);
+  Object.assign(prevFace, now);
+  // keep the zoom and compare rows in sync
+  const enabled = zoomTargetShip() != null;
+  const count = compareSet().length;
+  if (enabled !== zoomRowEnabled || count !== compareRowCount) {
+    zoomRowEnabled = enabled; compareRowCount = count;
+    if (wristMenuOpen) syncWristMenu();
+  }
 }
 
-// right A/B: zoom to the card's vessel (polled)
-let prevZoomBtn = false;
-let zoomBtnIndexLogged = false;
-let zoomRowEnabled = false;   // what the wrist row last showed - see below
-function updateZoomButton() {
-  const gp = handGamepad(handRightEl);
-  const down4 = buttonPressed(gp, 4), down5 = buttonPressed(gp, 5);
-  const pressed = down4 || down5;
-  if (pressed && !zoomBtnIndexLogged) {
-    zoomBtnIndexLogged = true;
-    console.debug('[zoom] right face button seen at xr-standard index ' + (down4 ? (down5 ? '4 and 5' : '4') : '5'));
+// is the first thing under this hand's ray a HUD panel?
+function rayOnHud(handEl) {
+  const comp = handEl.components && handEl.components.raycaster;
+  const first = comp && comp.intersections && comp.intersections[0];
+  const el = first && first.object && first.object.el;
+  return !!(el && el.closest && el.closest('.hud'));
+}
+
+/* A: on a vessel outside the set, show its details (select it); on a set
+ * vessel, or with the ray on nothing, open the closeup */
+function detailsButton() {
+  if (mapPanelActive || rayOnHud(handRightEl)) return;
+  const s = shipUnderRay(handRightEl);
+  if (s) {
+    if (compareSet().includes(String(s.id))) openCloseup(s);
+    else selectShip(s.id);
+  } else if (selectedShipId != null) {
+    openCloseup(Fleet.get(closeupShipId != null ? closeupShipId : selectedShipId));
   }
-  if (pressed && !prevZoomBtn) { const s = zoomTargetShip(); if (s) zoomToRealScale(s); }
-  prevZoomBtn = pressed;
-  // grey the zoom row when there is nothing to zoom to
-  const enabled = zoomTargetShip() != null;
-  if (enabled !== zoomRowEnabled) { zoomRowEnabled = enabled; if (wristMenuOpen) syncWristMenu(); }
+}
+
+/* B: one level back - closeup, then the set / card. Nothing open: does nothing. */
+function backButton() {
+  if (closeupShipId != null) endCloseup(true);
+  else if (selectedShipId != null) clearSelection();
 }
 
 /* The vessel a specific hand's ray is on */
@@ -7263,34 +7486,6 @@ function shipUnderRay(handEl) {
   }
   return best;
 }
-
-/* Left trigger: set/replace the comparison vessel (polled) */
-let prevLeftTrigger = false;
-let compareRowOn = false;   // what the wrist menu last showed - see below
-function updateCompareTrigger() {
-  const pressed = buttonPressed(handGamepad(handLeftEl), 0);
-  if (pressed && !prevLeftTrigger) compareUnderLeftRay();
-  prevLeftTrigger = pressed;
-  // keep the COMPARE rows in sync
-  const on = comparisonId() != null;
-  if (on !== compareRowOn) { compareRowOn = on; if (wristMenuOpen) syncWristMenu(); }
-}
-
-function compareUnderLeftRay() {
-  if (mapPanelActive || selectedShipId == null) return;
-  const s = shipUnderRay(handLeftEl);
-  if (!s || String(s.id) === selectedShipId) return;
-  compareShipId = String(s.id);
-  pulseHaptic(handLeftEl, 0.4, 60);
-  refreshInfoDisplay();
-}
-
-function clearCompare() {
-  compareShipId = null;
-  refreshInfoDisplay();
-}
-
-
 
 /* ============================================================ */
 /* landmarks - knowing which coast you are looking at            */
@@ -7769,6 +7964,7 @@ function applyMapPanel() { setMapPanelActive(mapPanelWanted && activeView === 'v
 
 /* Toggle between the map panel and the 3D world, carrying the position across */
 function toggleMapPanel() {
+  endCloseup(false);
   const stepInto = mapPanelWanted && selectedShipId != null ? Fleet.get(selectedShipId) : null;
   mapPanelWanted = !mapPanelWanted;
   if (mapPanelWanted) syncCanvasFromScene();   // to the screen: the map takes over where the world was
