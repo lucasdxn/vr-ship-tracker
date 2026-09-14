@@ -372,9 +372,8 @@ header {
 #app.vr-view > #globe-container { display: none; }
 /* noinspection CssUnusedSymbol */
 #app.vr-view > #vr-container { display: block; }
-/* a-scene is an a-frame custom element */
-/* noinspection CssUnknownTarget */
-a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
+/* the a-frame scene fills the 3D view */
+#vr-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
 
 .vr-overlay {
   position: absolute; left: var(--space-4); bottom: var(--space-4); z-index: 14;
@@ -538,7 +537,7 @@ a-scene { position: absolute !important; inset: 0; width: 100%; height: 100%; }
 <!-- 3D / VR view -->
 <div id="vr-container">
 <!-- a-frame scene: own VR button off, 90 Hz, foveated rendering, anisotropic textures -->
-<a-scene embedded tracker-loop xr-mode-ui="enabled: false"
+<a-scene id="vr-scene" embedded tracker-loop xr-mode-ui="enabled: false"
          renderer="highRefreshRate: true; foveationLevel: 1; anisotropy: 8"
          background="color: #04070c" fog="type: linear; color: #16324a; near: 17000; far: 40000">
   <a-assets></a-assets>
@@ -3698,7 +3697,7 @@ setInterval(() => { if (!document.hidden) renderSidebar(); }, 2000);
 /* View switch: flat 2D canvas <-> 3D scene <-> immersive VR    */
 /* ============================================================ */
 /* Switch between the 2D and 3D views, and enter/exit VR */
-const vrSceneEl = document.querySelector('a-scene');
+const vrSceneEl = document.getElementById('vr-scene');
 
 /* Keep the 2D camera (rot/scale) and the 3D camera (origin/viewAltM) in sync */
 // canvas scale -> eye altitude
