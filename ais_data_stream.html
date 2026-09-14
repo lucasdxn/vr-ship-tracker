@@ -170,6 +170,13 @@ main {
       <div class="stat-row">Last update <span id="last-update">&mdash;</span></div>
       <div class="stat-row">Broadcasting on channel <span><code>ais-stream</code></span></div>
       <button class="btn-primary" id="btn-conn">Disconnect</button>
+      <div class="form-row" style="display:flex; gap:var(--space-3); align-items:flex-end; margin:var(--space-4) 0 0;">
+        <div style="flex:1;">
+          <label class="form-label" for="save-name">Save current data as</label>
+          <input class="form-input" id="save-name" placeholder="session1" autocomplete="off"/>
+        </div>
+        <button class="btn-primary" id="save-btn" style="margin-top:0;">Save dataset</button>
+      </div>
       <div class="panel-title" style="margin-top: var(--space-6)">Visualization</div>
       <div style="font-size:0.74rem; color:var(--color-text-muted); line-height:1.5;">
         Open the globe view in another tab on the same origin.
@@ -499,6 +506,48 @@ function showDatasetInfo() {
     ' starting ' + new Date(d.firstTs).toLocaleString();
 }
 document.getElementById('rec-name').addEventListener('change', showDatasetInfo);
+
+// snapshots the relay's whole message log into datasets/<name>.jsonl via
+// POST /api/dataset/save, so it shows up under "Recorded dataset" on any
+// device using this relay. a 409 means the name is taken, so we ask before
+// retrying with overwrite
+async function saveCurrentDataset(overwrite = false) {
+  const name = document.getElementById('save-name').value.trim();
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(name)) {
+    addLog('Dataset name must be 1–64 chars: letters, digits, _ or -', true);
+    return;
+  }
+  const btn = document.getElementById('save-btn');
+  btn.disabled = true;
+  try {
+    const res = await fetch(location.protocol + '//' + relayHost() + '/api/dataset/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, since: 0, until: Date.now(), overwrite })
+    });
+    // an older relay without this endpoint answers with a plain-text 404
+    const json = await res.json().catch(() => ({}));
+    if (res.ok) {
+      addLog('Saved "' + json.name + '" (' + json.count + ' messages)');
+      loadDatasets(); // so it's in the "Recorded dataset" dropdown right away
+    } else if (res.status === 409) {
+      btn.disabled = false;
+      if (confirm('Dataset "' + name + '" exists. Overwrite?')) await saveCurrentDataset(true);
+    } else if (res.status === 422 || res.status === 404) {
+      addLog('Nothing saved: no messages recorded in that time range yet', true);
+    } else {
+      addLog('Save failed: ' + (json.error || ('HTTP ' + res.status)), true);
+    }
+  } catch (err) {
+    addLog('Save failed: ' + err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+document.getElementById('save-btn').addEventListener('click', () => saveCurrentDataset());
+document.getElementById('save-name').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); saveCurrentDataset(); }
+});
 
 function tryConnectFromModal() {
   const provider = document.getElementById('provider').value;
