@@ -211,6 +211,7 @@ main {
           <option value="aisstream">aisstream.io &mdash; global coverage</option>
           <option value="barentswatch">BarentsWatch &mdash; free/open, Norway-focused</option>
           <option value="digitraffic">Digitraffic &mdash; free, no account needed, Finland/Baltic</option>
+          <option value="recorded">Recorded dataset &mdash; replay a saved capture</option>
         </select>
       </div>
       <div class="form-row" id="aisstream-fields">
@@ -238,7 +239,26 @@ main {
           Coverage is Finnish waters and the Baltic Sea only, so pick the Finland region below or you likely won't see any vessels.
         </div>
       </div>
-      <div class="form-row">
+      <div id="recorded-fields" style="display:none;">
+        <div class="form-row">
+          <label class="form-label" for="rec-name">Dataset</label>
+          <select class="form-input" id="rec-name"></select>
+          <div class="modal-sub" id="rec-info" style="margin:6px 0 0; padding:0;"></div>
+        </div>
+        <div class="form-row" style="display:flex; gap:var(--space-3); align-items:flex-end;">
+          <div style="flex:1;">
+            <label class="form-label" for="rec-speed">Speed (&times; real time)</label>
+            <input class="form-input" id="rec-speed" type="number" min="0.1" max="1000" step="0.5" value="1"/>
+          </div>
+          <label class="form-label" for="rec-loop" style="display:flex; align-items:center; gap:6px; margin:0 0 8px;">
+            <input id="rec-loop" type="checkbox"/> Loop
+          </label>
+        </div>
+        <div class="modal-sub" style="margin:0 0 var(--space-3); padding:0;">
+          Replays a window of the relay's message log saved with <code>POST /api/dataset/save</code>, so every session sees identical traffic. The region filter doesn't apply.
+        </div>
+      </div>
+      <div class="form-row" id="region-row">
         <label class="form-label" for="region">Region</label>
         <select class="form-input" id="region">
           <option value="-90,-180,90,180">Whole world</option>
@@ -332,7 +352,7 @@ const modalError = document.getElementById('modal-error');
 // which field to focus + which fields-div to show, per provider - one place
 // to update instead of a growing pile of ternaries every time a provider gets
 // added. digitraffic has no credential field at all, hence the null.
-const PROVIDER_FOCUS_FIELD = { aisstream: 'apikey', barentswatch: 'bw-client-id', digitraffic: null };
+const PROVIDER_FOCUS_FIELD = { aisstream: 'apikey', barentswatch: 'bw-client-id', digitraffic: null, recorded: 'rec-name' };
 
 function showModal(err) {
   keyModal.classList.remove('hidden'); modalError.textContent = err || '';
@@ -350,12 +370,15 @@ function resetModalButton() {
 // pair, digitraffic needs nothing at all - three different credential
 // shapes, so the modal just shows/hides whichever fields-div matches what's
 // picked
-const PROVIDER_FIELDS_DIV = { aisstream: 'aisstream-fields', barentswatch: 'barentswatch-fields', digitraffic: 'digitraffic-fields' };
+const PROVIDER_FIELDS_DIV = { aisstream: 'aisstream-fields', barentswatch: 'barentswatch-fields', digitraffic: 'digitraffic-fields', recorded: 'recorded-fields' };
 function toggleProviderFields() {
   const provider = document.getElementById('provider').value;
   for (const [key, divId] of Object.entries(PROVIDER_FIELDS_DIV)) {
     document.getElementById(divId).style.display = key === provider ? '' : 'none';
   }
+  // a dataset is replayed as captured, the region dropdown has nothing to filter
+  document.getElementById('region-row').style.display = provider === 'recorded' ? 'none' : '';
+  if (provider === 'recorded') loadDatasets();
 }
 document.getElementById('provider').addEventListener('change', toggleProviderFields);
 
@@ -425,6 +448,58 @@ function pruneStale() {
   }
 }
 
+// where the relay lives - see the longer note in connect()
+function relayHost() {
+  const RELAY_PORT = '3333';
+  const relayOverride = new URLSearchParams(location.search).get('relay');
+  const isLocal = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(location.hostname);
+  if (relayOverride) return relayOverride;
+  if (isLocal && location.port !== RELAY_PORT) return location.hostname + ':' + RELAY_PORT;
+  return location.host;
+}
+
+// fills the dataset picker from the relay, keeping the current pick if it still exists
+const datasetsByName = new Map();
+async function loadDatasets() {
+  const sel = document.getElementById('rec-name');
+  const info = document.getElementById('rec-info');
+  const previous = sel.value;
+  info.textContent = 'Loading datasets…';
+  try {
+    const res = await fetch(location.protocol + '//' + relayHost() + '/api/dataset/list');
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || ('HTTP ' + res.status));
+    datasetsByName.clear();
+    sel.innerHTML = '';
+    for (const d of json.datasets) {
+      datasetsByName.set(d.name, d);
+      const opt = document.createElement('option');
+      opt.value = d.name; opt.textContent = d.name;
+      sel.appendChild(opt);
+    }
+    if (datasetsByName.has(previous)) sel.value = previous;
+    showDatasetInfo();
+  } catch (err) {
+    info.textContent = 'Could not load datasets from the relay: ' + err.message;
+  }
+}
+
+function fmtDuration(ms) {
+  const secs = Math.round(ms / 1000);
+  const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60;
+  return (h ? h + 'h ' : '') + (h || m ? m + 'm ' : '') + s + 's';
+}
+
+function showDatasetInfo() {
+  const info = document.getElementById('rec-info');
+  const d = datasetsByName.get(document.getElementById('rec-name').value);
+  if (!datasetsByName.size) { info.textContent = 'No datasets saved yet.'; return; }
+  if (!d) { info.textContent = ''; return; }
+  info.textContent = d.count.toLocaleString() + ' messages, ' + fmtDuration(d.lastTs - d.firstTs) +
+    ' starting ' + new Date(d.firstTs).toLocaleString();
+}
+document.getElementById('rec-name').addEventListener('change', showDatasetInfo);
+
 function tryConnectFromModal() {
   const provider = document.getElementById('provider').value;
   let creds;
@@ -435,6 +510,12 @@ function tryConnectFromModal() {
     creds = { clientId, clientSecret };
   } else if (provider === 'digitraffic') {
     creds = {}; // no credentials at all for this one
+  } else if (provider === 'recorded') {
+    const name = document.getElementById('rec-name').value;
+    const speed = Number(document.getElementById('rec-speed').value);
+    if (!name) { modalError.textContent = 'Pick a dataset'; return; }
+    if (!Number.isFinite(speed) || speed <= 0 || speed > 1000) { modalError.textContent = 'Speed must be between 0 and 1000'; return; }
+    creds = { name, speed, loop: document.getElementById('rec-loop').checked };
   } else {
     const key = document.getElementById('apikey').value.trim();
     if (!key) { modalError.textContent = 'API key is required'; return; }
@@ -475,16 +556,14 @@ function connect(provider, creds) {
   //   the same host. can also be overridden with ?relay=host:port in the
   //   URL if none of that guessing applies to your setup
   const wsProto = location.protocol === 'https:' ? 'wss://' : 'ws://';
-  const RELAY_PORT = '3333';
-  const relayOverride = new URLSearchParams(location.search).get('relay');
-  const isLocal = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(location.hostname);
-  let relayHost = location.host;
-  if (relayOverride) relayHost = relayOverride;
-  else if (isLocal && location.port !== RELAY_PORT) relayHost = location.hostname + ':' + RELAY_PORT;
-  // one relay, four upstream bridges - which one the relay spins up is
-  // decided purely by which path we hit, see relay.js
-  const streamPath = provider === 'aisstream' ? '/v0/stream' : '/v0/stream/' + provider;
-  const relayUrl = wsProto + relayHost + streamPath;
+  // one relay, several sources - which one the relay spins up is decided
+  // purely by which path we hit, see relay.js. the recorded source takes its
+  // whole configuration from the query string
+  let streamPath = provider === 'aisstream' ? '/v0/stream' : '/v0/stream/' + provider;
+  if (provider === 'recorded') {
+    streamPath += '?' + new URLSearchParams({ name: creds.name, speed: String(creds.speed), loop: creds.loop ? '1' : '0' });
+  }
+  const relayUrl = wsProto + relayHost() + streamPath;
   addLog('Opening WebSocket to ' + relayUrl);
 
   try { ws = new WebSocket(relayUrl); }
@@ -501,6 +580,12 @@ function connect(provider, creds) {
     // dropdown in every case - the relay turns it into whatever shape each
     // upstream API actually wants (or filters by it itself, for digitraffic,
     // which has no bbox query param of its own).
+    if (provider === 'recorded') {
+      // nothing to subscribe to, the relay starts replaying on connect
+      setBadge('connecting', 'AWAITING DATA');
+      addLog('Handshake OK — replaying dataset "' + creds.name + '" at ' + creds.speed + '×' + (creds.loop ? ', looping' : ''));
+      return;
+    }
     let sub;
     if (provider === 'barentswatch') sub = { clientId: creds.clientId, clientSecret: creds.clientSecret, bbox: [s, w, n, e] };
     else if (provider === 'digitraffic') sub = { bbox: [s, w, n, e] };
@@ -526,7 +611,9 @@ function connect(provider, creds) {
       setBadge('', 'LIVE');
       document.getElementById('btn-conn').classList.add('danger');
       const regionLabel = document.querySelector('#region option:checked');
-      document.getElementById('region-label').textContent = regionLabel ? regionLabel.textContent : '';
+      document.getElementById('region-label').textContent = provider === 'recorded'
+        ? 'Recorded: ' + creds.name
+        : (regionLabel ? regionLabel.textContent : '');
       addLog('Subscription confirmed by server.');
       resetModalButton(); hideModal();
       bc.postMessage({ type: 'status', state: 'online' });
@@ -626,7 +713,8 @@ function connect(provider, creds) {
         const REJECTED_HINT = {
           barentswatch: 'BarentsWatch rejected the client ID/secret. Check the app registration at developer.barentswatch.no/docs/appreg.',
           digitraffic: 'Digitraffic\'s API didn\'t respond as expected - it needs no credentials, so this is more likely a service hiccup. Check status at digitraffic.fi.',
-          aisstream: 'Server rejected the API key. Generate a fresh one at aisstream.io/account.'
+          aisstream: 'Server rejected the API key. Generate a fresh one at aisstream.io/account.',
+          recorded: 'The relay could not replay that dataset' + (ev.reason ? ': ' + ev.reason : '.')
         };
         hint = REJECTED_HINT[provider];
       }
@@ -657,7 +745,7 @@ document.getElementById('btn-conn').addEventListener('click', disconnect);
 document.getElementById('btn-modal-conn').addEventListener('click', tryConnectFromModal);
 // so you can just hit Enter in a credentials field instead of clicking
 // Connect, small thing, but it annoyed me while testing, so I added it
-['apikey', 'bw-client-id', 'bw-client-secret'].forEach(id => {
+['apikey', 'bw-client-id', 'bw-client-secret', 'rec-speed'].forEach(id => {
   document.getElementById(id).addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); tryConnectFromModal(); }
   });

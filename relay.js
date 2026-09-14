@@ -32,13 +32,21 @@
  * equivalent to what Kpler's own developer portal exposes to a real account.
  * Dropped rather than shipped as an unverified integration.
  *
+ * A recorded dataset is the fourth selectable source: a time window of the
+ * message history log saved to datasets/<name>.jsonl and replayed with its
+ * original pacing, so usability-study sessions can all run off the identical
+ * capture instead of whatever live traffic happens to be out there. It emits
+ * the same aisstream.io-shaped messages, so nothing downstream can tell it
+ * apart from a live provider.
+ *
  * Usage:
  *   npm install
  *   node relay.js
  *
  * Then open ais_data_stream.html and Connect; the HTML points at
  * ws://localhost:3333/v0/stream (aisstream.io), .../v0/stream/barentswatch,
- * or .../v0/stream/digitraffic depending on what's picked in the modal.
+ * .../v0/stream/digitraffic or .../v0/stream/recorded?name=<dataset>
+ * depending on what's picked in the modal.
  */
 
 const http = require('http');
@@ -154,6 +162,123 @@ function scanHistoryLogBounds() {
   });
 }
 
+/* ============================================================ */
+/* Recorded datasets (fixed-stimulus replay for study sessions)             */
+/* ============================================================ */
+// A dataset is a verbatim slice of ais_message_log.jsonl ({ts, msg} lines),
+// so the replay can reproduce the original message timing exactly.
+const DATASETS_DIR = path.join(__dirname, 'datasets');
+const DATASET_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;   // also what keeps a name from escaping DATASETS_DIR
+const DATASET_MAX_SPEED = 1000;
+const REPLAY_MAX_BUFFERED_BYTES = 8 * 1024 * 1024; // pause the replay while a slow client catches up
+const REPLAY_LOOP_GAP_MS = 1000;                   // pause before a looping replay starts over
+
+// scan results per dataset, reused until the file's size or mtime changes
+const datasetStatsCache = new Map(); // name -> { size, mtimeMs, count, firstTs, lastTs }
+
+function datasetPath(name) {
+  return path.join(DATASETS_DIR, name + '.jsonl');
+}
+
+async function getDatasetStats(name) {
+  const st = await fs.promises.stat(datasetPath(name));
+  const cached = datasetStatsCache.get(name);
+  if (cached && cached.size === st.size && cached.mtimeMs === st.mtimeMs) return cached;
+  let count = 0, firstTs = null, lastTs = null;
+  const rl = readline.createInterface({ input: fs.createReadStream(datasetPath(name)), crlfDelay: Infinity });
+  for await (const line of rl) {
+    if (!line) continue;
+    let entry;
+    try { entry = JSON.parse(line); } catch { continue; }
+    if (typeof entry.ts !== 'number') continue;
+    count++;
+    if (firstTs == null) firstTs = entry.ts;
+    lastTs = entry.ts;
+  }
+  const stats = { size: st.size, mtimeMs: st.mtimeMs, count, firstTs, lastTs };
+  datasetStatsCache.set(name, stats);
+  return stats;
+}
+
+async function listDatasets() {
+  let files;
+  try { files = await fs.promises.readdir(DATASETS_DIR); }
+  catch (err) { if (err.code === 'ENOENT') return []; throw err; }
+  const out = [];
+  for (const file of files.sort()) {
+    if (!file.endsWith('.jsonl')) continue;
+    const name = file.slice(0, -'.jsonl'.length);
+    if (!DATASET_NAME_RE.test(name)) continue;
+    const s = await getDatasetStats(name);
+    out.push({ name, bytes: s.size, count: s.count, firstTs: s.firstTs, lastTs: s.lastTs });
+  }
+  return out;
+}
+
+// copies every history log line with since <= ts <= until into
+// datasets/<name>.jsonl. written to a temp file and renamed, so a failed or
+// half-finished save never leaves a truncated dataset behind
+async function saveDataset(name, since, until) {
+  await fs.promises.mkdir(DATASETS_DIR, { recursive: true });
+  const finalPath = datasetPath(name);
+  const tmpPath = finalPath + '.tmp';
+  const out = fs.createWriteStream(tmpPath, { flags: 'w' });
+  let count = 0, firstTs = null, lastTs = null;
+  try {
+    const rl = readline.createInterface({ input: fs.createReadStream(HISTORY_LOG_PATH), crlfDelay: Infinity });
+    for await (const line of rl) {
+      if (!line) continue;
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; }
+      if (typeof entry.ts !== 'number' || entry.ts < since || entry.ts > until) continue;
+      if (!out.write(line + '\n')) await new Promise((resolve) => out.once('drain', resolve));
+      count++;
+      if (firstTs == null) firstTs = entry.ts;
+      lastTs = entry.ts;
+    }
+    await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())));
+    if (count === 0) {
+      await fs.promises.unlink(tmpPath);
+      return { name, count, firstTs, lastTs };
+    }
+    await fs.promises.rename(tmpPath, finalPath);
+  } catch (err) {
+    out.destroy();
+    await fs.promises.unlink(tmpPath).catch(() => {});
+    throw err;
+  }
+  return { name, count, firstTs, lastTs };
+}
+
+// accepts epoch ms or anything Date.parse understands (e.g. an ISO string)
+function parseTimeParam(v) {
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string' && v.trim() !== '') {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : Date.parse(v);
+  }
+  return NaN;
+}
+
+function readJsonBody(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > maxBytes) { reject(new Error('request body too large')); req.destroy(); }
+    });
+    req.on('end', () => {
+      try { resolve(body ? JSON.parse(body) : {}); } catch { reject(new Error('request body is not valid JSON')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+function sendJson(res, status, obj) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(obj));
+}
+
 // Serve the three HTML files (plus any sibling .html/.js/.css) so that the
 // data stream, globe tracker and VR tracker all live on the same
 // http://localhost origin — required for the BroadcastChannel that links them.
@@ -214,6 +339,48 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // lists saved datasets with their message count and time span
+  if (url === '/api/dataset/list') {
+    listDatasets()
+      .then((datasets) => sendJson(res, 200, { datasets }))
+      .catch((err) => sendJson(res, 500, { error: err.message }));
+    return;
+  }
+
+  // body: { name, since, until, overwrite? } - since/until as epoch ms or ISO strings
+  if (url === '/api/dataset/save') {
+    if (req.method !== 'POST') { sendJson(res, 405, { error: 'use POST' }); return; }
+    readJsonBody(req, 16 * 1024).then(async (body) => {
+      const name = body.name;
+      const since = parseTimeParam(body.since);
+      const until = parseTimeParam(body.until);
+      if (typeof name !== 'string' || !DATASET_NAME_RE.test(name)) {
+        sendJson(res, 400, { error: 'name must be 1-64 characters of A-Z, a-z, 0-9, _ or -' });
+        return;
+      }
+      if (!Number.isFinite(since) || !Number.isFinite(until) || since > until) {
+        sendJson(res, 400, { error: 'since and until (epoch ms or ISO date) are required, with since <= until' });
+        return;
+      }
+      if (!body.overwrite && fs.existsSync(datasetPath(name))) {
+        sendJson(res, 409, { error: 'dataset "' + name + '" already exists (pass overwrite: true to replace it)' });
+        return;
+      }
+      const result = await saveDataset(name, since, until);
+      if (result.count === 0) {
+        sendJson(res, 422, { error: 'no logged messages between ' + new Date(since).toISOString() + ' and ' + new Date(until).toISOString() });
+        return;
+      }
+      console.log('[' + ts() + '] saved dataset "' + name + '" (' + result.count + ' message(s))');
+      fileLog('DATASET SAVED "' + name + '" (' + result.count + ' message(s), ' +
+        new Date(result.firstTs).toISOString() + ' to ' + new Date(result.lastTs).toISOString() + ')');
+      sendJson(res, 200, result);
+    }).catch((err) => {
+      if (!res.headersSent) sendJson(res, err.code === 'ENOENT' ? 404 : 400, { error: err.code === 'ENOENT' ? 'no message log on disk yet' : err.message });
+    });
+    return;
+  }
+
   const entry = STATIC_FILES[url];
   if (entry) {
     const full = path.join(__dirname, entry.file);
@@ -236,6 +403,8 @@ const server = http.createServer((req, res) => {
     'Tracker:   http://localhost:' + PORT + '/ship_tracker.html\n' +
     'WebSocket: ws://localhost:' + PORT + '/v0/stream\n' +
     'History:   http://localhost:' + PORT + '/api/history?since=<ms>&until=<ms>\n' +
+    'Datasets:  http://localhost:' + PORT + '/api/dataset/list, POST /api/dataset/save\n' +
+    'Replay:    ws://localhost:' + PORT + '/v0/stream/recorded?name=<dataset>&speed=1&loop=0\n' +
     'Upstream:  ' + UPSTREAM + '\n'
   );
 });
@@ -472,6 +641,77 @@ async function startDigitrafficStream(bbox, client) {
   }
 }
 
+/* ============================================================ */
+/* Recorded dataset replay                                                  */
+/* ============================================================ */
+
+// replays datasets/<name>.jsonl to one client, each message sent when
+// (ts - firstTs) / speed has elapsed since the replay started. scheduling is
+// against absolute targets, so timer jitter never accumulates into drift.
+// deliberately never calls logAisMessage: replayed traffic must not end up
+// back in the live history log.
+async function startRecordedStream(client, name, speed, loop) {
+  let stopped = false;
+  let wake = null;
+  let input = null;
+  client.on('close', () => {
+    stopped = true;
+    if (wake) wake();
+    if (input) input.destroy();
+  });
+  const sleep = (ms) => new Promise((resolve) => {
+    const t = setTimeout(() => { wake = null; resolve(); }, ms);
+    wake = () => { clearTimeout(t); wake = null; resolve(); };
+  });
+
+  const stats = await getDatasetStats(name); // throws ENOENT for an unknown dataset
+  if (!stats.count) throw new Error('dataset "' + name + '" has no messages');
+
+  console.log('[' + ts() + '] replaying dataset "' + name + '" (' + stats.count + ' message(s), speed ' + speed + 'x' + (loop ? ', looping' : '') + ')');
+  fileLog('RECORDED STREAM OPEN "' + name + '" speed=' + speed + ' loop=' + loop);
+
+  let pass = 0;
+  let sent = 0;
+  do {
+    pass++;
+    const startWall = Date.now();
+    let firstTs = null;
+    input = fs.createReadStream(datasetPath(name));
+    const rl = readline.createInterface({ input, crlfDelay: Infinity });
+    try {
+      for await (const line of rl) {
+        if (stopped) break;
+        if (!line) continue;
+        let entry;
+        try { entry = JSON.parse(line); } catch { continue; }
+        if (typeof entry.ts !== 'number' || !entry.msg) continue;
+        if (firstTs == null) firstTs = entry.ts;
+        const delay = startWall + (entry.ts - firstTs) / speed - Date.now();
+        if (delay > 0) await sleep(delay);
+        while (!stopped && client.bufferedAmount > REPLAY_MAX_BUFFERED_BYTES) await sleep(50);
+        if (stopped || client.readyState !== WebSocket.OPEN) break;
+        client.send(JSON.stringify(entry.msg));
+        sent++;
+      }
+    } catch (err) {
+      if (!stopped) throw err;
+    } finally {
+      rl.close();
+      input.destroy();
+    }
+    // a short gap between passes, so a dataset spanning ~0 ms can't spin
+    if (loop && !stopped) await sleep(REPLAY_LOOP_GAP_MS);
+  } while (loop && !stopped);
+
+  if (stopped) {
+    fileLog('RECORDED STREAM CLOSED "' + name + '" by client (sent ' + sent + ' message(s), pass ' + pass + ')');
+    return;
+  }
+  console.log('[' + ts() + '] dataset "' + name + '" replay finished (sent ' + sent + ' message(s))');
+  fileLog('RECORDED STREAM ENDED "' + name + '" (sent ' + sent + ' message(s))');
+  try { client.close(1000, 'dataset ended'); } catch (_) {}
+}
+
 // shared plumbing for the two "bridged" providers (BarentsWatch,
 // Digitraffic): wait for the browser's one subscribe message, hand it to
 // whichever bridge function actually knows how to talk to that provider,
@@ -501,7 +741,32 @@ wss.on('connection', (client, req) => {
   console.log('[' + ts() + '] client connected from ' + peer);
   fileLog('client connected from ' + peer);
 
-  const streamPath = (req.url || '').split('?')[0];
+  const reqUrl = new URL(req.url || '/', 'http://localhost');
+  const streamPath = reqUrl.pathname;
+
+  // configured entirely by query params, so it starts right away instead of
+  // waiting for a subscribe message (anything the client sends is ignored)
+  if (streamPath === '/v0/stream/recorded') {
+    const name = reqUrl.searchParams.get('name') || '';
+    const speedParam = reqUrl.searchParams.get('speed');
+    const speed = speedParam == null || speedParam === '' ? 1 : Number(speedParam);
+    const loop = ['1', 'true', 'yes'].includes((reqUrl.searchParams.get('loop') || '').toLowerCase());
+    client.on('error', (err) => {
+      console.error('[' + ts() + '] client error: ' + err.message);
+      fileLog('CLIENT ERROR: ' + err.message);
+    });
+    const reject = (reason) => {
+      console.error('[' + ts() + '] recorded error: ' + reason);
+      fileLog('RECORDED ERROR: ' + reason);
+      try { client.close(4001, reason.slice(0, 120)); } catch (_) {}
+    };
+    if (!DATASET_NAME_RE.test(name)) { reject('invalid or missing dataset name'); return; }
+    if (!Number.isFinite(speed) || speed <= 0 || speed > DATASET_MAX_SPEED) { reject('speed must be > 0 and <= ' + DATASET_MAX_SPEED); return; }
+    startRecordedStream(client, name, speed, loop).catch((err) => {
+      reject(err.code === 'ENOENT' ? 'dataset "' + name + '" not found' : err.message);
+    });
+    return;
+  }
 
   if (streamPath === '/v0/stream/barentswatch') {
     handleBridgedProvider(client, 'barentswatch', async (sub) => {
@@ -665,6 +930,7 @@ server.listen(PORT, async () => {
   console.log('  Tracker:   http://localhost:' + PORT + '/ship_tracker.html');
   console.log('  WebSocket: ws://localhost:' + PORT + '/v0/stream');
   console.log('  History:   http://localhost:' + PORT + '/api/history');
+  console.log('  Datasets:  http://localhost:' + PORT + '/api/dataset/list (saved under ' + DATASETS_DIR + ')');
   console.log('Forwarding to ' + UPSTREAM);
   console.log('Node version: ' + process.version);
   console.log('Appending stream log to ' + LOG_PATH);

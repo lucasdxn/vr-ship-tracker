@@ -82,6 +82,26 @@ API key. Each provider is governed by its own terms of use.
 | [BarentsWatch](https://developer.barentswatch.no) | Your own OAuth client id/secret | Norway / Barents Sea |
 | [Digitraffic](https://www.digitraffic.fi/en/marine-traffic/) | None | Finland / Baltic Sea |
 
+### Recorded datasets (study sessions)
+
+For controlled comparisons, a time window of the relay's message log can be
+saved as a named dataset and replayed as a data source, so every session sees
+identical traffic:
+
+```
+curl -X POST http://localhost:3333/api/dataset/save \
+  -d '{"name":"study-a","since":"2026-09-14T10:00:00Z","until":"2026-09-14T10:30:00Z"}'
+curl http://localhost:3333/api/dataset/list
+```
+
+`since`/`until` take epoch milliseconds or ISO dates; an existing name is only
+replaced with `"overwrite": true`. Datasets are stored in `datasets/<name>.jsonl`.
+
+Pick **Recorded dataset** in the connect dialog, choose the dataset, and
+optionally a speed-up and looping. The replay keeps the original message timing
+(divided by the speed) and is not written back to the message log. It is also
+available directly at `ws://localhost:3333/v0/stream/recorded?name=<name>&speed=1&loop=0`.
+
 The relay writes received messages to local log files for playback. These
 contain provider data and are excluded from version control; do not publish
 them.
