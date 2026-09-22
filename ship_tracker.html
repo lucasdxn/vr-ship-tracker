@@ -4666,6 +4666,8 @@ function updateVrGrab() {
 /* ============================================================ */
 /* Left stick locomotion: smooth fly or teleport arc (left stick click toggles) */
 const FLY_SPEED_MPS = 70;
+// altitude multiplies by e^this per second at full stick: ~9s from the sea to orbit
+const ALT_RATE_PER_S = 1.4;
 const STICK_DEADZONE = 0.2;
 const TELEPORT_ENGAGE_DEADZONE = 0.35;
 let locomotionMode = 'fly';      // 'fly' | 'teleport'
@@ -4801,7 +4803,13 @@ function updateLocomotion(dt) {
   smoothMotionActive = false;
 
   if (locomotionMode === 'fly') {
-    if ((forwardAxis || strafeAxis) && dt > 0) {
+    // stick up climbs, stick down descends - straight along the earth's radius,
+    // which in this view is the same axis as the zoom
+    if (forwardAxis && dt > 0) {
+      setViewAlt(viewAltM * Math.exp(-forwardAxis * ALT_RATE_PER_S * dt), viewAnchor());
+      smoothMotionActive = true;
+    }
+    if (strafeAxis && dt > 0) {
       const camera = sceneEl.camera;
       if (camera) {
         const forward = new THREE.Vector3();
@@ -4810,10 +4818,9 @@ function updateLocomotion(dt) {
         // looking straight up/down: fall back to the rig's heading
         if (forward.lengthSq() < 1e-6) forward.set(Math.sin(rigEl.object3D.rotation.y), 0, Math.cos(rigEl.object3D.rotation.y));
         forward.normalize();
-        const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).negate();
-        const step = FLY_SPEED_MPS * dt;
-        rigEl.object3D.position.addScaledVector(forward, -forwardAxis * step);
-        rigEl.object3D.position.addScaledVector(right, strafeAxis * step);
+        // forward x up is already the right-hand side; negating it strafed the wrong way
+        const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0));
+        rigEl.object3D.position.addScaledVector(right, strafeAxis * FLY_SPEED_MPS * dt);
         smoothMotionActive = true;
       }
     }
@@ -5307,7 +5314,7 @@ function paintSea(cx, cz, extentM, cellM) {
       mesh.material.map = seaTexture;
       if (!waveTexture) waveTexture = buildWaveTexture();
       mesh.material.normalMap = waveTexture;
-      mesh.material.normalScale = new THREE.Vector2(0.6, 0.6);
+      mesh.material.normalScale = new THREE.Vector2(WAVE_NORMAL_SCALE, WAVE_NORMAL_SCALE);
       // roughness comes from the mask
       roughTexture = new THREE.CanvasTexture(roughCtx.canvas);   // data, not colour
       roughTexture.wrapS = roughTexture.wrapT = THREE.ClampToEdgeWrapping;
@@ -5316,7 +5323,13 @@ function paintSea(cx, cz, extentM, cellM) {
       mesh.material.metalness = 0.02;
       // anisotropic filtering for the sea
       const r = sceneEl.renderer;
-      if (r) seaTexture.anisotropy = r.capabilities.getMaxAnisotropy();
+      if (r) {
+        const aniso = r.capabilities.getMaxAnisotropy();
+        seaTexture.anisotropy = aniso;
+        // the wave map is the one viewed most edge-on, so it needs this most
+        waveTexture.anisotropy = aniso;
+        waveTexture.needsUpdate = true;
+      }
       mesh.material.needsUpdate = true;
     }
   }
@@ -5342,6 +5355,14 @@ const WAVE_TILE_MAX_M = 4000;   // ...and far enough up that it never aliases
 const WAVE_DRIFT_MPS = 0.35;    // the swell moves, which sells it more than the shape does
 const GRID_FADE_LO_M = 250;     // no chart lines at all below this
 const GRID_FADE_HI_M = 2500;    // full strength above it
+/* Close to the surface the sea plane is viewed almost edge-on, so a normal map
+ * tiled thousands of times across it aliases into hard white specular glare.
+ * Cap how many times it may repeat and ease the bumps flat as the viewer
+ * descends, so the water stays water instead of turning into a sheet of light. */
+const WAVE_MAX_REPEAT = 900;    // beyond this the tiles land inside a pixel
+const WAVE_FLATTEN_LO_M = 8;    // fully flattened at and below this altitude
+const WAVE_FLATTEN_HI_M = 400;  // full relief at and above it
+const WAVE_NORMAL_SCALE = 0.6;
 let waveTexture = null;
 /* Roughness: glossy sea, matte land */
 const SEA_ROUGHNESS = 0.42, LAND_ROUGHNESS = 1.0;
@@ -5420,10 +5441,21 @@ function updateOceanTiling() {
   /* Wave tile size and drift */
   if (waveTexture) {
     const tileM = Math.max(WAVE_TILE_MIN_M, Math.min(WAVE_TILE_MAX_M, viewAltM * 0.05));
-    const reps = extent / tileM;
+    // keep the tiles big enough on screen for the mip chain to filter cleanly
+    const reps = Math.min(WAVE_MAX_REPEAT, extent / tileM);
+    const tileShownM = extent / reps;
     waveTexture.repeat.set(reps, reps);
-    const drift = (performance.now() / 1000) * WAVE_DRIFT_MPS / tileM;
+    const drift = (performance.now() / 1000) * WAVE_DRIFT_MPS / tileShownM;
     waveTexture.offset.set(drift * 0.6, drift);
+
+    // ease the relief out as the viewer comes down to the surface
+    const mesh = oceanEl.getObject3D('mesh');
+    if (mesh && mesh.material.normalScale) {
+      const relief = Math.max(0, Math.min(1,
+        (viewAltM - WAVE_FLATTEN_LO_M) / (WAVE_FLATTEN_HI_M - WAVE_FLATTEN_LO_M)));
+      const n = WAVE_NORMAL_SCALE * relief;
+      mesh.material.normalScale.set(n, n);
+    }
   }
 }
 
