@@ -567,7 +567,7 @@ header {
 
       <!-- Ship detail card -->
       <a-entity id="ship-info-hud" class="hud" no-frustum-cull visible="false">
-        <a-plane id="ship-info-hud-bg" width="3" height="1.5" position="0 -0.14 -0.01"
+        <a-plane id="ship-info-hud-bg" width="3" height="1.8" position="0 -0.14 -0.01"
                  material="shader: flat; side: double"></a-plane>
         <a-entity id="ship-info-hud-text" position="0 -0.14 0"
                   text="value: -; align: center; width: 2.8; color: #e2e6f0; baseline: center; wrapCount: 24"></a-entity>
@@ -2697,6 +2697,8 @@ function ingestAisShip(msg, ts) {
       country: getCountryFromMMSI(String(msg.mmsi)) || '',
       lat: msg.lat, lon: msg.lon,
       speed, hdg, speedKnown, hdgKnown, status, color,
+      // fastest speed this vessel has reported while we have been tracking it
+      maxSpeed: speedKnown ? speed : 0,
       typeKey: 'other', hasRealDims: false,
       trail: [pt],
       fullTrail: [pt],
@@ -2719,6 +2721,7 @@ function ingestAisShip(msg, ts) {
     ship.lat = msg.lat;
     ship.lon = msg.lon;
     ship.speed = speed;
+    if (speedKnown && speed > (ship.maxSpeed || 0)) ship.maxSpeed = speed;
     ship.hdg = hdg;
     ship.speedKnown = speedKnown;
     ship.hdgKnown = hdgKnown;
@@ -3513,7 +3516,7 @@ function serializeState(includeTrails) {
             shipListCollapsed: document.getElementById('ship-list').classList.contains('collapsed') },
     ships: ships.filter(s => validLatLon(s.lat, s.lon)).map(s => ({
       id: s.id, mmsi: s.mmsi, isAis: !!s.isAis, name: s.name, country: s.country || '',
-      lat: s.lat, lon: s.lon, speed: s.speed, hdg: s.hdg,
+      lat: s.lat, lon: s.lon, speed: s.speed, hdg: s.hdg, maxSpeed: s.maxSpeed,
       speedKnown: s.speedKnown !== false, hdgKnown: s.hdgKnown !== false,
       hasRealDims: !!s.hasRealDims,
       status: s.status, color: s.color, lastUpdate: s.lastUpdate || 0,
@@ -3605,6 +3608,8 @@ function restoreState() {
             : (/^ais-(\d+)$/.test(String(s.id)) ? Number(String(s.id).slice(4)) : undefined),
       speedKnown: s.speedKnown !== false,
       hdgKnown: s.hdgKnown !== false,
+      // old snapshots have no max; seed it from the last reported speed
+      maxSpeed: Number.isFinite(s.maxSpeed) ? s.maxSpeed : (s.speed || 0),
       hasRealDims: !!(s.hasRealDims || (s.lengthM && s.beamM)),
       trail: (Array.isArray(s.trail) && s.trail.some(p => p && validLatLon(p.lat, p.lon)))
         ? s.trail.filter(p => p && validLatLon(p.lat, p.lon)) : [{ lat: s.lat, lon: s.lon }]
@@ -5431,6 +5436,7 @@ function navTickFrame(now) {
 
   // keeps running in the 2D view so 3D state stays current
   updateVrGrab();
+  updateTriggerClicks();
   updateFaceButtons();
   updateLocomotion(dt);
   updateLook(dt);
@@ -6753,10 +6759,17 @@ function renderInfoPanel(s) {
   const speedTxt = s.speedKnown ? s.speed.toFixed(1) + ' kn' : 'speed unknown';
   // unknown course is not shown as north; ASCII only
   const courseTxt = s.hdgKnown ? 'course ' + (Math.round(s.hdg) % 360) + ' deg' : 'course unknown';
+  // fastest we have seen it go; only worth a line once it beats the current reading
+  const maxTxt = s.maxSpeed > 0.1 && s.maxSpeed > s.speed + 0.05
+    ? 'top ' + s.maxSpeed.toFixed(1) + ' kn' : null;
+  // AIS broadcasts a destination but never an origin, so only the one row
+  const destTxt = s.destination ? toAsciiLabel(s.destination).slice(0, 22) : 'not reported';
   const lines = [
     shipTitle(s),
     typeLabel + ' | ' + Math.round(dims.lengthM) + 'x' + Math.round(dims.beamM) + ' m' + (s.hasRealDims ? '' : ' (est.)'),
-    speedTxt + ' | ' + courseTxt + (s.destination ? ' | to ' + s.destination : ''),
+    speedTxt + (maxTxt ? ' | ' + maxTxt : ''),
+    courseTxt,
+    'to ' + destTxt,
     (s.country ? toAsciiLabel(s.country) + ' | ' : '') + s.lat.toFixed(3) + ', ' + s.lon.toFixed(3)
   ];
   const set = closeupShipId === s.id ? compareSet() : [];
@@ -7403,6 +7416,56 @@ function setWristMenuOpen(open) {
   if (open) syncWristMenu();
 }
 document.getElementById('wrist-menu-toggle').addEventListener('click', () => setWristMenuOpen(!wristMenuOpen));
+
+/* Trigger clicks, polled on the edge for the same reason as the face buttons.
+ * Selection rode on A-Frame's cursor component, which only emits `click` when
+ * it hears triggerdown/triggerup - events the Quest never sends - so every
+ * in-scene click listener was dead: vessels, HUD buttons, wrist menu, finder.
+ * We pick on the press and emit the click ourselves on release. */
+const prevTrigger = { left: false, right: false };
+const triggerDownEl = { left: null, right: null };
+const TRIGGER_BUTTON = 0;   // xr-standard mapping: 0 trigger, 1 grip (taken by grab/zoom)
+
+// what a hand's ray is on right now, shaped like a cursor event's detail
+function rayHit(handEl) {
+  const comp = handEl.components && handEl.components.raycaster;
+  const hits = comp && comp.intersections;
+  if (!hits || !hits.length) return null;
+  const el = hits[0].object && hits[0].object.el;
+  return el ? { el, intersection: hits[0] } : null;
+}
+
+/* laser-controls reinstalls its cursor every time a controller connects. Left
+ * in place it would double-fire the click on any headset that does send the
+ * named events, so it goes and this stays the only thing that clicks. Checked
+ * per frame rather than on controllerconnected, so it cannot depend on which
+ * listener laser-controls registered first. */
+function dropLaserCursor(handEl) {
+  if (handEl.components && handEl.components.cursor) handEl.removeAttribute('cursor');
+}
+
+function updateTriggerClicks() {
+  for (const side of ['left', 'right']) {
+    const handEl = side === 'left' ? handLeftEl : handRightEl;
+    dropLaserCursor(handEl);
+    const down = buttonPressed(handGamepad(handEl), TRIGGER_BUTTON);
+    if (down && !prevTrigger[side]) {
+      const hit = rayHit(handEl);
+      triggerDownEl[side] = hit ? hit.el : null;
+      if (hit) hit.el.emit('mousedown', { cursorEl: handEl, intersection: hit.intersection }, true);
+    } else if (!down && prevTrigger[side]) {
+      const hit = rayHit(handEl);
+      if (hit) hit.el.emit('mouseup', { cursorEl: handEl, intersection: hit.intersection }, true);
+      // a click only counts when press and release landed on the same thing
+      if (hit && hit.el === triggerDownEl[side]) {
+        hit.el.emit('click', { cursorEl: handEl, intersection: hit.intersection }, true);
+        pulseHaptic(handEl, 0.25, 25);
+      }
+      triggerDownEl[side] = null;
+    }
+    prevTrigger[side] = down;
+  }
+}
 
 /* Face buttons, polled on the rising edge (named button events don't fire on Quest 3S):
  * right A (4) details / closeup, right B (5) back, left X (4) add to compare, left Y (5) menu */
