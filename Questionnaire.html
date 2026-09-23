@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Usability Study — Questionnaire & Analysis</title>
+<style>
+  :root{
+    --bg:#f4f6f9; --card:#ffffff; --ink:#1c2430; --muted:#5c6b7a;
+    --line:#dce3ec; --accent:#1f5fa8; --accent-weak:#e8f0fa;
+    --ok:#1c7a45; --warn:#9a5b00; --err:#b3261e;
+    --radius:14px; --maxw:820px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  header.top{background:var(--accent);color:#fff;padding:22px 18px;}
+  header.top .wrap{max-width:var(--maxw);margin:0 auto;}
+  header.top h1{margin:0 0 4px;font-size:20px;font-weight:650;}
+  header.top p{margin:0;opacity:.9;font-size:14px;}
+  main{max-width:var(--maxw);margin:0 auto;padding:18px 14px 120px;}
+  .step{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:22px 22px 18px;margin:16px 0;box-shadow:0 1px 3px rgba(20,40,70,.05);display:none;}
+  .step.active{display:block;}
+  .step h2{margin:0 0 6px;font-size:19px;}
+  .step h3{margin:18px 0 6px;font-size:15px;color:var(--accent);text-transform:uppercase;letter-spacing:.04em;}
+  .lead{color:var(--muted);font-size:14.5px;margin:0 0 14px;}
+  .instr{background:var(--accent-weak);border-left:4px solid var(--accent);
+    border-radius:8px;padding:12px 14px;margin:12px 0 18px;font-size:14.5px;}
+  .instr strong{color:var(--accent);}
+  .q{margin:16px 0;padding-bottom:14px;border-bottom:1px dashed var(--line);}
+  .q:last-child{border-bottom:none;}
+  .q .qt{font-weight:550;margin-bottom:8px;}
+  .q .qt .num{color:var(--muted);font-weight:600;margin-right:6px;}
+  .scale{display:flex;gap:6px;flex-wrap:wrap;}
+  .scale label{flex:1 1 0;min-width:46px;text-align:center;border:1px solid var(--line);
+    border-radius:8px;padding:8px 4px;cursor:pointer;background:#fbfcfe;font-size:13.5px;
+    transition:.12s;user-select:none;}
+  .scale label:hover{border-color:var(--accent);}
+  .scale input{position:absolute;opacity:0;width:0;height:0;}
+  .scale input:checked + span{font-weight:700;}
+  .scale label:has(input:checked){background:var(--accent);color:#fff;border-color:var(--accent);}
+  .anchors{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:4px;}
+  .semantic .anchors{margin-bottom:2px;}
+  input[type=text],input[type=number],textarea,select{
+    width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:9px;font:inherit;background:#fbfcfe;}
+  textarea{min-height:70px;resize:vertical;}
+  .row{display:flex;gap:12px;flex-wrap:wrap;}
+  .row > div{flex:1 1 160px;}
+  .choice{display:flex;gap:10px;flex-wrap:wrap;}
+  .choice label{border:1px solid var(--line);border-radius:9px;padding:9px 14px;cursor:pointer;background:#fbfcfe;}
+  .choice label:has(input:checked){background:var(--accent);color:#fff;border-color:var(--accent);}
+  .choice input{margin-right:6px;}
+  .nav{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid var(--line);
+    padding:12px 14px;display:flex;gap:10px;align-items:center;justify-content:space-between;z-index:20;}
+  .nav .inner{max-width:var(--maxw);margin:0 auto;width:100%;display:flex;align-items:center;gap:12px;}
+  button{font:inherit;border:none;border-radius:10px;padding:11px 20px;cursor:pointer;font-weight:600;}
+  .btn-primary{background:var(--accent);color:#fff;}
+  .btn-primary:disabled{background:#9db6d4;cursor:not-allowed;}
+  .btn-ghost{background:#eef2f7;color:var(--ink);}
+  .progress{flex:1;height:8px;background:#e6ecf3;border-radius:99px;overflow:hidden;}
+  .progress > div{height:100%;background:var(--accent);width:0;transition:.25s;}
+  .pill{font-size:12px;color:var(--muted);white-space:nowrap;}
+  .cond-badge{display:inline-block;font-size:12px;font-weight:700;padding:2px 10px;border-radius:99px;
+    background:var(--accent);color:#fff;margin-left:8px;vertical-align:middle;}
+  .miss{border-color:var(--err)!important;}
+  .missmsg{color:var(--err);font-size:13px;margin-top:8px;display:none;}
+  .exp-only{background:#fff7e6;border:1px dashed var(--warn);border-radius:10px;padding:14px;margin:14px 0;}
+  .exp-only .tag{display:inline-block;background:var(--warn);color:#fff;font-size:11px;font-weight:700;
+    padding:2px 8px;border-radius:99px;letter-spacing:.03em;}
+  table.tasktbl{width:100%;border-collapse:collapse;margin-top:8px;font-size:14px;}
+  table.tasktbl th,table.tasktbl td{border:1px solid var(--line);padding:6px 8px;text-align:left;}
+  table.tasktbl th{background:#f0f4f9;font-weight:600;}
+  table.tasktbl input{padding:6px 8px;}
+  .result{background:#f0f7f1;border:1px solid #bfe0c8;border-radius:10px;padding:14px;margin-top:10px;font-size:14px;}
+  .result h4{margin:0 0 8px;color:var(--ok);}
+  .result code{background:#e5efe7;padding:1px 5px;border-radius:5px;}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:14px;}
+  .kv b{color:var(--muted);font-weight:600;}
+  .small{font-size:13px;color:var(--muted);}
+  .divider{height:1px;background:var(--line);margin:20px 0;}
+  .consent li{margin:6px 0;}
+  .warnbox{background:#fdeceb;border:1px solid #f3c4c0;border-radius:10px;padding:12px 14px;font-size:14px;color:#7a1f19;}
+  @media (max-width:520px){ .scale label{min-width:0;padding:8px 2px;font-size:12px;} }
+
+
+  .timer{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:10px;
+    background:var(--accent);color:#fff;padding:10px 14px;border-radius:10px;margin:0 0 14px;font-weight:600;}
+  .timer .clock{font-variant-numeric:tabular-nums;font-size:20px;}
+  .timer .dot{width:10px;height:10px;border-radius:99px;background:#7ef0a6;animation:pulse 1.2s infinite;}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .taskbox{background:#fff;border:1px solid var(--line);border-left:4px solid var(--accent);
+    border-radius:10px;padding:16px 18px;margin:8px 0 16px;font-size:16px;line-height:1.6;}
+  .answer{margin-top:14px;} .answer label{display:block;font-weight:600;margin-bottom:6px;}
+  .randbox{font-size:22px;font-weight:700;color:var(--accent);text-align:center;padding:18px;
+    border:2px solid var(--accent);border-radius:12px;margin:14px 0;background:var(--accent-weak);}
+  .drop{border:2px dashed var(--accent);border-radius:14px;padding:26px;text-align:center;background:var(--accent-weak);margin:16px 0;}
+  .drop.drag{background:#d8e8fb;} .filelist{font-size:13px;color:var(--muted);margin-top:10px;}
+  .report h2{border-bottom:2px solid var(--accent);padding-bottom:6px;margin-top:30px;}
+  .report table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13px;}
+  .report th,.report td{border:1px solid var(--line);padding:6px 8px;text-align:right;}
+  .report th:first-child,.report td:first-child{text-align:left;} .report th{background:#eef4fb;}
+  .flag{color:var(--warn);font-weight:600;} .ok{color:var(--ok);} .bigbtn{font-size:17px;padding:14px 26px;}
+  @media print{ .noprint{display:none!important} table{page-break-inside:avoid} }
+
+</style></head><body>
+<header class="top noprint"><div class="wrap"><h1>Usability Study — VR Globe vs. 2D Map</h1>
+</div></header>
+<main id="app"></main>
+<div class="nav noprint"><div class="inner">
+  <button class="btn-ghost" id="backBtn">Back</button>
+  <div class="progress"><div id="progFill"></div></div>
+  <span class="pill" id="stepPill">Step 1</span>
+  <button class="btn-primary" id="nextBtn">Next</button>
+</div></div>
+<script>
+const SUS_ANCHORS = ["strongly disagree","","","","strongly agree"];
+const TRAIN = { "2D": '<li>You see a 2D world map in the browser.</li><li><b>Zoom/move:</b> right-click-drag or scroll to zoom, drag to pan; clicking a patch of water jumps there.</li><li>A <b>click on a ship</b> opens its <b>detail card</b> (name, type, speed, destination, length, status).</li><li><b>Routes/trails:</b> a trail is drawn behind moving ships — that is the route it has travelled (toggle in the panel).</li><li>Use the on-screen panel for filters, legend, course cones, density columns, and live/playback.</li>', "VR": '<li>Put on the headset with help from the facilitator; adjust it until the text is sharp.</li><li><b>Zoom:</b> grip (grab) and pull your hand toward you; alternatively push the left stick up/down.</li><li><b>Move:</b> the right stick moves you. The default is <b>teleport</b> (aim at a target, release); clicking the left stick toggles between teleport and fly. Turn in fixed steps by pushing the right stick sideways.</li><li><b>Select:</b> point the <b>trigger</b> at a ship or a patch of sea and press; clicking a ship opens its <b>detail card</b> (name, type, speed, destination, length, status).</li><li><b>Routes/trails:</b> a trail is drawn behind moving ships — that is the route it has travelled.</li><li>The <b>M</b> button (dead ahead, or X on the left controller) opens the in-scene menu: filters, legend, course cones, density columns, live/playback, save/restore view, recenter. Short vibrations confirm actions. Tell the facilitator immediately if you feel unwell.</li>' };
+/* ---- SUS: 10 items, 5-point, odd positive / even negative (original English) ---- */
+const SUS_ITEMS = [
+  "I think that I would like to use this interface frequently.",
+  "I found the interface unnecessarily complex.",
+  "I thought the interface was easy to use.",
+  "I think that I would need the support of a technical person to be able to use this interface.",
+  "I found the various functions in this interface were well integrated.",
+  "I thought there was too much inconsistency in this interface.",
+  "I would imagine that most people would learn to use this interface very quickly.",
+  "I found the interface very cumbersome to use.",
+  "I felt very confident using the interface.",
+  "I needed to learn a lot of things before I could get going with this interface."
+];
+
+/* ---- UEQ+ : three scales x 4 semantic differentials, 7-point (English) ---- */
+const UEQP = {
+  Efficiency:  [["slow","fast"],["inefficient","efficient"],["impractical","practical"],["cluttered","organized"]],
+  Perspicuity: [["not understandable","understandable"],["difficult to learn","easy to learn"],["complicated","easy"],["confusing","clear"]],
+  Stimulation: [["boring","exciting"],["not interesting","interesting"],["demotivating","motivating"],["dull","captivating"]]
+};
+
+/* ---- NASA-TLX (raw/unweighted): 6 subscales, 21-point (0..100 in steps of 5) ---- */
+const TLX = [
+  ["Mental Demand","How mentally demanding was the task?","Very low","Very high"],
+  ["Physical Demand","How physically demanding was the task?","Very low","Very high"],
+  ["Temporal Demand","How hurried or rushed was the pace of the task?","Very low","Very high"],
+  ["Performance","How successful were you in accomplishing what you were asked to do?","Perfect","Failure"],
+  ["Effort","How hard did you have to work to accomplish your level of performance?","Very low","Very high"],
+  ["Frustration","How insecure, discouraged, irritated, stressed and annoyed were you?","Very low","Very high"]
+];
+
+/* ---- IPQ: 14 items, 7-point (0..6). SP2,SP3,INV3 reverse-keyed. (English) ---- */
+const IPQ = [
+  ["G1","In the computer-generated world I had a sense of \"being there\".","not at all","very much"],
+  ["SP1","Somehow I felt that the virtual world surrounded me.","fully disagree","fully agree"],
+  ["SP2","I felt like I was just perceiving pictures.","fully disagree","fully agree",true],
+  ["SP3","I did not feel present in the virtual space.","did not feel present","felt present",true],
+  ["SP4","I had a sense of acting in the virtual space rather than operating something from outside.","fully disagree","fully agree"],
+  ["SP5","I felt present in the virtual space.","fully disagree","fully agree"],
+  ["INV1","How aware were you of the real world surrounding you while navigating the virtual world?","very aware","not aware"],
+  ["INV2","I was not aware of my real environment.","fully disagree","fully agree"],
+  ["INV3","I still paid attention to the real environment.","fully disagree","fully agree",true],
+  ["INV4","I was completely captivated by the virtual world.","fully disagree","fully agree"],
+  ["REAL1","How real did the virtual world seem to you? (compared to an imagined world)","not real","completely real"],
+  ["REAL2","How consistent was your experience in the virtual environment with your real-world experience?","not consistent","very consistent"],
+  ["REAL3","How real did the virtual world seem to you? (like a real photograph)","not real","completely real"],
+  ["REAL4","The virtual world seemed more realistic than the real world.","fully disagree","fully agree"]
+];
+const IPQ_REVERSE = ["SP2","SP3","INV3"];
+
+/* ---- Tasks (fixed ships from the AIS feed, 2026-09-14 15:00 UTC) ----
+   answerType: "text" | "number" | "choice2"(A/B).
+   Per-condition timer; the answer is stored and automatically checked
+   against the solution in the evaluation. */
+const TASKS = [
+  {
+    id:"A1", title:"Find a ship and read a value",
+    instruction:"Find the ship <b>BURRARD CHINOOK</b> (use the finder/search function if helpful). Open its detail card (click it in 2D, or select it with the trigger in VR) and read its current <b>speed in knots</b>.",
+    answerLabel:"Speed of the BURRARD CHINOOK (in knots)",
+    answerType:"number",
+    solution:{ type:"number", value:12.1, tol:1.0 },
+    note:"Locate. Target: BURRARD CHINOOK (MMSI 316042365), passenger ferry, Vancouver Harbour."
+  },
+  {
+    id:"A2", title:"Follow a route",
+    instruction:"Find the ship <b>EIDSVAAG SIRIUS</b> — it is sailing at high northern latitudes, north of Iceland. Follow its displayed route (trail) and, using its detail card, determine which <b>destination port</b> it is heading for.",
+    answerLabel:"Destination port of the EIDSVAAG SIRIUS",
+    answerType:"text",
+    solution:{ type:"text", value:"ISAFJORD", accept:["isafjord","isafjordur","isafjordhur","isafjörður","ísafjörður"] },
+    note:"Follow at high latitude. Target: EIDSVAAG SIRIUS (MMSI 257414000), cargo, dest ISAFJORD, lat 66.5. Plain-English 'Isafjord' accepted."
+  },
+  {
+    id:"A3", title:"Compare two ships",
+    instruction:"Compare the two ships <b>A = NORDLICHT II</b> and <b>B = STIENE BRUHNS</b> (both off the German North Sea coast, near Emden). Determine <b>which one is faster</b>, and also give the approximate <b>speed difference in knots</b>.",
+    answerLabel:"Faster ship",
+    answerType:"choice2",
+    answerLabel2:"Approximate speed difference (knots)",
+    answerType2:"number",
+    solution:{ type:"choice2", value:"A", diff:27.2, difftol:6 },
+    note:"Compare. A=NORDLICHT II (29.4kn, MMSI 211585990), B=STIENE BRUHNS (2.2kn, MMSI 211671890). diff~27kn."
+  }
+];
+
+function likert(name,n,anchors){
+  let s='<div class="scale">';
+  for(let v=1;v<=n;v++){
+    const a = anchors && anchors[v-1] ? `<br><span class="small">${anchors[v-1]}</span>`:"";
+    s+=`<label><input type="radio" name="${name}" value="${v}"><span>${v}</span>${a}</label>`;
+  }
+  return s+'</div>';
+}
+function semantic(name){ // 7-point, value 1..7
+  let s='<div class="scale">';
+  for(let v=1;v<=7;v++) s+=`<label><input type="radio" name="${name}" value="${v}"><span>${v}</span></label>`;
+  return s+'</div>';
+}
+function tlxScale(name){ // 0..100 step 5 shown as 21 ticks 0..20 -> store 0..100
+  let s='<div class="scale">';
+  for(let t=0;t<=20;t++){ const val=t*5; s+=`<label style="min-width:34px"><input type="radio" name="${name}" value="${val}"><span>${t%4===0?val:"·"}</span></label>`; }
+  return s+'</div>';
+}
+function ipqScale(name){ // 0..6
+  let s='<div class="scale">';
+  for(let v=0;v<=6;v++) s+=`<label><input type="radio" name="${name}" value="${v}"><span>${v}</span></label>`;
+  return s+'</div>';
+}
+function forced(key){
+  return `<div class="choice" id="cmp-${key}">
+    <label><input type="radio" name="cmp-${key}" value="2D"> 2D map</label>
+    <label><input type="radio" name="cmp-${key}" value="VR"> VR globe</label>
+  </div><div class="missmsg" id="miss-cmp-${key}">Please choose one.</div>`;
+}
+
+function susScore(items){ // Brooke 1996: odd (i even index) -> x-1 ; even -> 5-x ; sum*2.5
+  let sum=0;
+  for(let i=0;i<10;i++){ const x=items[i]; if(x==null) return null;
+    sum += (i%2===0) ? (x-1) : (5-x); }
+  return +(sum*2.5).toFixed(1); // 0..100
+}
+function ueqpScaleFor(cond,scale){
+  let arr=[];
+  for(let i=0;i<4;i++){ const v=state.cond[cond].ueqp[`${scale}-${i}`]; if(v==null) return null; arr.push(v-4); } // 1..7 -> -3..3
+  return +(arr.reduce((a,b)=>a+b,0)/arr.length).toFixed(2);
+}
+function tlxRaw(vals){ // mean of six 0..100 subscales (raw/unweighted TLX, Hart 2006).
+  // All six subscales are anchored so that higher = more workload; the Performance item is
+  // anchored Perfect(0) -> Failure(100), so no reversal is applied. Overall score = simple mean.
+  let arr=[];
+  for(let i=0;i<6;i++){ let v=vals[i]; if(v==null) return null; arr.push(v); }
+  return +(arr.reduce((a,b)=>a+b,0)/arr.length).toFixed(1);
+}
+function ipqScores(vals){
+  const g = vals["G1"];
+  const rev = x => 6 - x;
+  const sp = ["SP1","SP2","SP3","SP4","SP5"].map(k=> IPQ_REVERSE.includes(k)?rev(vals[k]):vals[k]);
+  const inv= ["INV1","INV2","INV3","INV4"].map(k=> IPQ_REVERSE.includes(k)?rev(vals[k]):vals[k]);
+  const real=["REAL1","REAL2","REAL3","REAL4"].map(k=>vals[k]);
+  const mean=a=>a.some(x=>x==null)?null:+(a.reduce((s,x)=>s+x,0)/a.length).toFixed(2);
+  return { General:g==null?null:g, SpatialPresence:mean(sp), Involvement:mean(inv), Realism:mean(real) };
+}
+
+/* ============================================================
+   STATISTICS  (small-sample within-subjects)
+   All routines are self-contained (no external libraries).
+   Methods follow the analysis plan: descriptives + median/IQR,
+   paired t OR Wilcoxon signed-rank chosen per symmetry, effect
+   sizes (Cohen's dz / rank-biserial), BCa bootstrap CIs, and an
+   exact binomial sign test for forced-choice preferences.
+   ============================================================ */
+
+/* ---------- basic descriptives ---------- */
+function mean(a){ a=a.filter(isNum); return a.length? a.reduce((s,x)=>s+x,0)/a.length : null; }
+function sd(a){ a=a.filter(isNum); if(a.length<2) return null; const m=mean(a);
+  return Math.sqrt(a.reduce((s,x)=>s+(x-m)*(x-m),0)/(a.length-1)); }
+function quantile(a,p){ a=a.filter(isNum).slice().sort((x,y)=>x-y); if(!a.length) return null;
+  const idx=(a.length-1)*p, lo=Math.floor(idx), hi=Math.ceil(idx);
+  if(lo===hi) return a[lo]; return a[lo]+(a[hi]-a[lo])*(idx-lo); }
+function median(a){ return quantile(a,0.5); }
+function iqr(a){ const q1=quantile(a,0.25), q3=quantile(a,0.75); return (q1==null||q3==null)?null:q3-q1; }
+function isNum(x){ return typeof x==="number" && !isNaN(x); }
+function round(x,d){ if(x==null||isNaN(x)) return null; const f=Math.pow(10,d==null?2:d); return Math.round(x*f)/f; }
+
+/* ---------- normal & t distributions ---------- */
+function normCDF(z){ // Abramowitz-Stegun
+  const t=1/(1+0.2316419*Math.abs(z));
+  const d=0.3989423*Math.exp(-z*z/2);
+  let p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));
+  return z>0 ? 1-p : p;
+}
+function tCDF(t,df){ // via incomplete beta
+  const x=df/(df+t*t);
+  let ib=betai(df/2,0.5,x);
+  let p=0.5*ib;
+  return t>0 ? 1-p : p;
+}
+function betai(a,b,x){ if(x<=0)return 0; if(x>=1)return 1;
+  const bt=Math.exp(gammaln(a+b)-gammaln(a)-gammaln(b)+a*Math.log(x)+b*Math.log(1-x));
+  if(x<(a+1)/(a+b+2)) return bt*betacf(a,b,x)/a;
+  return 1-bt*betacf(b,a,1-x)/b;
+}
+function betacf(a,b,x){ const MAXIT=200, EPS=3e-12, FPMIN=1e-300;
+  let qab=a+b,qap=a+1,qam=a-1,c=1,d=1-qab*x/qap;
+  if(Math.abs(d)<FPMIN)d=FPMIN; d=1/d; let h=d;
+  for(let m=1;m<=MAXIT;m++){ let m2=2*m;
+    let aa=m*(b-m)*x/((qam+m2)*(a+m2)); d=1+aa*d; if(Math.abs(d)<FPMIN)d=FPMIN;
+    c=1+aa/c; if(Math.abs(c)<FPMIN)c=FPMIN; d=1/d; h*=d*c;
+    aa=-(a+m)*(qab+m)*x/((a+m2)*(qap+m2)); d=1+aa*d; if(Math.abs(d)<FPMIN)d=FPMIN;
+    c=1+aa/c; if(Math.abs(c)<FPMIN)c=FPMIN; d=1/d; let del=d*c; h*=del;
+    if(Math.abs(del-1)<EPS) break; }
+  return h;
+}
+function gammaln(x){ const c=[76.18009172947146,-86.50532032941677,24.01409824083091,
+  -1.231739572450155,0.1208650973866179e-2,-0.5395239384953e-5];
+  let y=x,t=x+5.5; t-=(x+0.5)*Math.log(t); let s=1.000000000190015;
+  for(let j=0;j<6;j++){ y++; s+=c[j]/y; } return -t+Math.log(2.5066282746310005*s/x); }
+
+/* ---------- paired t-test ---------- */
+function pairedT(d){ d=d.filter(isNum); const n=d.length; if(n<2) return null;
+  const m=mean(d), s=sd(d); if(s===0) return {n,t:null,df:n-1,p:null,mean:m,sd:s};
+  const t=m/(s/Math.sqrt(n)); const p=2*(1-tCDF(Math.abs(t),n-1));
+  return {n,t,df:n-1,p,mean:m,sd:s}; }
+
+/* Cohen's dz for paired data */
+function cohenDz(d){ d=d.filter(isNum); const m=mean(d), s=sd(d); return (s&&s!==0)? m/s : null; }
+
+/* ---------- Wilcoxon signed-rank (exact for small n, normal approx w/ ties otherwise) ---------- */
+function wilcoxon(d){ d=d.filter(x=>isNum(x)&&x!==0); const n=d.length; if(n<1) return null;
+  const abs=d.map(x=>Math.abs(x));
+  // rank absolute values (average ranks for ties)
+  const order=abs.map((v,i)=>[v,i]).sort((a,b)=>a[0]-b[0]);
+  const ranks=new Array(n);
+  let i=0; while(i<n){ let j=i; while(j+1<n && order[j+1][0]===order[i][0]) j++;
+    const r=(i+j+2)/2; for(let k=i;k<=j;k++) ranks[order[k][1]]=r; i=j+1; }
+  let Wp=0,Wm=0; for(let k=0;k<n;k++){ if(d[k]>0)Wp+=ranks[k]; else Wm+=ranks[k]; }
+  const W=Math.min(Wp,Wm);
+  // rank-biserial correlation
+  const rb = (Wp-Wm)/(n*(n+1)/2);
+  // normal approximation with continuity + tie correction
+  const meanW=n*(n+1)/4;
+  // tie correction
+  const tieGroups={}; abs.forEach(v=>tieGroups[v]=(tieGroups[v]||0)+1);
+  let tieSum=0; for(const v in tieGroups){ const t=tieGroups[v]; tieSum+=t*t*t-t; }
+  const varW=(n*(n+1)*(2*n+1)-tieSum/2)/24;
+  let z=0,p=1;
+  if(varW>0){ z=(W-meanW+0.5)/Math.sqrt(varW); p=2*normCDF(-Math.abs(z)); if(p>1)p=1; }
+  return {n,W,Wp,Wm,z,p,rankBiserial:rb};
+}
+
+/* ---------- symmetry check to pick the test ---------- */
+function looksSymmetric(d){ d=d.filter(isNum); if(d.length<4) return false;
+  const m=mean(d), s=sd(d); if(!s) return true;
+  // sample skewness
+  const g=d.reduce((a,x)=>a+Math.pow((x-m)/s,3),0)*d.length/((d.length-1)*(d.length-2||1));
+  return Math.abs(g)<1.0; }
+
+/* ---------- BCa-ish bootstrap CI for the mean difference (percentile fallback) ---------- */
+function bootstrapCI(d,iter){ d=d.filter(isNum); const n=d.length; if(n<2) return [null,null];
+  iter=iter||3000; const means=[];
+  for(let b=0;b<iter;b++){ let s=0; for(let k=0;k<n;k++) s+=d[Math.floor(Math.random()*n)]; means.push(s/n); }
+  means.sort((a,b)=>a-b);
+  const lo=means[Math.floor(0.025*iter)], hi=means[Math.floor(0.975*iter)];
+  return [lo,hi]; }
+
+/* parametric CI for mean diff */
+function tCI(d){ d=d.filter(isNum); const n=d.length; if(n<2) return [null,null];
+  const m=mean(d), s=sd(d); const se=s/Math.sqrt(n);
+  const tc=tCrit(0.975,n-1); return [m-tc*se, m+tc*se]; }
+function tCrit(p,df){ // invert tCDF by bisection
+  let lo=0,hi=100; for(let k=0;k<80;k++){ const mid=(lo+hi)/2; (tCDF(mid,df)<p)?lo=mid:hi=mid; } return (lo+hi)/2; }
+
+/* ---------- exact binomial sign test (two-sided) ---------- */
+function binomTest(k,n,p0){ p0=p0||0.5; if(n===0) return {p:null,prop:null,ci:[null,null]};
+  function pmf(i){ return Math.exp(gammaln(n+1)-gammaln(i+1)-gammaln(n-i+1)+i*Math.log(p0)+(n-i)*Math.log(1-p0)); }
+  const pk=pmf(k); let p=0; for(let i=0;i<=n;i++){ const pi=pmf(i); if(pi<=pk*1.0000001) p+=pi; }
+  if(p>1)p=1;
+  // Clopper-Pearson CI
+  const prop=k/n; let loB=0,hiB=1;
+  if(k>0) loB=betaInv(0.025,k,n-k+1);
+  if(k<n) hiB=betaInv(0.975,k+1,n-k);
+  return {p, prop, ci:[loB,hiB], k, n}; }
+function betaInv(p,a,b){ let lo=0,hi=1; for(let k=0;k<100;k++){ const mid=(lo+hi)/2; (betai(a,b,mid)<p)?lo=mid:hi=mid; } return (lo+hi)/2; }
+
+/* Holm-Bonferroni adjusted p-values */
+function holm(pvals){ // pvals: array of {key,p}
+  const items=pvals.filter(x=>x.p!=null).slice().sort((a,b)=>a.p-b.p);
+  const m=items.length; let prev=0;
+  items.forEach((it,i)=>{ let adj=(m-i)*it.p; adj=Math.min(1,Math.max(adj,prev)); prev=adj; it.pHolm=adj; });
+  const map={}; items.forEach(it=>map[it.key]=it.pHolm); return map;
+}
+
+
+/* ---- state ---- */
+function initState(){ Object.assign(state,{ meta:{}, demo:{}, compare:{}, open:{},
+  cond:{ "2D":{sus:{},ueqp:{},tlx:{},tasks:{},_t0:null}, "VR":{sus:{},ueqp:{},tlx:{},ipq:{},tasks:{},_t0:null} } }); }
+var state={}; initState();
+
+
+function q(sel){ return document.querySelector(sel); }
+function radio(name){ const e=document.querySelector(`input[name="${name}"]:checked`); return e?e.value:null; }
+function radioNum(name){ const v=radio(name); return v==null?null:+v; }
+function num(v){ v=parseFloat(v); return isNaN(v)?null:v; }
+function show(id){ const e=q("#"+id); if(e) e.style.display="block"; }
+function flagMiss(id){ show("miss-"+id); }
+function todayEU(){ const d=new Date(),p=n=>String(n).padStart(2,"0"); return `${p(d.getDate())}.${p(d.getMonth()+1)}.${d.getFullYear()}`; }
+function download(name,txt,mime){ const b=new Blob([txt],{type:mime}); const u=URL.createObjectURL(b);
+  const a=document.createElement("a"); a.href=u; a.download=name; a.click(); URL.revokeObjectURL(u); }
+function condLabel(c){ return c==="VR" ? "VR globe (headset)" : "2D browser map"; }
+function badge(c){ return `<span class="cond-badge">${c}</span>`; }
+function fmt(v){ return v==null||isNaN(v)?"—":(typeof v==="number"?round(v,2):v); }
+function fmtP(p){ if(p==null||isNaN(p)) return "—"; if(p<0.001) return "<0.001"; return round(p,3); }
+function esc(s){ return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+/* ---- per-condition whole-block timer ---- */
+let _clock={start:null,handle:null};
+function startBlockTimer(cond){
+  state.cond[cond]._t0 = performance.now();
+  _clock.start = state.cond[cond]._t0;
+  if(_clock.handle) clearInterval(_clock.handle);
+  _clock.handle = setInterval(()=>{ const el=q("#clock"); if(el&&_clock.start!=null){ const s=(performance.now()-_clock.start)/1000;
+    el.textContent=`${String(Math.floor(s/60)).padStart(2,"0")}:${String(Math.floor(s%60)).padStart(2,"0")}`; } },250);
+}
+function markTasksDone(cond){ if(state.cond[cond]._t0!=null) state.cond[cond].tasksDoneSec = +((performance.now()-state.cond[cond]._t0)/1000).toFixed(1); }
+function stopBlockTimer(cond){ if(_clock.handle){ clearInterval(_clock.handle); _clock.handle=null; }
+  if(state.cond[cond]._t0!=null) state.cond[cond].totalSec = +((performance.now()-state.cond[cond]._t0)/1000).toFixed(1);
+  _clock.start=null; }
+
+/* ---- task widgets ---- */
+function taskStepHTML(t, cond){
+  const ans = answerField(t.answerType,"ans");
+  const ans2 = t.answerType2 ? `<div class="answer"><label>${t.answerLabel2}</label>${answerField(t.answerType2,"ans2")}</div>` : "";
+  return `
+  <div class="timer"><span class="dot"></span><span>Time running (${cond}):</span><span class="clock" id="clock">00:00</span></div>
+  <div class="instr"><strong>How this works.</strong> Read the task, carry it out in the interface, enter your answer, and click <b>Next</b>.</div>
+  <div class="taskbox"><b>${t.id}: ${t.title}</b><br>${t.instruction}</div>
+  <div class="answer"><label>${t.answerLabel}</label>${ans}</div>${ans2}
+  <div class="missmsg" id="miss-ans">Please enter your answer before continuing.</div>`;
+}
+function answerField(type,id){
+  if(type==="number") return `<input type="number" step="any" id="${id}" placeholder="enter a number">`;
+  if(type==="choice2") return `<div class="choice" id="${id}"><label><input type="radio" name="${id}" value="A"> Ship A</label><label><input type="radio" name="${id}" value="B"> Ship B</label></div>`;
+  return `<input type="text" id="${id}" placeholder="enter your answer">`;
+}
+function readAnswer(type,id){ if(type==="choice2") return radio(id); const el=q("#"+id); if(!el) return null; const v=el.value.trim(); return v===""?null:(type==="number"?num(v):v); }
+
+/* ---- condition questionnaire widgets ---- */
+function susHTML(c){ return `<p class="lead">Rate the <b>${condLabel(c)}</b> ${badge(c)}.</p>
+  <div class="instr"><strong>Instructions.</strong> 1 = strongly disagree … 5 = strongly agree. Answer spontaneously; don't skip any.</div>
+  ${SUS_ITEMS.map((it,i)=>`<div class="q"><div class="qt"><span class="num">${i+1}.</span> ${it}</div>${likert(`sus-${c}-${i}`,5,SUS_ANCHORS)}</div>`).join("")}
+  <div class="missmsg" id="miss-sus-${c}">Please answer all ten statements.</div>`; }
+function ueqpHTML(c){ let h=`<p class="lead">Your impression of the <b>${condLabel(c)}</b> ${badge(c)}.</p>
+  <div class="instr"><strong>Instructions.</strong> Pick the point between the opposites that matches your impression. Middle = neutral.</div>`;
+  for(const s in UEQP){ h+=`<h3>${s}</h3>`; UEQP[s].forEach((p,i)=>{ h+=`<div class="q semantic"><div class="anchors"><span>${p[0]}</span><span>${p[1]}</span></div>${semantic(`ueqp-${c}-${s}-${i}`)}</div>`; }); }
+  return h+`<div class="missmsg" id="miss-ueqp-${c}">Please answer every row.</div>`; }
+function tlxHTML(c){ return `<p class="lead">Workload while doing the tasks with the <b>${condLabel(c)}</b> ${badge(c)}.</p>
+  <div class="instr"><strong>Instructions.</strong> For <b>Performance</b>, the left end means you succeeded.</div>
+  ${TLX.map((t,i)=>`<div class="q"><div class="qt">${t[0]}</div><div class="small">${t[1]}</div><div class="anchors"><span>${t[2]}</span><span>${t[3]}</span></div>${tlxScale(`tlx-${c}-${i}`)}</div>`).join("")}
+  <div class="missmsg" id="miss-tlx-${c}">Please rate all six aspects.</div>`; }
+function ipqHTML(){ return `<p class="lead"><b>Presence</b> in the VR globe ${badge("VR")}.</p>
+  <div class="instr"><strong>Instructions.</strong> Refer only to the VR experience.</div>
+  ${IPQ.map((it,i)=>`<div class="q"><div class="qt"><span class="num">${it[0]}.</span> ${it[1]}</div><div class="anchors"><span>${it[2]}</span><span>${it[3]}</span></div>${ipqScale(`ipq-${i}`)}</div>`).join("")}
+  <div class="missmsg" id="miss-ipq">Please answer every item.</div>`; }
+function forcedDE(key){ return `<div class="choice" id="cmp-${key}"><label><input type="radio" name="cmp-${key}" value="2D"> 2D map</label><label><input type="radio" name="cmp-${key}" value="VR"> VR globe</label></div><div class="missmsg" id="miss-cmp-${key}">Please choose one option.</div>`; }
+
+/* ---- scoring helpers ---- */
+function ueqpScaleForCond(c,scale){ let a=[]; for(let i=0;i<4;i++){ const v=state.cond[c].ueqp[`${scale}-${i}`]; if(v==null) return null; a.push(v-4);} return +(a.reduce((x,y)=>x+y,0)/a.length).toFixed(2); }
+function condScores(c){ const s={ SUS:susScore(state.cond[c].sus),
+  UEQ_Efficiency:ueqpScaleForCond(c,"Efficiency"), UEQ_Perspicuity:ueqpScaleForCond(c,"Perspicuity"),
+  UEQ_Stimulation:ueqpScaleForCond(c,"Stimulation"), TLX:tlxRaw(state.cond[c].tlx) };
+  if(c==="VR") s.IPQ=ipqScores(state.cond.VR.ipq); return s; }
+
+/* ---- record ---- */
+function buildRecord(){
+  const rec={ pid:state.meta.pid, date:state.meta.date, order:state.meta.order, consent:state.meta.consent,
+    demo:state.demo, compare:state.compare, open:state.open, conditions:{} };
+  ["2D","VR"].forEach(c=>{ const cc=state.cond[c];
+    rec.conditions[c]={ scores:condScores(c), totalSec:cc.totalSec??null, tasksDoneSec:cc.tasksDoneSec??null,
+      tasks:cc.tasks, items:{sus:cc.sus,ueqp:cc.ueqp,tlx:cc.tlx, ...(c==="VR"?{ipq:cc.ipq}:{})} }; });
+  return rec;
+}
+function saveRecord(){ const pid=state.meta.pid||"NA";
+  download(`Questionnaire_Participant${pid}.json`, JSON.stringify(buildRecord(),null,2), "application/json"); }
+
+/* ---- collectors/validators for a condition ---- */
+function collSUS(c){ SUS_ITEMS.forEach((_,i)=>state.cond[c].sus[i]=radioNum(`sus-${c}-${i}`)); }
+function valSUS(c){ for(let i=0;i<10;i++) if(radioNum(`sus-${c}-${i}`)==null){ show(`miss-sus-${c}`); return false; } collSUS(c); return true; }
+function collUEQP(c){ for(const s in UEQP) UEQP[s].forEach((_,i)=>state.cond[c].ueqp[`${s}-${i}`]=radioNum(`ueqp-${c}-${s}-${i}`)); }
+function valUEQP(c){ for(const s in UEQP) for(let i=0;i<4;i++) if(radioNum(`ueqp-${c}-${s}-${i}`)==null){ show(`miss-ueqp-${c}`); return false; } collUEQP(c); return true; }
+function collTLX(c){ TLX.forEach((_,i)=>state.cond[c].tlx[i]=radioNum(`tlx-${c}-${i}`)); }
+function valTLX(c){ for(let i=0;i<6;i++) if(radioNum(`tlx-${c}-${i}`)==null){ show(`miss-tlx-${c}`); return false; } collTLX(c); return true; }
+function collIPQ(){ IPQ.forEach((it,i)=>state.cond.VR.ipq[it[0]]=radioNum(`ipq-${i}`)); }
+function valIPQ(){ for(let i=0;i<IPQ.length;i++) if(radioNum(`ipq-${i}`)==null){ show("miss-ipq"); return false; } collIPQ(); return true; }
+
+/* ---- dynamic step assembly for one condition block ---- */
+function conditionSteps(c){
+  const S=[];
+  S.push({ title:`Before the tasks — ${c}`, render(){ return `
+    <p class="lead">You will now use the <b>${condLabel(c)}</b>. ${badge(c)}</p>
+    <div class="instr"><strong>Please read first.</strong> Take a moment to get familiar with the controls (not timed).
+    As soon as you click "Next", <b>timing for the whole ${c} part starts</b> and the first task appears.</div>
+    <h3>Controls</h3><ul>${TRAIN[c]}</ul>`; },
+    collect(){}, valid(){ return true; }, onLeave(){ startBlockTimer(c); } });
+  TASKS.forEach((t,ti)=>{
+    S.push({ title:`Task ${t.id} — ${c}`, render(){ return taskStepHTML(t,c); },
+      collect(){ const a1=readAnswer(t.answerType,"ans"); const a2=t.answerType2?readAnswer(t.answerType2,"ans2"):undefined;
+        state.cond[c].tasks[ti]={id:t.id,answer:a1,answer2:a2}; },
+      valid(){ const a1=readAnswer(t.answerType,"ans"); if(a1==null||a1===""){ show("miss-ans"); return false; } return true; },
+      onEnter(){ /* timer already running */ } });
+  });
+  // after last task, mark split
+  S.push({ title:`Questionnaire — Usability (${c})`, onEnter(){ markTasksDone(c); },
+    render(){ return susHTML(c); }, collect(){ collSUS(c); }, valid(){ return valSUS(c); } });
+  S.push({ title:`Questionnaire — Experience (${c})`, render(){ return ueqpHTML(c); }, collect(){ collUEQP(c); }, valid(){ return valUEQP(c); } });
+  S.push({ title:`Questionnaire — Workload (${c})`, render(){ return tlxHTML(c); }, collect(){ collTLX(c); }, valid(){ return valTLX(c); } });
+  if(c==="VR") S.push({ title:"Questionnaire — Presence (VR)", render(){ return ipqHTML(); }, collect(){ collIPQ(); }, valid(){ return valIPQ(); } });
+  // last step of the block stops the timer on leave
+  S[S.length-1]._stopAfter=c;
+  return S;
+}
+
+
+
+/* ---- fixed steps ---- */
+const fixedIntro=[];
+fixedIntro.push({title:"Welcome & Consent", render(){return `
+  <p class="lead">Thank you for taking part. We are comparing two interfaces for viewing global shipping routes:
+  a <b>2D browser map</b> and a <b>VR globe</b>. You will use both, one after the other, and answer questions in between.
+  We are evaluating the software, not you.</p>
+  <div class="instr"><strong>What happens now.</strong> Voluntary, can be stopped at any time. Data are <b>anonymous</b> (no name, no e-mail, no IP).</div>
+  <h3>Consent</h3><ul class="consent">
+    <li>Participation is voluntary; you may stop at any time.</li>
+    <li>Only anonymous questionnaire data, times, and task answers are recorded.</li>
+    <li>Used for a bachelor's thesis; reported in aggregate only.</li>
+    <li>I am 18 years or older.</li></ul>
+  <div class="q"><div class="choice"><label><input type="checkbox" id="consent"> I have read the points and agree.</label></div>
+    <div class="missmsg" id="miss-consent">Please confirm consent.</div></div>
+  <div class="warnbox">If you are prone to severe motion sickness, epilepsy, or are pregnant, please tell the facilitator before the VR part.</div>`;},
+  collect(){ state.meta.consent=q("#consent").checked; },
+  valid(){ if(!q("#consent").checked){flagMiss("consent");return false;} return true; } });
+
+fixedIntro.push({title:"Session setup", expOnly:true, onEnter(){ if(!state.meta.date) state.meta.date=todayEU(); },
+  render(){return `<div class="exp-only"><span class="tag">FACILITATOR</span>
+    <div class="q"><div class="qt">Participant ID</div><input type="text" id="pid" placeholder="e.g. 07" value="${state.meta.pid||''}">
+      <div class="missmsg" id="miss-pid">Please enter a participant ID.</div></div>
+    <div class="q"><div class="qt">Date</div><input type="text" id="sdate" value="${state.meta.date||todayEU()}"></div>
+    <div class="q"><div class="qt">Brief demographics (optional)</div>
+      <div class="choice" id="age">${["18–24","25–34","35–44","45+","n/a"].map(a=>`<label><input type="radio" name="age" value="${a}"> ${a}</label>`).join("")}</div></div>
+    <div class="q"><div class="qt">Prior VR experience</div>
+      <div class="choice">${["none","once or twice","occasional","regular"].map((a,i)=>`<label><input type="radio" name="vrexp" value="${i}"> ${a}</label>`).join("")}</div></div>
+  </div>`;},
+  collect(){ state.meta.pid=q("#pid").value.trim(); state.meta.date=q("#sdate").value.trim();
+    state.demo.age=radio("age"); state.demo.vrexp=radio("vrexp"); },
+  valid(){ if(!q("#pid").value.trim()){flagMiss("pid");return false;} return true; } });
+
+fixedIntro.push({title:"Order (randomised)", expOnly:true,
+  onEnter(){ if(!state.meta.order) state.meta.order = Math.random()<0.5?"2D-VR":"VR-2D"; rebuildSteps(); },
+  render(){ const first=state.meta.order.split("-")[0]; return `
+    <p class="lead">The order of the two interfaces is set randomly per participant (counterbalancing).</p>
+    <div class="randbox">This participant starts with: ${first==="VR"?"VR globe":"2D map"}</div>
+    <div class="instr">Prepare the <b>${first==="VR"?"VR":"2D"}</b> interface. Click "Next" once the participant is ready.
+    Timing only starts after the controls introduction.</div>
+    <div class="q"><div class="qt">Override order (optional)</div>
+      <div class="choice"><label><input type="radio" name="ord" value="2D-VR" ${state.meta.order==="2D-VR"?"checked":""}> 2D → VR</label>
+      <label><input type="radio" name="ord" value="VR-2D" ${state.meta.order==="VR-2D"?"checked":""}> VR → 2D</label></div></div>`;},
+  collect(){ const o=radio("ord"); if(o&&o!==state.meta.order){ state.meta.order=o; rebuildSteps(); } },
+  valid(){ return true; } });
+
+const fixedCompare=[];
+fixedCompare.push({title:"Direct comparison", render(){return `
+  <p class="lead">Now compare the two interfaces directly.</p>
+  <div class="instr"><strong>Instructions.</strong> For each question pick the <b>one</b> interface you prefer — no neutral option.</div>
+  <div class="q"><div class="qt"><span class="num">C1.</span> Overall preference?</div>${forcedDE("overall")}</div>
+  <div class="q"><div class="qt"><span class="num">C2.</span> For <b>locating</b> (A1)?</div>${forcedDE("t1")}</div>
+  <div class="q"><div class="qt"><span class="num">C3.</span> For <b>following</b> (A2)?</div>${forcedDE("t2")}</div>
+  <div class="q"><div class="qt"><span class="num">C4.</span> For <b>comparing</b> (A3)?</div>${forcedDE("t3")}</div>
+  <div class="q"><div class="qt"><span class="num">C5.</span> For real work?</div>${forcedDE("realwork")}</div>`;},
+  collect(){ ["overall","t1","t2","t3","realwork"].forEach(k=>state.compare[k]=radio("cmp-"+k)); },
+  valid(){ for(const k of ["overall","t1","t2","t3","realwork"]) if(!radio("cmp-"+k)){flagMiss("cmp-"+k);return false;} return true; } });
+
+fixedCompare.push({title:"Final comments", render(){return `
+  <p class="lead">Two short open questions.</p>
+  <div class="q"><div class="qt"><b>Strengths</b> of the VR globe?</div><textarea id="op-str"></textarea></div>
+  <div class="q"><div class="qt"><b>Weaknesses / frustrations</b>?</div><textarea id="op-weak"></textarea></div>
+  <div class="q"><div class="qt">Anything else? (optional)</div><textarea id="op-other"></textarea></div>`;},
+  collect(){ state.open.strengths=q("#op-str").value.trim(); state.open.weaknesses=q("#op-weak").value.trim(); state.open.other=q("#op-other").value.trim(); },
+  valid(){ return true; } });
+
+fixedCompare.push({title:"Save", expOnly:true, render(){return `
+  <p class="lead">The participant part is complete. Thank you.</p>
+  <div class="exp-only"><span class="tag">FACILITATOR — save</span>
+    <p class="small">Saves <code>Questionnaire_Participant${state.meta.pid||"X"}.json</code> (contains 2D and VR). Open <b>Evaluation.html</b> separately to analyse the collected files.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0;">
+      <button class="btn-primary bigbtn" onclick="saveRecord()">Save JSON</button>
+      <button class="btn-ghost" onclick="resetParticipant()">Restart for next participant</button></div>
+    <div id="scoreView"></div></div>`;},
+  isFinal:true, hideNext:true, onEnter(){ renderScoreSummary(); }, collect(){}, valid(){return true;} });
+
+const fixedEval=[];
+
+function renderScoreSummary(){ const el=q("#scoreView"); if(!el) return; const r=buildRecord();
+  const s2=r.conditions["2D"].scores, sv=r.conditions.VR.scores;
+  el.innerHTML=`<div class="result"><h4>Values (participant ${r.pid||"—"}, order ${r.order})</h4><div class="kv">
+    <b>SUS 2D / VR</b><span><code>${fmt(s2.SUS)}</code> / <code>${fmt(sv.SUS)}</code></span>
+    <b>NASA-TLX 2D / VR</b><span><code>${fmt(s2.TLX)}</code> / <code>${fmt(sv.TLX)}</code></span>
+    <b>Total time 2D / VR (s)</b><span><code>${fmt(r.conditions["2D"].totalSec)}</code> / <code>${fmt(r.conditions.VR.totalSec)}</code></span>
+    <b>Tasks-only time 2D / VR (s)</b><span><code>${fmt(r.conditions["2D"].tasksDoneSec)}</code> / <code>${fmt(r.conditions.VR.tasksDoneSec)}</code></span>
+  </div></div>`; }
+function resetParticipant(){ for(const k in state) delete state[k]; initState(); buildAllSteps(); idx=0; render(); }
+
+/* ---- dynamic step list assembly ---- */
+let steps=[];
+function buildAllSteps(){
+  const order = (state.meta.order||"2D-VR").split("-");
+  steps = [...fixedIntro];
+  order.forEach(c=> steps.push(...conditionSteps(c)));
+  steps.push(...fixedCompare, ...fixedEval);
+}
+function rebuildSteps(){ const cur=idx; buildAllSteps(); idx=Math.min(cur, steps.length-1); }
+buildAllSteps();
+
+/* ---- engine with onEnter/onLeave + timer stop ---- */
+let idx=0;
+function render(){
+  if(idx>=steps.length) idx=steps.length-1; const s=steps[idx];
+  if(s.onEnter) s.onEnter();
+  q("#app").innerHTML=`<div class="step active"><h2>${s.title}</h2>${s.render()}</div>`;
+  q("#backBtn").style.visibility = idx===0?"hidden":"visible";
+  q("#nextBtn").style.visibility = s.hideNext?"hidden":"visible";
+  q("#nextBtn").textContent = s.nextLabel || "Next";
+  q("#stepPill").textContent = `Step ${idx+1} of ${steps.length}`;
+  q("#progFill").style.width = ((idx)/(steps.length-1)*100)+"%";
+  window.scrollTo(0,0);
+}
+q("#nextBtn").addEventListener("click",()=>{
+  const s=steps[idx];
+  if(s.collect) s.collect();
+  if(s.valid && !s.valid()) return;
+  if(s._stopAfter) stopBlockTimer(s._stopAfter);
+  if(s.onLeave) s.onLeave();
+  if(idx<steps.length-1){ idx++; render(); }
+});
+q("#backBtn").addEventListener("click",()=>{ if(idx>0){ idx--; render(); } });
+render();
+</script></body></html>
