@@ -57,7 +57,7 @@ zoom.
 
 | Input | Action |
 |---|---|
-| Left stick | Move and strafe (click: toggle fly / teleport) |
+| Left stick | Up/down to climb and descend, left/right to strafe (click: toggle fly / teleport) |
 | Right stick | Turn left/right, look up/down |
 | Grip + pull | Grab the world and zoom |
 | Both grips | Drag and scale the world |
